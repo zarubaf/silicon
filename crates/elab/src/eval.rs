@@ -58,7 +58,7 @@ pub(crate) use mem::addr_width;
 use store::{ConstStatus, Slot, Store};
 
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
+use crate::hw::{Graph, Handle, HwId, Kind as Resource, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
 use crate::names::{PathId, Paths, Step, Sym};
@@ -448,11 +448,30 @@ fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
         Prelude::Unit => Ok(Ty::Unit),
         Prelude::Type => Ok(Ty::Type),
         Prelude::String => Ok(Ty::String),
-        _ => fail(
-            Code::S007,
-            pos,
-            format!("`{name}` takes 1 argument(s), but it has 0"),
-        ),
+        k => {
+            let (want, signature) = family_signature(k);
+            fail(
+                Code::S007,
+                pos,
+                format!("`{name}` takes {want} argument(s), but it has 0; write `{signature}`"),
+            )
+        }
+    }
+}
+
+/// The number of arguments of a type family and its signature, for the fix of its `S007`
+/// (Lean `familyText`). A defect of `typeck` gives the other names an empty signature.
+fn family_signature(k: Prelude) -> (usize, &'static str) {
+    match k {
+        Prelude::UInt => (1, "UInt[W]"),
+        Prelude::SInt => (1, "SInt[W]"),
+        Prelude::List => (1, "List[T]"),
+        Prelude::Reg => (1, "Reg[T]"),
+        Prelude::Wire => (1, "Wire[T]"),
+        Prelude::Input => (1, "Input[T]"),
+        Prelude::Mem => (2, "Mem[T, N]"),
+        Prelude::Instance => (1, "Instance[M, args]"),
+        _ => (1, ""),
     }
 }
 
@@ -559,6 +578,64 @@ impl Evaluator<'_> {
         match s {
             Seen::Pending(_, p) => format!("{} without a type", self.part_text(p)),
             s => s.text(&self.graph, &self.tys).unwrap_or_default(),
+        }
+    }
+
+    /// The handle type of the handle `h` (section 5.1), built from the stored ids with no
+    /// interning: `Reg[T]`, `Wire[T]`, `Input[T]`, `Mem[T, N]`, or the stored instance type. An
+    /// own output and a domain have none.
+    fn handle_form(&self, h: &Handle) -> Option<Ty> {
+        match h {
+            Handle::Res {
+                kind: Resource::Reg,
+                ty,
+                ..
+            } => Some(Ty::Reg(*ty)),
+            Handle::Res {
+                kind: Resource::Wire,
+                ty,
+                ..
+            } => Some(Ty::Wire(*ty)),
+            Handle::Res {
+                kind: Resource::Output,
+                ..
+            }
+            | Handle::Domain(_) => None,
+            Handle::Mem(id) => {
+                let m = self.mem(*id)?;
+                Some(Ty::Mem(m.word, Int::from_u64(m.depth)))
+            }
+            Handle::Inst { ty, .. } => Some(self.tys.get(*ty).clone()),
+            Handle::Input { port, .. } => Some(Ty::Input(port.ty)),
+        }
+    }
+
+    /// The value `{a}` of a message (section 6.2, Lean `Val.about`). A handle names its handle
+    /// type, an own output its source name, and a domain its name. A literal that waits is `[]`.
+    /// Another value names its type, so the text reads no value in full and each type text is
+    /// bounded.
+    fn about(&self, s: Seen<'_>) -> String {
+        match s {
+            Seen::Handle(Handle::Res {
+                kind: Resource::Output,
+                path,
+                ..
+            }) => format!(
+                "the output `{}`",
+                self.paths.source(*path, &self.syms.texts)
+            ),
+            Seen::Handle(Handle::Domain(d)) => format!("the domain `{}`", self.domain_name(*d)),
+            Seen::Handle(h) => match self.handle_form(h) {
+                Some(t) => format!("a handle of `{}`", self.tys.text_of(&t)),
+                None => self.text(s),
+            },
+            Seen::Pending(..) => "`[]`".to_owned(),
+            Seen::Static(v) => format!("a value of `{}`", v.type_text(&self.tys)),
+            Seen::Hw(h) => format!("a value of `{}`", self.tys.text_of(&self.graph.ty(h))),
+            Seen::Agg(a) => match a.stored_ty() {
+                Some(t) => format!("a value of `{}`", self.tys.text(t)),
+                None => self.text(s),
+            },
         }
     }
 
@@ -1165,7 +1242,7 @@ impl Evaluator<'_> {
     /// A port of an instance: a child input is a target, and a child output refers to its
     /// name. An output without a hardware leaf is a new static value.
     fn port_of(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
-        let Seen::Handle(Handle::Inst { id, path, inst }) = self.store.seen(&b) else {
+        let Seen::Handle(Handle::Inst { id, path, inst, .. }) = self.store.seen(&b) else {
             return self.record_field(pos, b, field);
         };
         let (id, path, inst) = (*id, *path, *inst);
@@ -1417,6 +1494,7 @@ impl Evaluator<'_> {
                         let o = ev.eval(value)?;
                         let o = need(value, o)?;
                         ev.copy(*cp, &o)?;
+                        ev.static_handle(*cp, "a const", t)?;
                         let o = ev.settle(*cp, t, o)?;
                         Ok((ev.conform(*cp, t, o)?, t))
                     }

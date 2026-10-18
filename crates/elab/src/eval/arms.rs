@@ -83,6 +83,9 @@ pub(super) fn arm_join(
         let mut budget = fuel.left();
         let joined = ops::common_ty(lt, rt, tys, &mut budget);
         fuel.pay_joins(&joined.charge).map_err(at(pos))?;
+        if let Some(pair) = joined.clash {
+            return Err(at(pos)(ops::clash_fault(pair, tys)));
+        }
         joined.ty
     } else {
         ops::scalar_join(lt, rt, tys)

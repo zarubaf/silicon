@@ -27,6 +27,10 @@ use std::collections::BTreeMap;
 /// The most bits of the payload of an enum.
 const PAYLOAD_LIMIT: u64 = 65536;
 
+/// The most bits of a memory word, and the most words of a memory (spec section 6.2).
+const MEM_MAX_BITS: u64 = 65536;
+const MEM_MAX_DEPTH: u64 = 16_777_216;
+
 impl Evaluator<'_> {
     /// The index of the struct item that the name node `id` refers to.
     pub(super) fn struct_item(&self, id: NodeId) -> Option<usize> {
@@ -111,6 +115,13 @@ impl Evaluator<'_> {
     }
 
     fn family(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
+        match k {
+            Prelude::Instance => return self.instance_type(pos, xs),
+            Prelude::Reg | Prelude::Wire | Prelude::Input | Prelude::Mem => {
+                return self.handle_type(pos, k, xs);
+            }
+            _ => {}
+        }
         let base = self.store.parked_len();
         for x in xs {
             let o = self.eval(x)?;
@@ -126,6 +137,237 @@ impl Evaluator<'_> {
         }
         self.charge(pos, u128::from(t.size()))?;
         Ok(t)
+    }
+
+    /// The text of a handle type `t` where a position needs hardware data, if `t` is a handle
+    /// type (Lean `handleData`). It names the data type to use. An instance type has no data
+    /// type. A container that holds a handle type is not a handle type.
+    fn handle_data(&self, t: TyId) -> Option<String> {
+        let text = self.tys.text(t);
+        match self.tys.get(t) {
+            Ty::Reg(d) | Ty::Wire(d) | Ty::Input(d) | Ty::Mem(d, _) => Some(format!(
+                "`{text}` is a handle type, not hardware data; use its data type `{}`",
+                self.tys.text(*d)
+            )),
+            Ty::Instance(_) => Some(format!(
+                "`{text}` is a handle type, not hardware data; an instance has no data type, so \
+                 read its outputs as `u.q`"
+            )),
+            _ => None,
+        }
+    }
+
+    /// `S011` at `pos` when `t` is a handle type at the static position `position`: no handle
+    /// fits there (section 5.1). The caller charged the copy first.
+    pub(super) fn static_handle(&self, pos: Pos, position: &str, t: TyId) -> Res<()> {
+        if self.tys.get(t).is_handle() {
+            return fail(
+                Code::S011,
+                pos,
+                format!(
+                    "{position} takes only static values, so its type cannot be the handle type \
+                     `{}`; use a data type, for example `UInt[8]`",
+                    self.tys.text(t)
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    /// `S010` at `pos` when `t` is a handle type, with the text of `handle_data`.
+    pub(super) fn not_handle(&self, pos: Pos, t: TyId) -> Res<()> {
+        match self.handle_data(t) {
+            Some(message) => fail(Code::S010, pos, message),
+            None => Ok(()),
+        }
+    }
+
+    /// The use at `pos` of the handle type family `k`, `Reg`, `Wire`, `Input`, or `Mem`
+    /// (section 5.4). The arguments evaluate from left to right, and each result waits while the
+    /// later ones evaluate. Pass 4 checks the number of arguments, so another number is a defect.
+    /// The first argument is a type (`S010`). `T` of `Reg`, `Wire`, and `Input` is hardware data,
+    /// which can be empty (`S010`). `Mem` runs the word and depth checks of a `mem` statement.
+    /// Each check reads the metadata, with no charge. Then the type checks its depth and charges
+    /// its size, before the table holds it.
+    fn handle_type(&mut self, pos: Pos, k: Prelude, xs: &[Expr]) -> Res<TyId> {
+        let base = self.store.parked_len();
+        for x in xs {
+            let o = self.eval(x)?;
+            let o = need(x, o)?;
+            self.store.park(o);
+        }
+        let outs = self.store.resume(base);
+        let (name, signature, example) = match k {
+            Prelude::Reg => ("Reg", "Reg[T]", "Reg[UInt[8]]"),
+            Prelude::Wire => ("Wire", "Wire[T]", "Wire[UInt[8]]"),
+            Prelude::Input => ("Input", "Input[T]", "Input[UInt[8]]"),
+            _ => ("Mem", "Mem[T, N]", "Mem[UInt[8], 16]"),
+        };
+        let want = if k == Prelude::Mem { 2 } else { 1 };
+        if outs.len() != want {
+            return fail(
+                Code::S007,
+                pos,
+                format!(
+                    "`{name}` takes {want} argument(s), but it has {}; write `{signature}`",
+                    outs.len()
+                ),
+            );
+        }
+        let Some(Seen::Static(Value::Type(d))) = outs.first().map(|o| self.store.seen(o)) else {
+            let about = outs
+                .first()
+                .map_or_else(|| "`[]`".to_owned(), |o| self.about(self.store.seen(o)));
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "the first argument of `{name}` is a type, not {about}; write a type, for \
+                     example `{example}`"
+                ),
+            );
+        };
+        let d = *d;
+        let ty = if let (Prelude::Mem, Some(depth)) = (k, outs.get(1)) {
+            self.mem_word(pos, d)?;
+            Ty::Mem(d, Int::from_u64(self.mem_depth(pos, depth)?))
+        } else {
+            self.not_handle(pos, d)?;
+            if !self.tys.meta(d).data {
+                return fail(
+                    Code::S010,
+                    pos,
+                    format!(
+                        "`{name}` takes a hardware data type, not `{}`; use a fixed-width type, \
+                         for example `UInt[8]`",
+                        self.tys.text(d)
+                    ),
+                );
+            }
+            match k {
+                Prelude::Reg => Ty::Reg(d),
+                Prelude::Wire => Ty::Wire(d),
+                _ => Ty::Input(d),
+            }
+        };
+        let (size, depth) = Types::shape(&ty);
+        self.bounded(pos, depth)?;
+        self.charge(pos, u128::from(size))?;
+        Ok(self.tys.mk(ty))
+    }
+
+    /// The use `Instance[M, args]` at `pos` of the module item that the first of `xs` names, with
+    /// the other arguments of `xs` (section 5.4). Pass 4 checks the number of arguments, so
+    /// another number is a defect. The arguments get the typed uses of an `instance` statement
+    /// (`arguments`), one level deeper. The type then checks its depth and charges its size. It
+    /// makes no instantiation and elaborates no module.
+    fn instance_type(&mut self, pos: Pos, xs: &[Expr]) -> Res<TyId> {
+        let item = match xs.first() {
+            Some(Expr::Name { id, .. }) => self.item_of(*id),
+            _ => None,
+        };
+        let Some(i) = item else {
+            return fail(
+                Code::S007,
+                pos,
+                format!(
+                    "`Instance` takes 1 argument(s), but it has {}; write `Instance[M, args]`",
+                    xs.len()
+                ),
+            );
+        };
+        let rest = xs.get(1..).unwrap_or_default();
+        let Some(Item::Module { name, params, .. }) = self.file.ast().get(i) else {
+            return fail(Code::S010, pos, "`Instance` needs a module".to_owned());
+        };
+        if params.len() != rest.len() {
+            return fail(
+                Code::S007,
+                pos,
+                format!(
+                    "`Instance` takes {} argument(s), but it has {}; write `Instance[M, args]`",
+                    1 + params.len(),
+                    1 + rest.len()
+                ),
+            );
+        }
+        let args: Vec<Value> = self
+            .arguments(pos, i, rest)?
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect();
+        let shape = Types::inst_shape(&args);
+        self.bounded(pos, shape.1)?;
+        self.charge(pos, u128::from(shape.0))?;
+        Ok(self.tys.instance_shaped(i, &name.name, args, shape))
+    }
+
+    /// The word type of a memory at `pos`: its `mem` statement or its use `Mem[T, N]`
+    /// (section 6.2). It is hardware data with at least one leaf (`S010`), so an empty word is
+    /// `S010` and not `S012`. Its width is at most 65536 bits (`S012`). The metadata tells both.
+    pub(super) fn mem_word(&self, pos: Pos, t: TyId) -> Res<()> {
+        self.not_handle(pos, t)?;
+        let meta = self.tys.meta(t);
+        if !meta.data || meta.leaves.is_zero() {
+            return fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a memory word is a nonempty hardware data type, not `{}`; use a type with \
+                     at least one bit, for example `UInt[8]`",
+                    self.tys.text(t)
+                ),
+            );
+        }
+        if meta.width.cmp_u64(MEM_MAX_BITS).is_gt() {
+            return fail(
+                Code::S012,
+                pos,
+                format!(
+                    "a memory word has at most {MEM_MAX_BITS} bits, not {}; split the word over \
+                     more than one memory",
+                    ops::int_text(&meta.width)
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    /// The depth of a memory at `pos`: its `mem` statement or its use `Mem[T, N]`
+    /// (section 6.2). It is a static value (`S011`), an `Int` (`S010`), and 1 to 16777216
+    /// (`S012`). Each error is at `pos`.
+    pub(super) fn mem_depth(&self, pos: Pos, out: &Out) -> Res<u64> {
+        match self.store.seen(out) {
+            Seen::Static(Value::Int(k)) => match k.to_u64() {
+                Some(n) if (1..=MEM_MAX_DEPTH).contains(&n) => Ok(n),
+                _ => fail(
+                    Code::S012,
+                    pos,
+                    format!(
+                        "a memory depth is 1 to {MEM_MAX_DEPTH}, not {}; use a depth in this \
+                         range",
+                        ops::int_text(k)
+                    ),
+                ),
+            },
+            s @ (Seen::Static(_) | Seen::Pending(..)) => fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a memory depth is a static integer, not {}; write an integer, for example \
+                     `16`",
+                    self.about(s)
+                ),
+            ),
+            s => fail(
+                Code::S011,
+                pos,
+                format!(
+                    "a memory depth is static, not {}; compute the depth from static values",
+                    self.about(s)
+                ),
+            ),
+        }
     }
 
     /// The tuple type of the element types `elems` at `pos`. It checks its depth, then charges
@@ -356,7 +598,7 @@ impl Evaluator<'_> {
         args: Vec<Out>,
     ) -> Res<TyId> {
         self.binding.push(i);
-        let bound = self.bind_params(pos, params, args)?;
+        let bound = self.bind_params(pos, "a comptime parameter", params, args)?;
         self.binding.pop();
         let keys: Vec<Out> = bound.into_iter().map(|(_, o)| o).collect();
         self.first_or_later_use(pos, name, i, &keys, fields)
@@ -525,12 +767,14 @@ impl Evaluator<'_> {
     pub(super) fn bind_params(
         &mut self,
         pos: Pos,
+        position: &str,
         params: &[Param],
         args: Vec<Out>,
     ) -> Res<Vec<(TyId, Out)>> {
         let mut bound = Vec::with_capacity(args.len());
         for (q, o) in params.iter().zip(args) {
             let t = self.type_expr(&q.ty)?;
+            self.static_handle(pos, position, t)?;
             let o = if matches!(self.store.seen(&o), Seen::Pending(..)) {
                 self.settle(pos, t, o)?
             } else {
@@ -621,7 +865,7 @@ impl Evaluator<'_> {
         params: &[Param],
         outs: Vec<Out>,
     ) -> Res<Vec<(TyId, Value)>> {
-        let bound = self.bind_params(pos, params, outs)?;
+        let bound = self.bind_params(pos, "a module argument", params, outs)?;
         let mut args = Vec::with_capacity(bound.len());
         for ((t, o), q) in bound.into_iter().zip(params) {
             let id = self.decl(&q.name)?;

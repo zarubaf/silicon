@@ -33,10 +33,9 @@
 
 use super::{Evaluator, Let, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
+use crate::hw::{Graph, Handle, Kind, Port, Val, port_name};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
-use crate::ops::int_text;
 use crate::scan::Scan;
 use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
@@ -417,10 +416,6 @@ enum Target {
     },
 }
 
-/// The most bits of a memory word, and the most words of a memory (spec section 6.2).
-const MEM_MAX_BITS: u64 = 65536;
-const MEM_MAX_DEPTH: u64 = 16_777_216;
-
 /// The kind of the first `S018` of a body.
 #[derive(Clone, Copy)]
 enum Missing {
@@ -667,64 +662,6 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// The word type of a memory is hardware data with at least one leaf (`S010`), so an empty
-    /// word is `S010`. Its width is at most 65536 bits (`S012`). The metadata tells both.
-    fn mem_word(&self, pos: Pos, t: TyId) -> Res<()> {
-        let meta = self.tys.meta(t);
-        if !meta.data || meta.leaves.is_zero() {
-            return fail(
-                Code::S010,
-                pos,
-                format!(
-                    "a memory needs a nonempty hardware data type, not {}",
-                    self.tys.text(t)
-                ),
-            );
-        }
-        if meta.width.cmp_u64(MEM_MAX_BITS).is_gt() {
-            return fail(
-                Code::S012,
-                pos,
-                format!(
-                    "a memory word has at most {MEM_MAX_BITS} bits, not {}",
-                    int_text(&meta.width)
-                ),
-            );
-        }
-        Ok(())
-    }
-
-    /// The depth of a memory is a static value (`S011`), an `Int` (`S010`), and 1 to 16777216
-    /// (`S012`).
-    fn mem_depth(&self, pos: Pos, out: &Out) -> Res<u64> {
-        match self.store.seen(out) {
-            Seen::Static(Value::Int(k)) => match k.to_u64() {
-                Some(n) if (1..=MEM_MAX_DEPTH).contains(&n) => Ok(n),
-                _ => fail(
-                    Code::S012,
-                    pos,
-                    format!(
-                        "a memory depth is 1 to {MEM_MAX_DEPTH}, not {}",
-                        int_text(k)
-                    ),
-                ),
-            },
-            s @ (Seen::Static(_) | Seen::Pending(..)) => fail(
-                Code::S010,
-                pos,
-                match s {
-                    Seen::Pending(..) => "a memory depth is a static integer, not `[]`".to_owned(),
-                    s => format!("a memory depth is a static integer, not {}", self.text(s)),
-                },
-            ),
-            s => fail(
-                Code::S011,
-                pos,
-                format!("a memory depth is static, not {}", self.text(s)),
-            ),
-        }
-    }
-
     /// An `instance` statement.
     fn inst_stmt(&mut self, pos: Pos, name: &Ident, module: &Ident, args: &[Expr]) -> Res<()> {
         let i = match self.file.target(module.id) {
@@ -733,20 +670,24 @@ impl Evaluator<'_> {
         }
         .unwrap_or(usize::MAX);
         let args = self.arguments(pos, i, args)?;
-        if let Some(Item::Module {
+        let Some(Item::Module {
             name: m, domains, ..
         }) = self.file.ast().get(i)
-        {
-            let clocked = domains.as_ref().is_none_or(|d| !d.is_empty());
-            if self.elab.work.body.domain.is_none() && clocked {
-                return fail(
-                    Code::S017,
-                    pos,
-                    format!("a combinational module has no clocked child `{}`", m.name),
-                );
-            }
+        else {
+            return fail(Code::S010, pos, "an instance needs a module".to_owned());
+        };
+        let clocked = domains.as_ref().is_none_or(|d| !d.is_empty());
+        if self.elab.work.body.domain.is_none() && clocked {
+            return fail(
+                Code::S017,
+                pos,
+                format!("a combinational module has no clocked child `{}`", m.name),
+            );
         }
+        // The converted arguments paid for their sizes, so the type adds no charge.
+        let values: Vec<Value> = args.iter().map(|(_, v)| v.clone()).collect();
         let done = self.instantiate(pos, i, args)?;
+        let ty = self.tys.instance(i, &m.name, values);
         let id = self.decl(name)?;
         let path = self.fresh(id);
         let k = self.elab.work.body.children.len();
@@ -766,6 +707,7 @@ impl Evaluator<'_> {
                     id: k,
                     path,
                     inst: done,
+                    ty,
                 }),
             },
         );
@@ -773,14 +715,19 @@ impl Evaluator<'_> {
     }
 
     /// A resource that needs one binding. The result is its handle.
-    fn resource(&mut self, kind: Kind, path: PathId, ty: TyId, pos: Pos, name: Sym) -> Val {
+    fn resource(&mut self, kind: Kind, path: PathId, tid: TyId, pos: Pos, name: Sym) -> Val {
         let id = self.elab.work.needs.len();
         self.elab.work.needs.push(Need {
             name,
             pos,
             count: 0,
         });
-        Val::Handle(Handle::Res { kind, id, ty, path })
+        Val::Handle(Handle::Res {
+            kind,
+            id,
+            ty: tid,
+            path,
+        })
     }
 
     /// The port `name`. Its core name is its source name. The root frame counts it with the
@@ -849,7 +796,7 @@ impl Evaluator<'_> {
                 let Expr::Name { id: nid, .. } = &**base else {
                     return bad();
                 };
-                let Some(Val::Handle(Handle::Inst { id, path, inst })) =
+                let Some(Val::Handle(Handle::Inst { id, path, inst, .. })) =
                     self.slot_of(*nid).map(|s| &s.value)
                 else {
                     return bad();
@@ -1013,6 +960,7 @@ impl Evaluator<'_> {
     /// aggregate and an empty one. The metadata tells, so a function type at any depth is
     /// `S010` with no walk.
     fn data_type(&self, pos: Pos, t: TyId) -> Res<Ty> {
+        self.not_handle(pos, t)?;
         if self.tys.meta(t).data {
             Ok(self.tys.get(t).clone())
         } else {

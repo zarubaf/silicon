@@ -409,10 +409,12 @@ pub struct Widths {
 }
 
 /// The result of a join of two types: the units that its walk charged, and the common type.
+/// A pair with a handle type that is not one type stops the walk, and `clash` holds the pair.
 #[derive(Clone)]
 pub struct Joined {
     pub charge: Int,
     pub ty: Option<TyId>,
+    pub clash: Option<(TyId, TyId)>,
 }
 
 /// The fingerprint of a struct item and its arguments. A bucket of the index holds the
@@ -965,12 +967,36 @@ impl Types {
         inst
     }
 
+    /// The recursive size and the depth of an instance type with the converted arguments
+    /// `args`, before the type exists: 1 plus the sizes of the arguments, and 1 plus the deepest
+    /// argument.
+    #[must_use]
+    pub fn inst_shape(args: &[Value]) -> (u64, u64) {
+        (
+            args.iter()
+                .fold(1u64, |sum, arg| sum.saturating_add(arg.size())),
+            1 + args.iter().map(Value::depth).max().unwrap_or(0),
+        )
+    }
+
     /// The instance type of the module item `item` named `name` with the converted arguments
     /// `args`. The fingerprint narrows the search, and the arguments decide. The hash and the
     /// comparison read each argument in full, and the size of the type reads them again, so the
     /// caller pays their sizes. A new type has the size 1 plus the sizes of its arguments, as a
     /// struct type does, and the depth 1 plus the deepest argument.
     pub fn instance(&mut self, item: usize, name: &str, args: Vec<Value>) -> TyId {
+        let shape = Types::inst_shape(&args);
+        self.instance_shaped(item, name, args, shape)
+    }
+
+    /// `instance` for a caller that has the shape of the arguments (`inst_shape`) already.
+    pub fn instance_shaped(
+        &mut self,
+        item: usize,
+        name: &str,
+        args: Vec<Value>,
+        (size, depth): (u64, u64),
+    ) -> TyId {
         #[cfg(test)]
         self.tick(1 + args.iter().map(read_work).sum::<u64>());
         let print = fingerprint(item, &args);
@@ -983,10 +1009,6 @@ impl Types {
         if let Some((_, ty)) = found {
             return ty;
         }
-        let size = args
-            .iter()
-            .fold(1u64, |sum, arg| sum.saturating_add(arg.size()));
-        let depth = 1 + args.iter().map(Value::depth).max().unwrap_or(0);
         let i = InstId(self.insts.len());
         self.insts.push(InstTy {
             item,
@@ -1261,5 +1283,14 @@ impl Ty {
     #[must_use]
     pub fn is_finite(&self) -> bool {
         matches!(self, Ty::UInt(_) | Ty::SInt(_))
+    }
+
+    /// `Reg[T]`, `Wire[T]`, `Input[T]`, `Mem[T, N]`, or `Instance[M, args]`.
+    #[must_use]
+    pub fn is_handle(&self) -> bool {
+        matches!(
+            self,
+            Ty::Reg(_) | Ty::Wire(_) | Ty::Input(_) | Ty::Mem(..) | Ty::Instance(_)
+        )
     }
 }
