@@ -2059,6 +2059,33 @@ def oneKey : String :=
 #guard said (handleLets "  let mut b: Reg[UInt[8]] = r;\n  b = o;\n") == ownText
 
 /-!
+A `let mut` local without a type that holds a handle has its handle type. Thus an assignment to
+it is the same typed use (section 5.4). The same handle type passes, and another value is `S010`
+at the assignment. A local that holds an own output takes only an own output of its data type. The
+copy charges 1 before the check, so one unit less stops at the assignment.
+-/
+def heldText (a : String) : String :=
+  s!"the local holds the output `o`, so it takes only an output of `UInt[8]`, not {a}; use " ++
+    "the output `o` directly"
+#guard exact (handleLets "  let mut a = q;\n  a = r;\n  a := i;\n") "M" 345
+#guard exact (handleLets "  let mut a = u;\n  a = u;\n  r := i;\n") "M" 345
+#guard exact (handleLets "  let mut a = o;\n  a = o;\n  r := i;\n") "M" 345
+#guard said (handleLets "  let mut a = r;\n  a = s;\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+#guard cost (handleLets "  let mut a = r;\n  a = s;\n") "M" (fuel := 153) == "S010 21:3"
+#guard cost (handleLets "  let mut a = r;\n  a = s;\n") "M" (fuel := 152) == "S015 21:3"
+#guard said (handleLets "  let mut a = u;\n  a = w;\n") ==
+  typedText "Instance[C, 8]" "a handle of `Wire[UInt[8]]`"
+#guard said (handleLets "  let mut a = r;\n  a = 5;\n") ==
+  typedText "Reg[UInt[8]]" "a value of `Int`"
+#guard said (memBody "  mem m: [UInt[8]; 4];\n  let mut a = m;\n  a = m;\n  a = 5;\n") ==
+  typedText "Mem[UInt[8], 4]" "a value of `Int`"
+#guard said (handleLets "  let mut a = o;\n  a = r;\n") == heldText "a handle of `Reg[UInt[8]]`"
+#guard cost (handleLets "  let mut a = o;\n  a = r;\n") "M" (fuel := 153) == "S010 21:3"
+#guard cost (handleLets "  let mut a = o;\n  a = r;\n") "M" (fuel := 152) == "S015 21:3"
+#guard said (handleLets "  let mut a = o;\n  a = 5;\n") == heldText "a value of `Int`"
+
+/-!
 A handle at an argument, a `mut` actual, a `push` element, or a field of a constructor is `S010`
 at the call until #278 (section 6.2).
 -/

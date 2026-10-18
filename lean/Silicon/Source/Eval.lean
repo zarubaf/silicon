@@ -338,7 +338,10 @@ def prim (pos : Pos) (x : String) : PrimType → M Ty
   | .type => pure .type
   | .string => pure .string
 
-/-! A string and a handle have no `Ty`, so an assignment keeps their form. -/
+/-!
+A string, an own output, and a domain have no `Ty`, so an assignment to a local without a type
+keeps their form. A handle with a handle type gets the typed use at it instead (`heldUse`).
+-/
 def sameForm : Val → Val → Bool
   | .static (.str _), .static (.str _) => true
   | .handle (.res k _ t _), .handle (.res k' _ t' _) => k == k' && t.same t'
@@ -964,6 +967,24 @@ copies and reads it (`copyUse`).
 -/
 def localUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val :=
   if handleTy? t then handleUse pos t copies v else copyUse pos t copies v
+
+/-!
+The assignment at `pos` of the result `o` to a local without a type that holds `held` (section
+5.4). The local has the type of its value. A handle with a handle type thus gives the typed use
+at that type (`handleUse`). Another value keeps its form after the copy (`sameForm`). A local
+that holds an own output takes only an own output of the same data type. Its text names the
+fix: use the output directly.
+-/
+def heldUse (pos : Pos) (held : Val) (o : Out) : M Val := do
+  if let .handle h := held then
+    if let some t := h.ty? then return ← handleUse pos t o.ref o.value
+  copy pos o
+  if sameForm held o.value then return o.value
+  if let .handle (.res .output _ t path) := held then
+    let r := sourceOf path
+    fail .S010 pos (s!"the local holds the output `{r}`, so it takes only an output of " ++
+      s!"`{t.text}`, not {o.value.about}; use the output `{r}` directly")
+  fail .S010 pos s!"expected {held.text}, but the value is {o.value.text}"
 
 /-!
 The variant `j` of the enum type `t` at `p` with the payload values `vs` (section 5.4). The node,
@@ -2624,10 +2645,7 @@ mutual
         shut pl.id
         let y ← match pl.ty with
           | some t => localUse p t o.ref o.value
-          | none =>
-            copy p o
-            if sameForm pl.part o.value then pure o.value
-            else fail .S010 p s!"expected {pl.part.text}, but the value is {o.value.text}"
+          | none => heldUse p pl.part o
         store p v.pos pl y
         return none
       | .ret p v => do
