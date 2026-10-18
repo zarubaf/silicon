@@ -2559,8 +2559,8 @@ def targets (body : String) : String :=
   "  reg q: UInt[8] = 0;\n  wire w: UInt[8];\n  instance u = C(8);\n  o := i;\n" ++
   "  w := i;\n" ++ body ++ "}\n"
 def heldStatic (s k r : String) : String :=
-  s!"{s} holds the {k} handle `{r}`, but it takes only static values; pass the data through " ++
-    "a port, or use the handle in the module that declares it"
+  s!"{s} holds the {k} `{r}`, but it takes only static values; pass the data through " ++
+    "a port, or use it in the module that declares it"
 #guard said (targets "  u.x := i;\n  let h = r;\n  instance v = K(h);\n") ==
   heldStatic "a module argument" "register" "r"
 #guard cost (targets "  u.x := i;\n  let h = r;\n  instance v = K(h);\n") "M" (fuel := 143) ==
@@ -2580,6 +2580,23 @@ def heldStatic (s k r : String) : String :=
   heldStatic "a module argument" "memory" "m"
 #guard said (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") ==
   heldStatic "an argument of a comptime fn" "register" "r"
+
+/-!
+An own output and a domain have no handle type, but they are not static either. Thus they give
+the text "Handle at a static position" too, with the kind `output` or `domain` (section 6.2).
+-/
+#guard said (targets "  u.x := i;\n  let h = o;\n  instance v = K(h);\n") ==
+  heldStatic "a module argument" "output" "o"
+#guard cost (targets "  u.x := i;\n  let h = o;\n  instance v = K(h);\n") "M" (fuel := 143) ==
+  "S011 21:3"
+#guard cost (targets "  u.x := i;\n  let h = o;\n  instance v = K(h);\n") "M" (fuel := 142) ==
+  "S015 21:18"
+def domainArg : String :=
+  "comptime fn g(x: Int) -> Int { return 0; }\nmodule M() domains(clk) {\n  let h = clk;\n" ++
+    "  let z = g(h);\n}\n"
+#guard said domainArg == heldStatic "an argument of a comptime fn" "domain" "clk"
+#guard cost domainArg "M" (fuel := 36) == "S011 4:11"
+#guard cost domainArg "M" (fuel := 35) == "S015 4:11"
 #guard cost (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") "M" (fuel := 147) ==
   "S011 21:11"
 #guard cost (targets "  u.x := i;\n  let h = r;\n  let z = g(h);\n") "M" (fuel := 146) ==
