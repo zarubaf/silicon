@@ -1026,6 +1026,31 @@ impl Evaluator<'_> {
         fail(Code::S018, pos, self.breach_text(x))
     }
 
+    /// The text of the `S018` of the first child number `k` with a free input: the free input
+    /// with the first source position.
+    fn free_input_text(&self, k: usize) -> String {
+        let work = &self.elab.work;
+        let text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
+        let iface = work
+            .body
+            .children
+            .get(k)
+            .and_then(|child| self.elab.done.get(child.inst))
+            .map(|i| &i.iface);
+        let port = iface.and_then(|i| {
+            i.ports
+                .values()
+                .filter(|q| q.input && !work.inputs.contains_key(&(k, q.sym)))
+                .min_by_key(|q| (q.pos.line, q.pos.col))
+        });
+        let name = port.map_or("", |q| text(q.sym));
+        let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
+        format!(
+            "the input `{name}` of the instance `{inst}` has no binding; \
+             bind it with `{inst}.{name} := ...;`"
+        )
+    }
+
     /// The text of the `S018` data `x` (section 6.2).
     fn breach_text(&self, x: Breach) -> String {
         let work = &self.elab.work;
@@ -1066,26 +1091,7 @@ impl Evaluator<'_> {
                     "`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
                 )
             }
-            Breach::Input(k) => {
-                let iface = work
-                    .body
-                    .children
-                    .get(k)
-                    .and_then(|child| self.elab.done.get(child.inst))
-                    .map(|i| &i.iface);
-                let port = iface.and_then(|i| {
-                    i.ports
-                        .values()
-                        .filter(|q| q.input && !work.inputs.contains_key(&(k, q.sym)))
-                        .min_by_key(|q| (q.pos.line, q.pos.col))
-                });
-                let name = port.map_or("", |q| sym_text(q.sym));
-                let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
-                format!(
-                    "the input `{name}` of the instance `{inst}` has no binding; \
-                     bind it with `{inst}.{name} := ...;`"
-                )
-            }
+            Breach::Input(k) => self.free_input_text(k),
             Breach::NoPort { mem, write } => format!(
                 "the memory `{}` has no `{}`; call `{}` on it once, or remove the memory",
                 mem_name(mem),
@@ -1112,11 +1118,27 @@ impl Evaluator<'_> {
                 mem_name(mem),
                 at(b)
             ),
-            Breach::PortIn { mem, write, h } => format!(
-                "the memory `{}` has a second `{}`, because the call in `{}` runs again for it; \
-                 run the call once for each memory, for example with one call of `{}` for each",
+            Breach::PortIn {
+                mem,
+                write: false,
+                h,
+            } => format!(
+                "the memory `{}` has a second `read_port`, because the call in `{}` runs again \
+                 for it; run the call once for each memory, for example with one call of `{}` \
+                 for each",
                 mem_name(mem),
-                call(write),
+                item(h),
+                item(h)
+            ),
+            Breach::PortIn {
+                mem,
+                write: true,
+                h,
+            } => format!(
+                "the memory `{}` has a second `write_port`, because the call in `{}` runs again \
+                 for it; run the call once for each memory, for example with one call of `{}` \
+                 for each",
+                mem_name(mem),
                 item(h),
                 item(h)
             ),
