@@ -1,0 +1,20 @@
+// `let q = read(r)` of a register of a record binds a copy of the reference. Each hardware leaf of `q`
+// gets one `let`, and the reads of `q` use these names. The register `r` is read once for each leaf.
+// TOP M()
+// CHECK: (let q$f (bits 1) r$f)
+// CHECK-NEXT: (let q$xs$0e (bits 4) r$xs$0e)
+// CHECK-NEXT: (let q$xs$1e (bits 4) r$xs$1e)
+// CHECK: (assign o q$xs$1e)
+struct R {
+    xs: [UInt[4]; 2],
+    f: Bool,
+}
+module M() {
+    input x: UInt[4];
+    input y: Bool;
+    output o: UInt[4];
+    reg r: R = R([0, 0], false);
+    r := R([x, x], y);
+    let q = read(r);
+    o := q.xs[1];
+}

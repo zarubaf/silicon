@@ -1,0 +1,26 @@
+// The record of `diagnostic` shows a type value with a handle type in the serialization form of
+// frontend spec section 7.1: each of the five handle forms, and a handle type behind an alias.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 19 5 M () (string "reg") (type (reg (uint 8))))
+// OBSERVE-NEXT: (record 20 5 M () (string "wire") (type (wire bool)))
+// OBSERVE-NEXT: (record 21 5 M () (string "mem") (type (mem (uint 8) 16)))
+// OBSERVE-NEXT: (record 22 5 M () (string "input") (type (input (uint 8))))
+// OBSERVE-NEXT: (record 23 5 M () (string "instance") (type (instance root C ((uint 8 1)))))
+// OBSERVE-NEXT: (record 24 5 M () (string "alias") (type (reg (array (uint 4) 2))))
+// OBSERVE-NEXT: (record 25 5 M () (string "nested") (type (mem (array (uint 8) 2) 4)))
+module C(comptime K: UInt[8]) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a +% K;
+}
+module M() domains() {
+    type A = Reg[[UInt[4]; 2]];
+    diagnostic("reg", Reg[UInt[8]]);
+    diagnostic("wire", Wire[Bool]);
+    diagnostic("mem", Mem[UInt[8], 16]);
+    diagnostic("input", Input[UInt[8]]);
+    diagnostic("instance", Instance[C, 1]);
+    diagnostic("alias", A);
+    diagnostic("nested", Mem[[UInt[8]; 2], 4]);
+}

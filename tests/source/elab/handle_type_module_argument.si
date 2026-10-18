@@ -1,0 +1,27 @@
+// A type value with a handle type is a valid module argument (frontend spec, section 7.1). The argument
+// `Reg[UInt[8]]` gives the digest name, as a record does. Two equal arguments share one module, and
+// `Wire[UInt[8]]` gives a second module. The record of `diagnostic` shows the argument in the
+// serialization form.
+// TOP Top()
+// CHECK-COUNT-2: (module Tab$0h{{[0-9a-f]{16}$}}
+// CHECK: (module Top
+// CHECK-COUNT-3: (inst
+// OBSERVE: (record 14 5 Tab$0h{{[0-9a-f]+}} () (string "arg") (type (reg (uint 8))))
+// OBSERVE-NEXT: (record 14 5 Tab$0h{{[0-9a-f]+}} () (string "arg") (type (wire (uint 8))))
+module Tab(comptime H: Type) domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    diagnostic("arg", H);
+    q := a +% 1;
+}
+module Top() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    instance t = Tab(Reg[UInt[8]]);
+    instance u = Tab(Reg[UInt[8]]);
+    instance v = Tab(Wire[UInt[8]]);
+    t.a := x;
+    u.a := t.q;
+    v.a := u.q;
+    y := v.q;
+}
