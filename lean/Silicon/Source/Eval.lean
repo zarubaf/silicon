@@ -961,13 +961,14 @@ gives the form that its caller stores.
 - `value`: an argument, a `return`, or the value of a `:=`.
 - `field q`: a field of a constructor, with its argument at the node `q`, in a data context
   (section 9.2).
-- `element x`: a `push` element at the node `x`. A list holds only static values.
+- `element x`: a `push` element at the node `x`. A list holds no hardware leaf, so the element
+  is a static value, a handle, or a node of handles.
 -/
 inductive Site : Type → Type where
   | binding : Site Val
   | value : Site Val
   | field (q : Pos) : Site Agg
-  | element (x : Pos) : Site Value
+  | element (x : Pos) : Site Agg
 
 /-!
 The typed use of `v` at the type `t` at a `binding` or a `value` position, after its copy. A
@@ -996,11 +997,12 @@ def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
     conformAgg pos t (← item q (← dataAt q t (← settle pos t v)))
   | .element x => do
     let w ← if handleTy? t then handleUse pos t v else dataAt x t (← settle pos t v)
+    if w.hasHw then fail .S011 x "a list holds no hardware value"
     match w with
-    | .static w => conform pos t w
-    | w =>
-      if w.hasHw then fail .S011 x "a list holds no hardware value"
-      else fail .S010 x s!"{w.text} is not an element of a list"
+    | .static w => return .typed t (← conform pos t w)
+    | .handle h => return .handle h
+    | .agg a => typedAgg pos t a
+    | w => fail .S010 x s!"{w.text} is not an element of a list"
 
 /-!
 The typed use of `v` at the type `t` at the position `site` (section 5.4). The copy charges first
@@ -1177,30 +1179,45 @@ def setAt (pos : Pos) (a y : Agg) (ks : List Nat) : M Agg := do
   | none => fail .S010 pos "the place has no part for its value"
 
 /-!
-Applies `f` at `p` to the selected static part of the place `pl` in the live value of its root.
-The indices of the place and the other operands ran after the root was read, so the change reads
-the live slot. In an aggregate root, the change refreshes each container node on the path, so it
-first charges the part count of each one (`Agg.pathWidth`). `sz` and `d` give the new numbers of
-each node as `Agg.change` takes them. When `d` is `none`, the change can lower a depth. Then it
-charges the size of the root, and it builds each node on the path again from its parts. Then a
-held root charges its size. The hardware leaves of an aggregate root keep their names, so the root
-takes no new version.
+The selected part of the place `pl` after a change: a static part by `f`, and a list node by `g`
+on its elements. The list node builds again from its elements, so only a change that charged the
+size of its root calls it.
 -/
-def changeAt (p : Pos) (pl : Place) (f : Value → Value) (sz : Nat → Nat) (d : Option Nat) :
-    M Unit := do
+def changed (pl : Place) (f : Value → Value) (g : Array Agg → Array Agg) : Option Agg :=
+  match pl.part with
+  | .static v => some (.static (f v))
+  | .agg (.list _ e xs) => some (.mkList e (g xs))
+  | _ => none
+
+/-!
+Applies a change at `p` to the selected list of the place `pl` in the live value of its root.
+`f` changes a static part, and `g` changes the elements of a list node. The indices of the
+place and the other operands ran after the root was read, so the change reads the live slot. In
+an aggregate root, the change refreshes each container node on the path, so it first charges the
+part count of each one (`Agg.pathWidth`). A list node at the end of the path refreshes by a
+delta, so it has no such charge (section 5.4). `sz` and `d` give the new numbers of each node
+as `Agg.change` takes them. When `d` is `none`, the change can lower a depth. Then it charges the
+size of the root, and it builds each node on the path again from its parts. Then a held root
+charges its size. The hardware leaves of an aggregate root keep their names, so the root takes
+no new version.
+-/
+def changeAt (p : Pos) (pl : Place) (f : Value → Value) (g : Array Agg → Array Agg)
+    (sz : Nat → Nat) (d : Option Nat) : M Unit := do
   match (← get).frame[pl.id]?, pl.part with
   | some s@{ value := .static r, .. }, _ =>
     held p pl.id
     bindLocal pl.id { s with value := .static (update f r pl.keys) }
-  | some s@{ value := .agg a, .. }, .static v =>
+  | some s@{ value := .agg a, .. }, .static _ | some s@{ value := .agg a, .. }, .agg (.list ..) =>
     charge p (a.pathWidth pl.keys)
     if d.isNone then charge p a.size
     held p pl.id
     let r ← match d with
-      | some d => match Agg.change f sz d a pl.keys with
+      | some d => match Agg.change f g sz d a pl.keys with
         | some r => pure r
         | none => fail .S010 p "the place has no static part to change"
-      | none => setAt p a (.static (f v)) pl.keys
+      | none => match changed pl f g with
+        | some y => setAt p a y pl.keys
+        | none => fail .S010 p "the place has no static part to change"
     bindLocal pl.id { s with value := r.val }
   | _, _ => fail .S010 p "the place has no static part to change"
 
@@ -1248,7 +1265,7 @@ def store (p q : Pos) (pl : Place) (y : Val) : M Unit := do
     match (← get).frame[pl.id]?, pl.part.agg?, x with
     | some { value := .static _, .. }, _, .static w => do
       bounded p (pl.keys.length + w.depth)
-      changeAt p pl (fun _ => w) id (some 0)
+      changeAt p pl (fun _ => w) id id (some 0)
     | some sl@{ value := .static r, .. }, some o, x => do
       bounded p (pl.keys.length + x.depth)
       rebind p pl sl (.static r) o x
@@ -1359,20 +1376,35 @@ def result (p : Pos) (path : Path) (u : String) : Option Val → M Val
   | none => fail .S010 p s!"`{u}` ends without `return`"
 
 /-!
+The element type, the length, and the last element of the list `v`: a static list or a list
+node (section 5.1). Another value is no list.
+-/
+def listView : Val → Option (Ty × Nat × Option Agg)
+  | .static (.list e ys) => some (e, ys.size, ys.back?.map .static)
+  | .agg (.list _ e ys) => some (e, ys.size, ys.back?)
+  | _ => none
+
+/-!
 `push` at `p` of the value `v` at the node `x` onto the list at the place `pl`. `g` is the name
 of the callee. The module doc gives the steps. It checks the list and the mutation rule. Then it
 makes the typed use of the element and checks the depth. Then it checks the size limit of the
-list and charges the size of the element.
+list and charges the size of the element. A list node refreshes by the size and the depth of
+the element (section 5.4).
 -/
 def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) := do
-  let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+  let some (e, n, _) := listView pl.part
+    | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
   mutation p pl.name
   let w ← typedUse p e false v (.element x)
   -- The root is within the nesting depth, so only the element on the path can raise it.
   bounded p (pl.keys.length + 1 + w.depth)
-  if over (ys.size + 1) then fail .S015 p listLimitText
+  if over (n + 1) then fail .S015 p listLimitText
   charge p w.size
-  changeAt p pl (fun | .list t ys => .list t (ys.push w) | v => v) (· + w.size) (some (1 + w.depth))
+  -- A static list holds only static elements, because its element type has no handle flag.
+  let f : Value → Value := fun
+    | .list t ys => match w with | .static y => .list t (ys.push y) | _ => .list t ys
+    | v => v
+  changeAt p pl f (·.push w) (· + w.size) (some (1 + w.depth))
   return some ⟨.static .unit, false, none⟩
 
 /-!
@@ -1380,14 +1412,15 @@ def pushOnto (p x : Pos) (g : String) (pl : Place) (v : Val) : M (Option Out) :=
 `S013`. Then it checks the mutation rule and charges the size of the element.
 -/
 def popFrom (p : Pos) (g : String) (pl : Place) : M (Option Out) := do
-  let .static (.list e ys) := pl.part | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
-  let some w := ys.back? | fail .S013 p "`pop` of an empty list"
+  let some (e, _, last) := listView pl.part
+    | fail .S010 p s!"`{g}` needs a list, not {pl.part.text}"
+  let some w := last | fail .S013 p "`pop` of an empty list"
   mutation p pl.name
   charge p w.size
   -- The element type bounds the depth of a list from below, so only a deeper element lowers it.
   let d := if w.depth ≤ e.depth then some 0 else none
-  changeAt p pl (fun | .list t ys => .list t ys.pop | v => v) (· - w.size) d
-  return some ⟨.static w, false, none⟩
+  changeAt p pl (fun | .list t ys => .list t ys.pop | v => v) Array.pop (· - w.size) d
+  return some ⟨w.val, false, none⟩
 
 /-!
 `data_bits` at `p` with the arguments `vs`. It charges the size of the width that it copies from
@@ -1542,7 +1575,8 @@ def primCall (p : Pos) (g : String) (h : PrimFn) (vs : List Val) : M (Option Out
         let v := Value.list t #[]
         bounded p v.depth
         charge p 1
-        return some ⟨.static v, false, none⟩
+        -- An element type with the handle flag gives an empty list node (section 5.1).
+        return some ⟨(Agg.typed (.list t) v).val, false, none⟩
       | t => fail .S010 p s!"`{g}` needs a type, not {t.text}"
     | .str, [v] =>
       match ← data p v with
@@ -2511,7 +2545,7 @@ mutual
         | some t, _ => some t
         | none, some t => partTy t k
         | none, none => w.ty?
-      inList := inList || cur matches .static (.list ..)
+      inList := inList || cur matches .static (.list ..) | .agg (.list ..)
       cur := w
       keys := keys.push k
     return ⟨id, slot, x, ty, cur, keys.toList, inList⟩

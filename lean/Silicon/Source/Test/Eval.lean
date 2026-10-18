@@ -3604,19 +3604,24 @@ parameter type of `M` nests one level at each use, so it ends with `S015` at a u
 A pair with a handle type in a join charges the sum of the two sizes, then needs one type
 (section 5.4). `Reg[Bool]` has the size 2, so the join of two `List[Reg[Bool]]` charges 1 and
 then 4. Each `list(Reg[Bool])` costs 5 more than `list(Bool)`. An array of a type with the handle
-flag is not static (section 5.1), so `len` reads it, and `len` adds 2.
+flag is not static (section 5.1), so `len` reads it, and `len` adds 2. A list of handles is not
+static either, so `==` reads it in a `data` context: `S010` after the charge of its size 1
+(section 9.2).
 -/
 #guard exact "" "[list(Bool), list(Bool)]" 15
 #guard exact "" "len([list(Reg[Bool]), list(Reg[Bool])])" 31
 #guard out "" "[list(Reg[Bool]), list(Reg[Bool])]" == "S011 1:1"
 #guard out "" "[list(Reg[Bool]), list(Reg[Bool])]" 28 == "S015 1:1"
-#guard out "" "list(Reg[Bool]) == list(Reg[Bool])" == "(bool true)"
-#guard exact "" "list(Reg[Bool]) == list(Reg[Bool])" 27
+#guard msg "" "list(Reg[Bool]) == list(Reg[Bool])" ==
+  "a `data` context does not read the list of handles `List[Reg[Bool]]`; read each element, " ++
+    "for example `read(hs[0])`"
+#guard out "" "list(Reg[Bool]) == list(Reg[Bool])" 12 == "S010 1:1"
+#guard out "" "list(Reg[Bool]) == list(Reg[Bool])" 11 == "S015 1:1"
 #guard out "" "[list(Reg[Bool]), list(Wire[Bool])]" == "S010 1:1"
 #guard msg "" "[list(Reg[Bool]), list(Mem[Bool, 2])]" ==
   "`Reg[Bool]` and `Mem[Bool, 2]` have no common type; a handle type joins only with the same " ++
     "handle type, so give both sides one type"
-#guard msg "" "list(Reg[Bool]) == list(Reg[UInt[1]])" ==
+#guard msg "" "[list(Reg[Bool]), list(Reg[UInt[1]])]" ==
   "`Reg[Bool]` and `Reg[UInt[1]]` have no common type; a handle type joins only with the same " ++
     "handle type, so give both sides one type"
 #guard msg "" "[list(Reg[Bool]), list(Bool)]" ==

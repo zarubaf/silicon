@@ -2417,4 +2417,116 @@ def deepLets (body : String) : String :=
 #guard cost (deepLets "  let a = ((p, 1), 1);\n  o := a == a;\n") "M" (depth := 5) == "S015 9:8"
 #guard (cost (deepLets "  let a = ((p, 1), 1);\n  o := c;\n") "M" (depth := 4)).startsWith "total"
 
+/-!
+A list of handles is a list node (section 5.1). `list(T)` of a type with the handle flag gives an
+empty one. `push` and `pop` change it and charge as on a static list (section 5.4). An index
+and `len` refer to it with no charge, so their cost does not grow with the length. `grow` pushes
+into a `mut` formal, and `deep` pushes into the inner list of a `mut` formal.
+-/
+def handleList (body : String) : String :=
+  "type P = (Reg[UInt[8]], Type);\n" ++
+  "fn grow(mut xs: List[Reg[UInt[8]]], x: Reg[UInt[8]]) -> Bool {\n  xs.push(x);\n" ++
+  "  return true;\n}\n" ++
+  "fn deep(mut x: List[List[P]], h: Reg[UInt[8]]) -> Bool {\n" ++
+  "  x[0].push((h, [[[[UInt[8]; 1]; 1]; 1]; 1]));\n  return true;\n}\n" ++
+  "module M() {\n  input c: Bool;\n  input i: UInt[8];\n  output o: UInt[8];\n" ++
+  "  reg r: UInt[8] = 0;\n  reg q: UInt[8] = 0;\n  reg s: UInt[4] = 0;\n  q := i;\n  s := 0;\n" ++
+  "  let mut xs = list(Reg[UInt[8]]);\n" ++ body ++ "}\n"
+#guard exact (handleList ("  xs.push(r);\n  xs.push(q);\n  let b: Reg[UInt[8]] = xs[0];\n" ++
+  "  let n = len(xs);\n  b := i;\n  o := i;\n")) "M" 253
+#guard exact (handleList "  xs.push(r);\n  let h = xs.pop();\n  h := i;\n  o := i;\n") "M" 231
+#guard exact (handleList "  xs.push(r);\n  xs[0] = q;\n  r := i;\n  o := i;\n") "M" 233
+#guard exact (handleList "  let a = grow(xs, r);\n  r := i;\n  o := i;\n") "M" 269
+#guard names (handleList "  xs.push(r);\n  let h = xs.pop();\n  h := i;\n  o := i;\n") "M" "M" ==
+  ["r", "q", "s"]
+def filled (n : Nat) (body : String) : Int :=
+  total (handleList (s!"  comptime for k in 0..{n} \{\n    xs.push(r);\n  }\n" ++ body ++
+    "  r := i;\n  o := i;\n")) "M"
+#guard filled 1 "  let m = len(xs);\n" - filled 1 "" == 4
+#guard filled 40 "  let m = len(xs);\n" - filled 40 "" == 4
+#guard filled 1 "  let m = xs[0];\n" - filled 1 "" == 6
+#guard filled 40 "  let m = xs[0];\n" - filled 40 "" == 6
+
+/-!
+Each error of `push` and `pop` on a list node comes at its step of section 5.4, and one unit
+less stops before it. A `pop` of an empty list and an index out of range are `S013`. A hardware
+arm cannot change the list (`S016`). An element with a hardware leaf is `S011`, also in a tuple
+with a handle. An element of another handle type is `S010`.
+-/
+#guard cost (handleList "  let h = xs.pop();\n  r := i;\n  o := i;\n") "M" (fuel := 105) ==
+  "S013 20:11"
+#guard cost (handleList "  let h = xs.pop();\n  r := i;\n  o := i;\n") "M" (fuel := 104) ==
+  "S015 20:14"
+#guard cost (handleList "  xs.push(r);\n  let h = xs[1];\n  r := i;\n  o := i;\n") "M"
+  (fuel := 112) == "S013 21:14"
+#guard cost (handleList "  xs.push(r);\n  let h = xs[1];\n  r := i;\n  o := i;\n") "M"
+  (fuel := 111) == "S015 21:14"
+#guard cost (handleList "  o := if (c) { push(xs, r) } else { 2 };\n  r := i;\n") "M"
+  (fuel := 108) == "S016 20:17"
+#guard cost (handleList "  o := if (c) { push(xs, r) } else { 2 };\n  r := i;\n") "M"
+  (fuel := 107) == "S015 20:26"
+#guard cost (handleList "  xs.push(r);\n  o := if (c) { 3 } else { pop(xs) };\n  r := i;\n") "M"
+  (fuel := 114) == "S016 21:28"
+#guard cost (handleList "  xs.push(r);\n  o := if (c) { 3 } else { pop(xs) };\n  r := i;\n") "M"
+  (fuel := 113) == "S015 21:28"
+def hwElement : String := handleList "  let mut ys = list(P);\n  ys.push((r, i));\n  o := i;\n"
+#guard cost hwElement "M" (fuel := 151) == "S011 21:11"
+#guard cost hwElement "M" (fuel := 150) == "S015 21:11"
+#guard said (handleList "  xs.push(s);\n") == typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+
+/-!
+A `push` checks the depth of the new element on its path (section 5.4). The type value of the
+depth 5 makes a tuple of the depth 6, so the path of `ys` reaches the depth 7.
+-/
+def deepPush : String :=
+  handleList ("  let mut ys = list(P);\n  ys.push((r, [[[[UInt[8]; 1]; 1]; 1]; 1]));\n" ++
+    "  r := i;\n  o := i;\n")
+#guard (cost deepPush "M" (depth := 7)).startsWith "total 349"
+#guard cost deepPush "M" (depth := 6) == "S015 21:3"
+
+/-!
+The write-back of a list of lists of handles checks the depth of the value (section 5.4). The
+inner list of `deep` grows to the depth 7 in the callee, so the `push` there needs the depth 8.
+The write-back into `t.0` needs the depth 9, so the depth 8 stops at the write-back, at the call.
+A list of `Reg[T]` alone cannot grow above the depth of its type, so `P` holds a `Type`.
+-/
+def deepBack : String :=
+  handleList ("  let mut ys = list(P);\n  let mut t = (list(List[P]),);\n  t.0.push(ys);\n" ++
+    "  let a = deep(t.0, r);\n  r := i;\n  o := i;\n")
+#guard (cost deepBack "M" (depth := 9)).startsWith "total 439"
+#guard cost deepBack "M" (depth := 8) == "S015 23:11"
+#guard (match Cli.costText { budget := { fuel := 100000000, depth := 8 } } deepBack "M" with
+  | .error e => e.msg
+  | _ => "ok") == "the depth 9 goes above the nesting depth 8; raise --depth to at least 9"
+
+/-!
+A `pop` charges the size of its element. An element deeper than the element type can lower the
+depth, so it also charges the size of the root (section 5.4). The deep element below thus adds
+its size 8 to the `pop`.
+-/
+def popOf (pre : String) : Int :=
+  let tail := "  r := i;\n  o := i;\n"
+  (total (handleList ("  let mut ys = list(P);\n" ++ pre ++ "  let h = ys.pop();\n" ++ tail))
+    "M" : Int) - total (handleList ("  let mut ys = list(P);\n" ++ pre ++ tail)) "M"
+def deepElem : String := "  ys.push((r, [[UInt[8]; 1]; 1]));\n"
+#guard popOf "  ys.push((r, Bool));\n" == 6
+#guard popOf deepElem == 20
+#guard popOf (deepElem ++ deepElem) == 28
+#guard popOf (deepElem ++ "  ys.push((r, Bool));\n") == 6
+
+/-!
+`push` refreshes a list node by a delta, so `n` pushes cost `O(n)` (section 5.4). A list part of
+a tuple charges the part count 2 of the tuple node at each `push`. A `pop` refreshes in the same
+way.
+-/
+def pushes (pre step : String) (n : Nat) : Int :=
+  total (handleList (pre ++ s!"  comptime for k in 0..{n} \{\n" ++ step ++ "  }\n" ++
+    "  r := i;\n  o := i;\n")) "M"
+#guard [10, 20, 40, 80].map (pushes "" "    xs.push(r);\n") == [299, 369, 509, 789]
+#guard [10, 20, 40, 80].map (pushes "  let mut t = (r, xs);\n" "    t.1.push(q);\n") ==
+  [336, 436, 636, 1036]
+def filler (n : Nat) : String := s!"  comptime for k in 0..{n} \{\n    xs.push(r);\n  }\n"
+#guard [10, 20, 40, 80].map (fun n => pushes (filler n) "    let h = xs.pop();\n" n) ==
+  [366, 496, 756, 1276]
+
 end Silicon.Source.Test.Elab
