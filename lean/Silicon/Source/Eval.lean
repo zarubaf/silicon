@@ -1106,7 +1106,7 @@ def frameOf (u : String) (sym : Nat) (f : Field) : M (Path × Frame) := do
     set { s with naming.frames := s.naming.frames.insert key id }
     return (path, ⟨some path, id⟩)
 
-def inFrameOf [Runs m] (fr : Frame) (act : m α) : m α :=
+def inFrameOf (fr : Frame) (act : M α) : M α :=
   withTheReader Ctx (fun c => { c with frame := fr }) act
 
 /-! The core name `base` of the tag `key` in the current frame, or a version of it. -/
@@ -1153,11 +1153,11 @@ def named (pos : Pos) (id : Nat) (u : String) : Val → M Val
 One iteration of a `comptime for` with the loop value `v`. It charges the size of `v`, then
 binds `i` in the loop frame `i$v` and runs `act`.
 -/
-def iteration [Runs m] (pos : Pos) (i : Binder) (v : Int) (act : m α) : m α := do
-  monadLift (charge pos (Value.int v).size : M Unit)
-  let (_, fr) ← monadLift (do frameOf i.name.name ((← read).binder i.id) (.int v) : M _)
+def iteration (pos : Pos) (i : Binder) (v : Int) (act : M α) : M α := do
+  charge pos (Value.int v).size
+  let (_, fr) ← frameOf i.name.name ((← read).binder i.id) (.int v)
   inFrameOf fr do
-    monadLift (bindLocal i.id ⟨some .int, false, .static (.int v)⟩ : M Unit)
+    bindLocal i.id ⟨some .int, false, .static (.int v)⟩
     act
 
 /-!

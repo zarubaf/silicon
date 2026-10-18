@@ -900,27 +900,21 @@ def measure (act : M α) : M (α × Nat) := do
   let a ← act
   return (a, start - (← get).fuel)
 
-/-! A monad that runs `M` and changes its context. `Elab` runs its walk in such a monad. -/
-class Runs (m : Type → Type) extends Monad m, MonadLiftT M m, MonadReaderOf Ctx m,
-  MonadWithReaderOf Ctx m
-
-instance : Runs M := {}
-
 /-!
 Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The level reports its
 own depth checks, so it clears `site`.
 -/
-def nested [Runs m] (pos : Pos) (act : m α) : m α := do
+def nested (pos : Pos) (act : M α) : M α := do
   let c ← readThe Ctx
   if c.limit ≤ c.depth then
-    monadLift (fail .S015 pos s!"the nesting depth goes above {c.limit}; raise --depth" : M Unit)
+    fail .S015 pos s!"the nesting depth goes above {c.limit}; raise --depth"
   withTheReader Ctx (fun c => { c with depth := c.depth + 1, site := none }) act
 
 /-!
 Runs `act` in a structural context (section 9.4): its guard starts at the current depth, so it
 is the innermost guard.
 -/
-def structural [Runs m] (act : m α) : m α :=
+def structural (act : M α) : M α :=
   withTheReader Ctx (fun c => { c with guard := some ⟨.structural, c.depth⟩ }) act
 
 /-!
@@ -939,15 +933,13 @@ Runs `act` with an empty frame of locals and the return type `ret`. A waiting re
 caller holds no local of the new frame, and a window of the caller holds no root of it. The
 tables of the caller wait unchanged, with no copy.
 -/
-def inFrame [Runs m] (ret : Option Ty) (act : m α) : m α := do
-  let saved ← monadLift (do
-    let s ← get; return (s.frame, s.holds, s.changes, s.pending) : M _)
-  monadLift (modify fun s =>
-    { s with frame := {}, holds := {}, changes := {}, pending := {} } : M Unit)
+def inFrame (ret : Option Ty) (act : M α) : M α := do
+  let saved ← (do let s ← get; return (s.frame, s.holds, s.changes, s.pending) : M _)
+  modify fun s => { s with frame := {}, holds := {}, changes := {}, pending := {} }
   let r ← withTheReader Ctx (fun c => { c with ret }) act
-  monadLift (modify fun s =>
+  modify fun s =>
     { s with frame := saved.1, holds := saved.2.1, changes := saved.2.2.1,
-             pending := saved.2.2.2 } : M Unit)
+             pending := saved.2.2.2 }
   return r
 
 /-!
