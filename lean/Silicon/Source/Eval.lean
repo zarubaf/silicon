@@ -116,8 +116,10 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
   A function without `return` at its end is `S010` at the call.
-- A port, a resource, or an instance in a function body is `S011`. The parser rejects them
-  first, so only a module body has them.
+- A resource, an instance, or a `:=` in a helper runs as in a module body, after two checks
+  with no charge (section 6.2). Under a guard, it is `S016`, and the text names the function of
+  the outermost call under the guard. In the mode of a `comptime fn`, it is `S011`. The parser
+  rejects a port in a function body, so only a module body has one.
 - A static position needs a static value, else `S011` at the node that uses the value. The
   index arguments, the conditions, and the loop bounds are static positions. The arguments at
   a `comptime` parameter, of `static_assert`, of `error`, and of a constructor `T(x)` are too.
@@ -2302,6 +2304,25 @@ one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `ind
 bound `n` of their caller after its charge. They call entry functions, `spec`, which a name of a
 struct item uses, and the helpers that `call` and `hwStmt` use.
 -/
+/-!
+The kind of a declaration or a `:=` statement in the text "Hardware in a `comptime fn`"
+(section 6.2).
+-/
+def stmtKind : Resolve.Stmt → String
+  | .reg .. => "register"
+  | .wire .. => "wire"
+  | .mem .. => "memory"
+  | .inst .. => "instance"
+  | _ => "`:=`"
+
+/-!
+The text "Hardware in a `comptime fn`" of `S011` (section 6.2): the `comptime fn` `g` of the
+mode reaches the statement of the kind `k` in the function `h`.
+-/
+def staticHardware (g k h : String) : String :=
+  s!"the `comptime fn` `{g}` makes no hardware, but its call reaches this {k} in `{h}`; " ++
+    s!"call `{h}` from a `fn` or a module body"
+
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
     match b with
@@ -2720,7 +2741,9 @@ mutual
   The run at `p` of the function item `i` with the actuals `acts`, in the order of the
   parameters `ps`. It runs in the call frame `<fn>$<k>c` of the call site `k`: the copy-in of
   each actual, then the body `body` at `ip` with the return type `ret`. The write-backs of its
-  `mut` actuals then run in the frame of the caller. `c` is true for a `comptime fn`.
+  `mut` actuals then run in the frame of the caller. `c` is true for a `comptime fn`. The call
+  sets the mode when it names no function and `c` holds, and it records `i` in a guard without
+  a record (section 9.4). Both are O(1), and the return of the call ends both.
   -/
   def invoke (n : Nat) (p : Pos) (i k : Nat) (c : Bool) (u : Ident) (ps : List Resolve.Param)
       (ret : Resolve.TypeExpr) (ip : Pos) (body : List Resolve.Stmt) (acts : List Actual) :
@@ -2728,7 +2751,10 @@ mutual
     let ctx ← read
     let (r, outs) ← nested p <| inFrame none do
       let (path, fr) ← frameOf u.name (ctx.syms.items.getD i 0) (.call k)
-      withReader (fun c => { c with item := i, frame := fr, calls := (u.name, p) :: c.calls }) do
+      withReader (fun x => { x with
+          item := i, frame := fr, calls := (u.name, p) :: x.calls,
+          mode := x.mode <|> (if c then some i else none),
+          guard := x.guard.map fun g => { g with callee := g.callee <|> some i } }) do
         for (q, a) in ps.zip acts do copyIn p c q (← typeExpr n q.ty) a
         let rt ← typeExpr n ret
         let o ← withReader (fun c => { c with ret := some rt }) (block n ip body)
@@ -2851,10 +2877,17 @@ mutual
       | .expr _ v => do
         if let some o ← eval n v then known o.value
         return none
-      | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .input p .. | .output p ..
-      | .inst p .. => do
-        -- Only a function body has a return type.
-        if (← read).ret.isSome then fail .S011 p "a static evaluation makes no hardware"
+      | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .inst p .. => do
+        let c ← read
+        -- A statement reaches a guard only through a call, which records its item, so the
+        -- current item stands in only for a guard without a call.
+        if let some g := c.guard then
+          fail .S016 p (g.effect (c.itemName (g.callee.getD c.item)))
+        if let some m := c.mode then
+          fail .S011 p (staticHardware (c.itemName m) (stmtKind s) (c.itemName c.item))
+        hwStmt n s
+        return none
+      | .input .. | .output .. => do
         hwStmt n s
         return none
       | .alias _ x ty => do
@@ -3177,7 +3210,8 @@ of its top expression. The digest function is `Names.sha16`, and `Elab.observe` 
 -/
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
-  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, "-", [], Names.sha16⟩,
+  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, none, "-", [],
+    Names.sha16⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, {}, #[]⟩)
 
 /-!

@@ -77,7 +77,8 @@ These rules settle the open points of slice 1:
   A resource without a binding gives one at its declaration. A child input without a binding
   gives one at the `instance` statement. The error with the lowest position wins.
 - `S016` comes from the guards of `Eval` (section 9.4). The word type and the depth of a `mem`
-  statement are structural contexts. A function declares no resource and binds nothing.
+  statement are structural contexts. A helper declares and binds in the instantiation of its
+  caller (section 9.5), so its handles stay in that owner.
 - The owner guard of section 9.5 has no check in slice 1. Module arguments are static
   (`S011`), and ports carry data, so a handle cannot reach another owner.
 - The units of an instantiation are its charges from the start of its body to the end of its

@@ -239,8 +239,12 @@ def program : String :=
 #guard out "comptime fn f(n: Int) -> Int {\n    let x: Nat = n;\n    return x;\n}" "f(-2)" ==
   "S012 2:5"
 
-/-! A static evaluation makes no hardware: `:=` in a `fn` is `S011`. -/
-#guard out "fn f(x: Bool) -> Bool {\n    x := x;\n    return x;\n}" "f(true)" == "S011 2:5"
+/-!
+A `comptime fn` makes no hardware: a helper that it calls declares a register, so the register
+is `S011` at its statement (section 9.4).
+-/
+#guard out ("fn g() -> Int {\n    reg r: UInt[8] = 0;\n    return 1;\n}\n" ++
+  "comptime fn cf() -> Int {\n    return g();\n}") "cf()" == "S011 2:5"
 
 /-! Constants evaluate once. A constant that depends on itself is `S019` at the use. -/
 def consts : String :=
