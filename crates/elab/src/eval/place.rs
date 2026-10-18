@@ -443,6 +443,23 @@ impl Evaluator<'_> {
                 None
             };
             base = Opnd::Static(out);
+            // A step that selected a handle ends the segment: the next step reads the handle as
+            // its base (Lean `baseData`), before its index evaluates.
+            while matches!(self.opnd_seen(&base), Seen::Handle(_))
+                && let Some(next) = rest.first()
+            {
+                known = None;
+                if let Sel::Field(q, f) = next {
+                    let out = self.field(*q, base.into_out(), f)?;
+                    rest = rest.get(1..).unwrap_or_default();
+                    if rest.is_empty() {
+                        return Ok(Some(out));
+                    }
+                    base = Opnd::Static(out);
+                } else {
+                    base = self.data(next.pos(), base.into_out())?;
+                }
+            }
         }
     }
 
@@ -528,6 +545,10 @@ impl Evaluator<'_> {
                         moved = Some(*q);
                         break;
                     }
+                    // The part is a handle, so the next step reads it before its index evaluates.
+                    if n + 1 < steps.len() && after.is_some_and(|t| self.tys.get(t).is_handle()) {
+                        break;
+                    }
                 }
                 Err(e) => {
                     stop = Some(e);
@@ -542,24 +563,11 @@ impl Evaluator<'_> {
             }
             known = after;
         }
-        let (parked, mark, split) = self.store.unpark(at);
-        // A step that goes into a list a change reached splits the walk: the first steps walk
-        // the live local, and only the part where they end gets a copy of its old value.
-        let followed = match split {
-            Some(n) => {
-                let (first, rest) = keyed.split_at(n.min(keyed.len()));
-                self.follow_crossed(parked, first, rest, mark.as_ref())
-            }
-            None => self.follow(Opnd::of_out(parked), &keyed, mark.as_ref()),
-        };
-        if let Some(mark) = &mark {
-            self.store.finish(mark);
-        }
         let Followed {
             out,
             at_type,
             string_last,
-        } = followed?;
+        } = self.followed(at, &keyed)?;
         let out = match moved {
             Some(q) if !string_last => self.renewed(q, out)?,
             _ => out,
@@ -574,6 +582,24 @@ impl Evaluator<'_> {
             return Err(e);
         }
         Ok((out, keyed.len(), after))
+    }
+
+    /// The walk of the segment that waited at `at` along its evaluated steps `keyed`. A step that
+    /// goes into a list a change reached splits the walk: the first steps walk the live local, and
+    /// only the part where they end gets a copy of its old value.
+    fn followed(&mut self, at: usize, keyed: &[Key<'_>]) -> Res<Followed> {
+        let (parked, mark, split) = self.store.unpark(at);
+        let followed = match split {
+            Some(n) => {
+                let (first, rest) = keyed.split_at(n.min(keyed.len()));
+                self.follow_crossed(parked, first, rest, mark.as_ref())
+            }
+            None => self.follow(Opnd::of_out(parked), keyed, mark.as_ref()),
+        };
+        if let Some(mark) = &mark {
+            self.store.finish(mark);
+        }
+        followed
     }
 
     /// The path that follows the steps of a segment from a part of an aggregate root of a local,
@@ -1058,7 +1084,7 @@ impl Evaluator<'_> {
             self.store.rebind_local(place.root, y);
             return Ok(());
         }
-        if place.in_list && matches!(y, Val::Hw(_) | Val::Agg(_)) {
+        if place.in_list && y.has_hw(&self.tys) {
             return fail(
                 Code::S011,
                 q,
@@ -1251,8 +1277,7 @@ impl Evaluator<'_> {
         self.normalize(pos, Agg::Ref(sub, part))
     }
 
-    /// The part of a container that the value `v` at `pos` gives. A handle is `S010` until
-    /// slice 3.
+    /// The part of a container that the value `v` at `pos` gives. A handle is a handle leaf.
     fn item(&self, pos: Pos, v: Val) -> Res<Agg> {
         match Agg::of_val(v) {
             Ok(a) => Ok(a),
@@ -1260,7 +1285,7 @@ impl Evaluator<'_> {
             Err(v) => fail(
                 Code::S010,
                 pos,
-                format!("{} is not an element before slice 3", self.text(v.seen())),
+                format!("{} is not data", self.text(v.seen())),
             ),
         }
     }

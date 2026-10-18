@@ -9,7 +9,7 @@
 use super::{Elab, Evaluator, Slot, Stop};
 use crate::agg::{Agg, Base};
 use crate::counters;
-use crate::hw::{Handle, Kind, Op, Val};
+use crate::hw::{Handle, Kind, Op, Seen, Val};
 use crate::names::{self, Field, PathId, Role, Step};
 use crate::ops::Fuel;
 use crate::scan;
@@ -52,7 +52,8 @@ fn agg_text(ev: &Evaluator<'_>, a: &Agg) -> String {
         Agg::Static(v) => v.serialize(&ev.tys),
         Agg::Hw(h) => hw_text(ev, *h),
         Agg::Ref(b, _) => format!("ref {}", base_text(ev, b)),
-        Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) => {
+        Agg::Handle(h) => ev.text(Seen::Handle(h)),
+        Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::Record(_, p) | Agg::List(_, p) => {
             let parts: Vec<String> = p.0.iter().map(|x| agg_text(ev, x)).collect();
             format!("[{}]", parts.join(", "))
         }

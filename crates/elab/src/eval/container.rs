@@ -11,7 +11,7 @@
 use super::{Evaluator, Out, Res, Store, at, fail, need};
 use crate::Code;
 use crate::agg::Agg;
-use crate::hw::{Graph, Part, Seen, Val};
+use crate::hw::{Graph, Handle, Kind as Resource, Part, Seen, Val};
 use crate::int::Int;
 use crate::ops::{self, Fuel};
 use crate::types::{Ty, TyId, Types};
@@ -172,7 +172,15 @@ impl Evaluator<'_> {
 
     /// The type of a piece.
     pub(super) fn piece_ty(&mut self, pos: Pos, p: &Piece<'_>) -> Res<TyId> {
-        match piece_seen(&self.store, p).ty(&self.graph, &mut self.tys) {
+        let handle = match piece_seen(&self.store, p) {
+            Seen::Handle(h) => Some(h.clone()),
+            _ => None,
+        };
+        let ty = match handle {
+            Some(h) => self.handle_ty(&h),
+            None => piece_seen(&self.store, p).ty(&self.graph, &mut self.tys),
+        };
+        match ty {
             Some(t) => Ok(t),
             None => fail(Code::S010, pos, "an element has no type".to_owned()),
         }
@@ -195,6 +203,7 @@ impl Evaluator<'_> {
         enum Is {
             Static,
             Hw(crate::hw::HwId),
+            Handle,
             Agg(bool),
             Other,
         }
@@ -202,7 +211,8 @@ impl Evaluator<'_> {
             Seen::Static(_) => Is::Static,
             Seen::Hw(h) => Is::Hw(h),
             Seen::Agg(a) => Is::Agg(a.stored_ty() == Some(t)),
-            Seen::Handle(_) | Seen::Pending(..) => Is::Other,
+            Seen::Handle(_) => Is::Handle,
+            Seen::Pending(..) => Is::Other,
         };
         match is {
             Is::Static => {
@@ -210,10 +220,11 @@ impl Evaluator<'_> {
                     return Ok(p);
                 };
                 match ops::convert(t, v, &mut self.fuel, &self.tys).map_err(at(pos))? {
-                    Some(w) => Ok(Piece::New(Agg::Static(w))),
+                    Some(w) => Ok(Piece::New(Agg::typed(&mut self.tys, t, w))),
                     None => Ok(p),
                 }
             }
+            Is::Handle => self.conform_leaf(pos, t, &p).map(|()| p),
             Is::Hw(h) => {
                 let ty = self.graph.ty(h);
                 if ty == *self.tys.get(t) {
@@ -242,6 +253,31 @@ impl Evaluator<'_> {
                 "an element of a container is data".to_owned(),
             ),
         }
+    }
+
+    /// The typed use of the handle leaf that `p` is, at the type `t` (Lean `Agg.handleAt` and the
+    /// handle case of `Agg.plan`). A handle type needs a handle of exactly this type. Another
+    /// type with the handle flag is a container of handles, and a data type is a data leaf, each
+    /// with its own text. The compare reads nothing and charges nothing.
+    pub(super) fn conform_leaf(&mut self, pos: Pos, t: TyId, p: &Piece<'_>) -> Res<()> {
+        let Seen::Handle(h) = piece_seen(&self.store, p) else {
+            return Ok(());
+        };
+        let h = h.clone();
+        if self.tys.get(t).is_handle() {
+            if self.handle_ty(&h) == Some(t) {
+                return Ok(());
+            }
+            let a = self.about(piece_seen(&self.store, p));
+            return fail(Code::S010, pos, self.handle_use_text(t, &a));
+        }
+        let a = self.about(piece_seen(&self.store, p));
+        let text = if t.holds_handles() {
+            self.handle_use_text(t, &a)
+        } else {
+            self.data_leaf_text(t, &a)
+        };
+        fail(Code::S010, pos, text)
     }
 
     /// The new container node of the type `ty` at `pos` with the pieces: its depth (`S015`),
@@ -328,7 +364,7 @@ impl Evaluator<'_> {
                 Ty::Array(elem, len) if len.cmp_u64(0) == Ordering::Equal => {
                     let empty = Value::Array(*elem, Vec::new());
                     self.bounded(*node, empty.depth())?;
-                    Ok(Piece::New(Agg::Static(empty)))
+                    Ok(Piece::New(Agg::typed(&mut self.tys, ty, empty)))
                 }
                 _ => mismatch(pos, ty, "`[]`", &self.tys),
             },
@@ -362,18 +398,27 @@ impl Evaluator<'_> {
         bounded(self.limit, self.site, pos, depth)
     }
 
-    /// Checks that `o` can be an element of a container at `pos`. A static value, a hardware
-    /// value, and a hardware aggregate can. A handle is `S010` until slice 3. A literal that
-    /// waits for its type gives the position of its first `[]`.
-    pub(super) fn held(&self, pos: Pos, o: &Out) -> Res<Option<Pos>> {
-        match self.store.seen(o) {
-            Seen::Static(_) | Seen::Hw(_) | Seen::Agg(_) => Ok(None),
-            Seen::Pending(q, _) => Ok(Some(q)),
-            s @ Seen::Handle(_) => fail(
+    /// An element of a container literal at `pos` (Lean `element`). An element is in the `raw`
+    /// context (section 9.2), so a handle is a handle leaf. An own output has no handle type, so
+    /// it reads as data. A domain has no value, so it is `S010`. A literal that waits for its
+    /// type gives the position of its first `[]`.
+    pub(super) fn element(&mut self, pos: Pos, o: Out) -> Res<(Out, Option<Pos>)> {
+        match self.store.seen(&o) {
+            Seen::Pending(q, _) => Ok((o, Some(q))),
+            Seen::Handle(Handle::Domain(d)) => fail(
                 Code::S010,
                 pos,
-                format!("{} is not an element before slice 3", self.text(s)),
+                format!(
+                    "the domain `{}` is not an element; a domain has no value, so remove it from \
+                     the literal",
+                    self.domain_name(*d)
+                ),
             ),
+            Seen::Handle(Handle::Res {
+                kind: Resource::Output,
+                ..
+            }) => Ok((self.data(pos, o)?.into_out(), None)),
+            _ => Ok((o, None)),
         }
     }
 
@@ -385,7 +430,8 @@ impl Evaluator<'_> {
         for x in xs {
             let o = self.eval(x)?;
             let o = need(x, o)?;
-            if let Some(q) = self.held(x.pos(), &o)? {
+            let (o, pending) = self.element(x.pos(), o)?;
+            if let Some(q) = pending {
                 waiting.get_or_insert(q);
             }
             self.store.park(o);

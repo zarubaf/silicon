@@ -69,12 +69,26 @@ pub struct TyId {
     index: usize,
     size: u64,
     depth: u64,
-    strings: bool,
-    funcs: bool,
-    enums: bool,
+    /// The flags of the type metadata, as the bits `STRINGS`, `FUNCS`, `ENUMS`, and `HANDLES`.
+    flags: u8,
+}
+
+/// The flag bits of a `TyId`.
+const STRINGS: u8 = 1;
+const FUNCS: u8 = 2;
+const ENUMS: u8 = 4;
+const HANDLES: u8 = 8;
+
+/// The bit `flag` when `on`, else none.
+fn bit(on: bool, flag: u8) -> u8 {
+    if on { flag } else { 0 }
 }
 
 impl TyId {
+    fn has(self, flag: u8) -> bool {
+        self.flags & flag != 0
+    }
+
     /// Feeds the id to `h`.
     pub fn hash_into(self, h: &mut impl Hasher) {
         h.write_usize(self.index);
@@ -96,7 +110,7 @@ impl TyId {
     /// holds no string.
     #[must_use]
     pub fn holds_string(self) -> bool {
-        self.strings
+        self.has(STRINGS)
     }
 
     /// Whether a function type is `self` or a part of it, at any depth (the function flag of
@@ -104,7 +118,7 @@ impl TyId {
     /// the flag has no `==`.
     #[must_use]
     pub fn holds_fn(self) -> bool {
-        self.funcs
+        self.has(FUNCS)
     }
 
     /// Whether an enum type is `self` or a part of it, at any depth (the enum flag of the type
@@ -112,7 +126,16 @@ impl TyId {
     /// has no `==`.
     #[must_use]
     pub fn holds_enum(self) -> bool {
-        self.enums
+        self.has(ENUMS)
+    }
+
+    /// Whether a handle type is `self` or a part of it, at any depth (the handle flag of the
+    /// type metadata). A struct type reads its field types only, and a function type does not
+    /// take the flag of its parts. A value of a type with the flag is never static
+    /// (section 5.1).
+    #[must_use]
+    pub fn holds_handles(self) -> bool {
+        self.has(HANDLES)
     }
 }
 
@@ -557,9 +580,9 @@ impl Types {
             | Ty::Reg(elem)
             | Ty::Wire(elem)
             | Ty::Input(elem)
-            | Ty::Mem(elem, _) => elem.strings,
-            Ty::Tuple(parts) => parts.iter().any(|part| part.strings),
-            Ty::Fn(params, ret) => ret.strings || params.iter().any(|p| p.ty.strings),
+            | Ty::Mem(elem, _) => elem.holds_string(),
+            Ty::Tuple(parts) => parts.iter().any(|part| part.holds_string()),
+            Ty::Fn(params, ret) => ret.holds_string() || params.iter().any(|p| p.ty.holds_string()),
             _ => false,
         };
         let funcs = match &ty {
@@ -569,8 +592,8 @@ impl Types {
             | Ty::Reg(elem)
             | Ty::Wire(elem)
             | Ty::Input(elem)
-            | Ty::Mem(elem, _) => elem.funcs,
-            Ty::Tuple(parts) => parts.iter().any(|part| part.funcs),
+            | Ty::Mem(elem, _) => elem.holds_fn(),
+            Ty::Tuple(parts) => parts.iter().any(|part| part.holds_fn()),
             _ => false,
         };
         let enums = match &ty {
@@ -580,16 +603,28 @@ impl Types {
             | Ty::Reg(elem)
             | Ty::Wire(elem)
             | Ty::Input(elem)
-            | Ty::Mem(elem, _) => elem.enums,
-            Ty::Tuple(parts) => parts.iter().any(|part| part.enums),
-            Ty::Fn(params, ret) => ret.enums || params.iter().any(|p| p.ty.enums),
+            | Ty::Mem(elem, _) => elem.holds_enum(),
+            Ty::Tuple(parts) => parts.iter().any(|part| part.holds_enum()),
+            Ty::Fn(params, ret) => ret.holds_enum() || params.iter().any(|p| p.ty.holds_enum()),
+            _ => false,
+        };
+        let handles = match &ty {
+            Ty::Reg(_) | Ty::Wire(_) | Ty::Input(_) | Ty::Mem(..) | Ty::Instance(_) => true,
+            Ty::Array(elem, _) | Ty::List(elem) => elem.holds_handles(),
+            Ty::Tuple(parts) => parts.iter().any(|part| part.holds_handles()),
             _ => false,
         };
         let prefix = match &ty {
             Ty::Tuple(parts) => self.prefix_of(parts),
             _ => Vec::new(),
         };
-        self.insert_shaped(ty, (size, depth), (strings, funcs, enums), meta, prefix)
+        self.insert_shaped(
+            ty,
+            (size, depth),
+            (strings, funcs, enums, handles),
+            meta,
+            prefix,
+        )
     }
 
     /// The offsets of the parts `parts`: for each, the sum of the widths of the parts before it.
@@ -609,7 +644,7 @@ impl Types {
         &mut self,
         ty: Ty,
         (size, depth): (u64, u64),
-        (strings, funcs, enums): (bool, bool, bool),
+        (strings, funcs, enums, handles): (bool, bool, bool, bool),
         meta: Meta,
         prefix: Vec<u64>,
     ) -> TyId {
@@ -617,9 +652,10 @@ impl Types {
             index: self.entries.len(),
             size,
             depth,
-            strings,
-            funcs,
-            enums,
+            flags: bit(strings, STRINGS)
+                | bit(funcs, FUNCS)
+                | bit(enums, ENUMS)
+                | bit(handles, HANDLES),
         };
         let zero_depth = self.zero_depth_of(&ty, depth);
         self.entries.push(Entry {
@@ -1018,7 +1054,7 @@ impl Types {
         let ty = self.insert_shaped(
             Ty::Instance(i),
             (size, depth),
-            (false, false, false),
+            (false, false, false, true),
             Meta::new(0, 0, 0, false),
             Vec::new(),
         );
@@ -1053,15 +1089,16 @@ impl Types {
             .args
             .iter()
             .fold(1u64, |sum, arg| sum.saturating_add(arg.size()));
-        let strings = fields.iter().any(|field| field.strings);
+        let strings = fields.iter().any(|field| field.holds_string());
         // The function flag of a struct reads the field types, not the static arguments.
-        let funcs = fields.iter().any(|field| field.funcs);
-        let enums = fields.iter().any(|field| field.enums);
+        let funcs = fields.iter().any(|field| field.holds_fn());
+        let enums = fields.iter().any(|field| field.holds_enum());
+        let handles = fields.iter().any(|field| field.holds_handles());
         let prefix = self.prefix_of(&fields);
         let ty = self.insert_shaped(
             Ty::Struct(s),
             (size, depth),
-            (strings, funcs, enums),
+            (strings, funcs, enums, handles),
             meta,
             prefix,
         );
@@ -1177,7 +1214,7 @@ impl Types {
         let ty = self.insert_shaped(
             Ty::Enum(EnumId(item)),
             (1, depth),
-            (false, false, true),
+            (false, false, true, false),
             meta,
             prefix,
         );

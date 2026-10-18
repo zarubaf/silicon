@@ -246,7 +246,9 @@ impl Evaluator<'_> {
             total = total.saturating_add(match seen {
                 Seen::Static(v) | Seen::Agg(Agg::Static(v)) => v.measure_charge(),
                 Seen::Agg(Agg::Ref(_, t)) => part_charge(&self.tys, *t),
-                Seen::Agg(Agg::Array(_, ps) | Agg::Tuple(_, ps) | Agg::Record(_, ps)) => {
+                Seen::Agg(
+                    Agg::Array(_, ps) | Agg::Tuple(_, ps) | Agg::Record(_, ps) | Agg::List(_, ps),
+                ) => {
                     work.extend(ps.0.iter().map(Agg::seen));
                     1
                 }
@@ -352,7 +354,18 @@ impl Evaluator<'_> {
         match a {
             Agg::Static(v) => work.push(Piece::Value(v)),
             Agg::Hw(h) => work.push(Piece::Hw(*h)),
+            Agg::Handle(h) => work.push(Piece::Handle(h)),
             Agg::Ref(_, t) => work.push(Piece::Part(*t)),
+            Agg::List(n, ps) => {
+                let elem = match self.tys.get(n.ty) {
+                    Ty::List(elem) => *elem,
+                    _ => n.ty,
+                };
+                let mut pieces = vec![Piece::Text("(list "), Piece::Type(elem), Piece::Text(" (")];
+                pieces.extend(spaced(ps.0.iter().map(Piece::Agg)));
+                pieces.push(Piece::Text("))"));
+                push_all(work, pieces);
+            }
             Agg::Array(n, ps) => {
                 let elem = match self.tys.get(n.ty) {
                     Ty::Array(elem, _) => *elem,

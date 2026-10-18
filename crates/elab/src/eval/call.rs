@@ -314,7 +314,7 @@ impl Evaluator<'_> {
                             let role = ev.paths.push(path, Step::Role(Role::Ret));
                             Out::Made(ev.bind_hw(pos, role, h))
                         }
-                        Some(Val::Agg(a)) => {
+                        Some(Val::Agg(a)) if a.leaves(&ev.tys) > 0 => {
                             let role = ev.paths.push(path, Step::Role(Role::Ret));
                             Out::Made(Val::Agg(Box::new(ev.bind_agg(pos, role, *a)?)))
                         }

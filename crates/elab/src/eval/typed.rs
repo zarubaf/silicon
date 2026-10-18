@@ -7,6 +7,7 @@
 use super::container::Piece;
 use super::list::Typed;
 use super::{Evaluator, Out, Res};
+use crate::agg::Agg;
 use crate::hw::Val;
 use crate::types::TyId;
 use parse::ast::Pos;
@@ -51,7 +52,7 @@ impl Site for Binding {
         out: Out,
     ) -> Res<Val> {
         if ev.tys.get(t).is_handle() {
-            ev.handle_use(pos, t, out)
+            ev.handle_use(pos, t, &out)
         } else {
             Passed.site_use(ev, pos, t, copies, out)
         }
@@ -85,9 +86,14 @@ impl Site for Field {
         _copies: bool,
         out: Out,
     ) -> Res<Piece<'static>> {
-        ev.later_handle(pos, t)?;
+        if ev.tys.get(t).is_handle() {
+            return Ok(Piece::New(Agg::Handle(ev.handle_leaf(pos, t, &out)?)));
+        }
         let out = ev.settle(pos, t, out)?;
-        let out = ev.data(self.0, out)?.into_out();
+        let out = ev.data_at(self.0, t, out)?.into_out();
+        if ev.is_handle(&out) {
+            return ev.handle_wrong(pos, t, ev.store.seen(&out));
+        }
         ev.conform_piece(pos, t, Piece::Out(out))
     }
 }
