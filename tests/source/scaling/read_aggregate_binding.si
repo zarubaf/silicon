@@ -1,0 +1,15 @@
+// T3 of the work-counter tests of the handle types (issue #277). N lets `let x = read(r)` of a register with
+// 64 leaves for each let. Each binding charges the zero size of the type before it expands its
+// leaves, so the work is bounded by the fuel.
+// SCALE read_aggregate_binding 4 8 16 32 64
+// TOP M()
+module M() {
+    input x: [[UInt[8]; 64]; {N}];
+    output o: UInt[8];
+    reg r: [[UInt[8]; 64]; {N}] = [[UInt[8]; 64]; {N}]();
+    r := x;
+// REPEAT i {N}
+    let q{i} = read(r);
+// END
+    o := read(r)[0][0];
+}
