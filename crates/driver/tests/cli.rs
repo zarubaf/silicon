@@ -1253,7 +1253,8 @@ fn observe_prints_the_records_before_the_first_error() -> Test {
         (
             "(record 5 3 M () (string \"one\") (int 1))\n\
              (record 6 3 M () (string \"two\") (hw (uint 8)))\n\
-             error[S018]: 4:3: `r` has no binding\n",
+             error[S018]: 4:3: `r` has no binding; bind it with `r := ...;`, or remove its \
+             declaration\n",
             Some(1)
         )
     );
