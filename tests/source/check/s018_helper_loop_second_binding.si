@@ -1,0 +1,17 @@
+// S018: one call of a helper runs its `:=` twice for one wire in a `comptime for`. The repeat comes from one call, so the text is the plain second binding, not the text of a helper.
+// TOP M()
+fn drive(w: Wire[UInt[8]], x: UInt[8]) -> () {
+    comptime for i in 0..2 {
+        // expected-error S018 @+2
+        // expected-message: `w` has a second binding; the first binding is at 7:9, and the declaration is at 14:5; remove one of the two bindings
+        w := x;
+    }
+    return ();
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    wire w: UInt[8];
+    drive(w, x);
+    o := w;
+}

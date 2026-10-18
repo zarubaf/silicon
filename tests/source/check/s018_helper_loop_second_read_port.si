@@ -1,0 +1,18 @@
+// S018: one call of a helper runs its `read_port` twice for one memory in a `comptime for`. The repeat comes from one call, so the text is the plain second `read_port`, not the text of a helper.
+// TOP M()
+fn get(m: Mem[UInt[8], 4], a: UInt[2]) -> UInt[8] {
+    comptime for i in 0..2 {
+        // expected-error S018 @+2
+        // expected-message: the memory `m` has a second `read_port`; the first call is at 7:17; call `read_port` once and keep its response in a `let`
+        let r = m.read_port(a, true);
+    }
+    return 0;
+}
+module M() {
+    input a: UInt[2];
+    input d: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    write_port(m, a, d, true);
+    o := get(m, a);
+}
