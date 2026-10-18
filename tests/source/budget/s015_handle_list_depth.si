@@ -1,0 +1,14 @@
+// The depth of a list of handles counts the depth of its element type, and the depth of `Reg[B]` is 1 more than the depth
+// of `B`. With `B` of depth 3, the type `Reg[B]` has depth 4, and the list of `Reg[B]` has depth 5. With the nesting
+// depth 5 the file elaborates, and with 4 the type of the list fails with `S015`.
+// DEPTH 5
+// TOP M()
+module M() {
+    type A = [UInt[8]; 2];
+    type B = [A; 2];
+    reg r: B = B();
+    r := B();
+    let mut xs = list(Reg[B]);
+    xs.push(r);
+    let rs = [r, r];
+}

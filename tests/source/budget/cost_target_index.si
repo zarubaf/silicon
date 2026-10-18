@@ -1,0 +1,15 @@
+// The cost of the `:=` targets `rs[i] := e` (section 5.2): each step charges 1, and the index evaluates. The fuel equal to
+// the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 276
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg a: UInt[8] = 0;
+    reg b: UInt[8] = 0;
+    reg c: UInt[8] = 0;
+    reg d: UInt[8] = 0;
+    let rs = [a, b, c, d];
+    comptime for i in 0..4 {
+        rs[i] := x;
+    }
+}

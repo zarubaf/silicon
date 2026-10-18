@@ -1,0 +1,16 @@
+// The cost of `push` and `pop` on a list of handles (section 5.4, "Lists"): each charges the size of the element and
+// changes the live list in place. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 211
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let mut xs = list(Reg[UInt[8]]);
+    comptime for i in 0..6 {
+        xs.push(r);
+    }
+    comptime for i in 0..6 {
+        let y = xs.pop();
+    }
+}

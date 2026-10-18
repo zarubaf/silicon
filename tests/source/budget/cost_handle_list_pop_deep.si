@@ -1,0 +1,18 @@
+// The cost of `pop` from a list of tuples of handles: `pop` charges the size of the root, because an element can be
+// deeper than its type says, and `push` charges the element. The fuel equal to the total of `cost` succeeds, and one unit
+// less gives `S015`.
+// FUEL 341
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    type P = (Reg[UInt[8]], (Reg[UInt[8]], Reg[UInt[8]]));
+    let mut xs = list(P);
+    comptime for i in 0..4 {
+        xs.push((r, (r, r)));
+    }
+    comptime for i in 0..4 {
+        let y = xs.pop();
+    }
+}
