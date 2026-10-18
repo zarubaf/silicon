@@ -141,7 +141,7 @@ def handleTy (p : Pos) (k : PrimType) (vs : List Val) : M Ty := do
       notHandle p d
       unless d.info.data do
         fail .S010 p (s!"`{x}` takes a hardware data type, not `{d.text}`; use a fixed-width " ++
-          s!"type, for example `{e}`")
+          "type, for example `UInt[8]`")
       pure (if k == .reg then Ty.reg d else if k == .wire then Ty.wire d else Ty.input d)
   bounded p t.depth
   charge p t.size
