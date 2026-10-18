@@ -108,6 +108,8 @@ pub(crate) struct Counts {
     pub words: u64,
     /// The pieces that the walk of the text of a type or a value in a message visited.
     pub texted: u64,
+    /// The parts that the read of a container of handles visited, and the types that it made.
+    pub read: u64,
 }
 
 impl Counts {
@@ -158,6 +160,7 @@ impl Counts {
             sided,
             words,
             texted,
+            read,
         } = *self;
         [
             scanned,
@@ -203,6 +206,7 @@ impl Counts {
             sided,
             words,
             texted,
+            read,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -255,6 +259,7 @@ pub(crate) enum Count {
     Sided,
     Words,
     Texted,
+    Read,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -336,6 +341,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Sided => &mut c.sided,
             Count::Words => &mut c.words,
             Count::Texted => &mut c.texted,
+            Count::Read => &mut c.read,
         };
         *field += n;
     }

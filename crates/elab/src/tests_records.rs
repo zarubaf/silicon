@@ -1880,15 +1880,15 @@ fn the_messages_of_diagnostic_equal_those_of_lean() {
     let child = "  instance u = C();\n  u.a := c;\n";
     assert_eq!(
         said(&with_ports(child, "  diagnostic(u.a, 1);\n", CHILD)),
-        "an input of a child is a target; it is never read"
+        "the input `a` of `u` is a target only; read the value that you bind to it"
     );
     assert_eq!(
         said(&with_ports(child, "  diagnostic(u, 1);\n", CHILD)),
-        "an instance is not data"
+        "`u` is an instance, not data; read its outputs as `u.q`"
     );
     assert_eq!(
         said(&with_ports(MEMORY, "  diagnostic(m, 1);\n", "")),
-        "a memory is not data"
+        "`m` is a memory, not data; read a word with `read_port`"
     );
     assert_eq!(
         said(&body("  diagnostic(clock, 1);\n")),

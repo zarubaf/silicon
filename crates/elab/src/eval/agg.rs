@@ -70,10 +70,22 @@ impl Evaluator<'_> {
 
     /// A read at `pos` of the name `base` of the type `t`: a port, a register, a wire, or a
     /// child output (section 5.5). The read makes a value of the depth of a zero of `t`, so it
-    /// checks this depth first, as `T()` does. Then it gives the reference in its normal form.
+    /// checks this depth first, as `T()` does. A read of a leaf in a container adds the `above`
+    /// nodes over the leaf to this depth (section 5.4). Then it gives the reference in its
+    /// normal form.
+    pub(super) fn read_agg(&mut self, pos: Pos, base: Base, t: TyId, above: u64) -> Res<Agg> {
+        self.bounded(pos, above.saturating_add(self.tys.zero_depth(t)))?;
+        self.normal(pos, Agg::Ref(base, t))
+    }
+
+    /// `read_agg` as a value, with no node above.
     pub(super) fn read_ref(&mut self, pos: Pos, base: Base, t: TyId) -> Res<Val> {
-        self.bounded(pos, self.tys.zero_depth(t))?;
-        self.normalize(pos, Agg::Ref(base, t))
+        Ok(self.read_agg(pos, base, t, 0)?.into_val())
+    }
+
+    /// The normal form of the aggregate `a` at `pos` as a value (`normal`).
+    pub(super) fn normalize(&mut self, pos: Pos, a: Agg) -> Res<Val> {
+        Ok(self.normal(pos, a)?.into_val())
     }
 
     /// The normal form of the aggregate `a` at `pos`. A reference without a hardware leaf is a
@@ -81,7 +93,7 @@ impl Evaluator<'_> {
     /// type from the metadata before the zero exists (section 5.4), so a huge empty part fails
     /// before any work. A reference of a scalar type is a hardware value. Another reference
     /// stays lazy: it neither expands nor charges.
-    pub(super) fn normalize(&mut self, pos: Pos, a: Agg) -> Res<Val> {
+    pub(super) fn normal(&mut self, pos: Pos, a: Agg) -> Res<Agg> {
         match a {
             Agg::Ref(base, t) => {
                 if self.tys.meta(t).leaves.is_zero() {
@@ -90,9 +102,9 @@ impl Evaluator<'_> {
                         .pay_int(&self.tys.meta(t).zero_size)
                         .map_err(at(pos))?;
                 }
-                Ok(self.part_of(pos, base, t)?.into_val())
+                self.part_of(pos, base, t)
             }
-            a => Ok(a.into_val()),
+            a => Ok(a),
         }
     }
 

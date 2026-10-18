@@ -237,3 +237,90 @@ fn w3_a_binding_of_a_read_expands_its_leaves_after_its_charge() {
         wide.used / 2
     );
 }
+
+/// The array of the `n` registers `r0` to `r{n-1}` of the data type `ty`, as a module body that
+/// binds it to `rs` and `ss`.
+fn registers(n: usize, ty: &str) -> String {
+    let mut src = String::new();
+    for k in 0..n {
+        writeln!(src, "    reg r{k}: {ty} = {ty}();\n    r{k} := {ty}();").unwrap();
+    }
+    let list = (0..n)
+        .map(|k| format!("r{k}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(src, "    let rs = [{list}];\n    let ss = [{list}];").unwrap();
+    src
+}
+
+/// Issue #278, W1. The equality `rs == ss` of two arrays of `n` registers reads each leaf once,
+/// after it charges the sizes. The work is linear in `n` and within a constant of the fuel.
+#[test]
+fn c1_the_equality_of_arrays_of_registers_reads_each_leaf_once() {
+    let at = |n: usize, key: u64| {
+        let mut src = "module M() {\n    output o: Bool;\n".to_owned();
+        src.push_str(&registers(n, "UInt[8]"));
+        src.push_str("    o := rs == ss;\n}\n");
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(64, 100), at(128, 101));
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+}
+
+/// Issue #278, W7. A data read of `k` registers of an aggregate type with the zero size `L`
+/// charges `L` for each register, before it expands anything. A run with half of the fuel stops
+/// with `S015` before the later reads, and its work stays within a constant of its fuel.
+#[test]
+fn c7_a_data_read_of_aggregate_registers_pays_each_zero_size_first() {
+    let source = |k: usize| {
+        let mut src = "module M() {\n    output o: Bool;\n".to_owned();
+        src.push_str(&registers(k, "[UInt[8]; 64]"));
+        src.push_str("    o := rs == ss;\n}\n");
+        src
+    };
+    let (n, twice) = (
+        passing(110, 1000, &source(16)),
+        passing(111, 1000, &source(32)),
+    );
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+    let half = run_fuel(twice.used / 2, 1000, &source(32));
+    assert_eq!(half.error.as_ref().map(|e| e.0.as_str()), Some("S015"));
+    assert!(
+        half.counts.total() <= 8 * (twice.used / 2),
+        "{} {}",
+        half.counts.total(),
+        twice.used / 2
+    );
+}
+
+/// Issue #278, R16. A data read of `[[T; 0]; n]` makes the data type of the inner array once,
+/// though `T` is a tuple of 4096 elements with a register. The charge of the read is the size of
+/// the value, which does not follow `T`, so the work must not follow it either.
+#[test]
+fn c10_the_data_type_of_a_container_is_made_once() {
+    let at = |n: usize, key: u64| {
+        let mut src = "type T = (\n    Reg[UInt[8]],\n".to_owned();
+        src.push_str(&"    UInt[8],\n".repeat(4095));
+        src.push_str(
+            ");\nmodule M() {\n    output o: Bool;\n    reg r: UInt[8] = 0;\n    r := 0;\n",
+        );
+        src.push_str("    let e: [T; 0] = [];\n");
+        let list = vec!["e"; n].join(", ");
+        writeln!(src, "    let xs = [{list}];\n    o := xs == xs;\n}}").unwrap();
+        passing(key, 1000, &src)
+    };
+    let (n, twice) = (at(64, 120), at(128, 121));
+    assert!(
+        twice.counts.read < 4 * 128 + 4096 + 64,
+        "{:?}",
+        twice.counts
+    );
+    assert!(
+        twice.counts.read - n.counts.read <= 8 * 64,
+        "{} {}",
+        n.counts.read,
+        twice.counts.read
+    );
+}
