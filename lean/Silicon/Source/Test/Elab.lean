@@ -2705,4 +2705,31 @@ def flagUse5 : String := flagLets "  let a = T(r);\n"
 #guard cost flagUse5 "M" (fuel := 192) == "S010 22:11"
 #guard cost flagUse5 "M" (fuel := 191) == "S015 22:11"
 
+/-!
+A read of an empty container of memories, instances, or inputs finds no leaf to report at. Its
+result keeps the handle flag, so it is `S010` at the node with the text "Handles as data"
+(section 5.4). The size charges first, so one unit less stops at the node. An empty array of
+registers reads as an empty array of data.
+-/
+def handlesData (t : String) : String :=
+  s!"a `data` context does not read `{t}`, a type that holds a memory, an instance, or an " ++
+    "input; read the data of each element"
+def emptyMems : String :=
+  flagLets "  let e: [Mem[UInt[8], 4]; 0] = [];\n  let b: [UInt[8]; 0] = e;\n"
+#guard said emptyMems == handlesData "[Mem[UInt[8], 4]; 0]"
+#guard cost emptyMems "M" (fuel := 205) == "S010 23:3"
+#guard cost emptyMems "M" (fuel := 204) == "S015 23:3"
+def emptyInsts : String :=
+  flagLets "  let e: [Instance[C, 8]; 0] = [];\n  o := if (i == 0) { e == e } else { false };\n"
+#guard said emptyInsts == handlesData "[Instance[C, 8]; 0]"
+#guard cost emptyInsts "M" (fuel := 191) == "S010 23:22"
+#guard cost emptyInsts "M" (fuel := 190) == "S015 23:22"
+def emptyInputs : String :=
+  flagLets "  let e: [Input[UInt[8]]; 0] = [];\n  let t = (e, r);\n  let b = t == t;\n"
+#guard said emptyInputs == handlesData "([Input[UInt[8]]; 0], Reg[UInt[8]])"
+#guard cost emptyInputs "M" (fuel := 194) == "S010 24:11"
+#guard cost emptyInputs "M" (fuel := 193) == "S015 24:11"
+#guard (cost (handleLets ("  let e: [Reg[UInt[8]]; 0] = [];\n  let b: [UInt[8]; 0] = e;\n" ++
+  "  r := i;\n")) "M").startsWith "total"
+
 end Silicon.Source.Test.Elab
