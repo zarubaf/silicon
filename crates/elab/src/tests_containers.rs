@@ -741,7 +741,7 @@ fn a_part_of_a_resource_is_not_a_target() {
             "module M() domains() {\n  wire w: UInt[8];\n  w[1 / 0] := 1;\n}\n",
             "M"
         ),
-        "S017 3:3"
+        "S013 3:5"
     );
     assert_eq!(
         top_cost(
