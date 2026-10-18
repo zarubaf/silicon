@@ -215,12 +215,17 @@ def handleTy? : Ty → Bool
   | _ => false
 
 /-!
-The text "Typed use at a handle type" of section 6.2. It names the handle type `t` of the
-position and the value or the leaf `a` at it.
+The text of a wrong value or leaf `a` at the type `t` with the handle flag (section 6.2). A
+handle type gives "Typed use at a handle type". Another type, such as `[Reg[UInt[8]]; 1]`, is
+not a handle type, so it gives "Typed use at a container of handles".
 -/
 def handleUseText (t : Ty) (a : String) : String :=
-  s!"expected `{t.text}`, but the value is {a}; a handle type takes only a handle of exactly " ++
-    "this type, so give such a handle or change the type"
+  if handleTy? t then
+    s!"expected `{t.text}`, but the value is {a}; a handle type takes only a handle of exactly " ++
+      "this type, so give such a handle or change the type"
+  else
+    s!"expected `{t.text}`, but the value is {a}; a value of `{t.text}` takes only handles of " ++
+      "exactly its handle types, so give such a value or change the type"
 
 /-!
 The text "Handle at a data leaf" of section 6.2. It names the data type `t` of the position in a
