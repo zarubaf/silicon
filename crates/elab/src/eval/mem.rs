@@ -10,7 +10,8 @@
 //! 4. The typed uses come in the order of the arguments: `addr` at `UInt[A]`, `en` at `Bool`,
 //!    and `data` at the word type.
 //! 5. The memory records the first request of each kind. A second call runs the same steps and
-//!    charges and keeps the first request. Its `S018` waits for the end of the body.
+//!    charges and keeps the first request and the position of the first call. Its `S018` waits
+//!    for the end of the body.
 //! 6. `read_port` then charges the struct use of `ReadResponse[T]`, checks the depth of the
 //!    response, and charges its zero size. The response refers to the word and to `m$0rvalid`,
 //!    so it makes no leaf walk. `write_port` gives `()`.
@@ -65,12 +66,11 @@ impl Evaluator<'_> {
                 };
                 let addr = self.request_part(pos, addr_ty, x)?;
                 let en = self.request_part(pos, bool_ty, e)?;
-                if let Some(mem) = self.mem_mut(id) {
-                    if mem.read.is_some() {
-                        mem.dup = Some(second(mem.dup, pos, "read_port"));
-                    } else {
-                        mem.read = Some((addr, en));
-                    }
+                if !self.second_call(pos, id, false)
+                    && let Some(mem) = self.mem_mut(id)
+                {
+                    mem.read = Some((addr, en));
+                    mem.read_at = Some(pos);
                 }
                 self.response(pos, path, word).map(Some)
             }
@@ -81,12 +81,11 @@ impl Evaluator<'_> {
                 let addr = self.request_part(pos, addr_ty, x)?;
                 let data = self.request_part(pos, word, y)?;
                 let en = self.request_part(pos, bool_ty, e)?;
-                if let Some(mem) = self.mem_mut(id) {
-                    if mem.write.is_some() {
-                        mem.dup = Some(second(mem.dup, pos, "write_port"));
-                    } else {
-                        mem.write = Some((addr, data, en));
-                    }
+                if !self.second_call(pos, id, true)
+                    && let Some(mem) = self.mem_mut(id)
+                {
+                    mem.write = Some((addr, data, en));
+                    mem.write_at = Some(pos);
                 }
                 Ok(Some(Out::Made(Val::Static(Value::Unit))))
             }
@@ -150,15 +149,5 @@ impl Evaluator<'_> {
                 "the response has the wrong shape".to_owned(),
             ),
         }
-    }
-}
-
-/// The earlier of the recorded second call and this one, with the callee.
-fn second(old: Option<(Pos, &'static str)>, pos: Pos, g: &'static str) -> (Pos, &'static str) {
-    #[cfg(test)]
-    crate::counters::add(crate::counters::Count::Seconds, 1);
-    match old {
-        Some((at, port)) if pos >= at => (at, port),
-        _ => (pos, g),
     }
 }
