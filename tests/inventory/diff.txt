@@ -12,6 +12,7 @@ tests/core/corpus/ops_select.sil run PASS
 tests/core/corpus/ops_shift.sil run PASS
 tests/core/corpus/reg_self.sil run PASS
 tests/core/corpus/reg_state.sil run PASS
+tests/core/corpus/reg_unread.sil run PASS
 tests/core/corpus/unused_module.sil run PASS
 tests/core/corpus/wide.sil run PASS
 tests/source/corpus/aggregate_ports.si run PASS
@@ -28,6 +29,7 @@ tests/source/corpus/fn_alu_table.si run PASS
 tests/source/corpus/hierarchy_parameters.si run PASS
 tests/source/corpus/list_scrambler.si run PASS
 tests/source/corpus/match_wide_address.si run PASS
+tests/source/corpus/mem_unread_valid.si run PASS
 tests/source/corpus/memory_record.si run PASS
 tests/source/corpus/names_keywords.si run PASS
 tests/source/corpus/parked_reads.si run PASS

@@ -31,6 +31,8 @@ tests/core/corpus/reg_self.sil main SKIP #20
 tests/core/corpus/reg_self.sil lowering SKIP #20
 tests/core/corpus/reg_state.sil main PASS
 tests/core/corpus/reg_state.sil lowering PASS
+tests/core/corpus/reg_unread.sil main PASS
+tests/core/corpus/reg_unread.sil lowering PASS
 tests/core/corpus/unused_module.sil main PASS
 tests/core/corpus/unused_module.sil lowering PASS
 tests/core/corpus/wide.sil main PASS
@@ -67,6 +69,9 @@ tests/source/corpus/list_scrambler.si main PASS
 tests/source/corpus/list_scrambler.si lowering PASS
 tests/source/corpus/match_wide_address.si main PASS
 tests/source/corpus/match_wide_address.si lowering PASS
+tests/source/corpus/mem_unread_valid.si main PASS
+tests/source/corpus/mem_unread_valid.si lowering PASS
+- model mem$$4x4_r1w1 PASS
 tests/source/corpus/memory_record.si main PASS
 tests/source/corpus/memory_record.si lowering PASS
 - model mem$$6x5_r1w1 PASS
