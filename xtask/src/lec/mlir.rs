@@ -346,7 +346,9 @@ fn black_box(name: &str, header: &str) -> Result<BlackBox> {
 /// holds each data port. The register of an input takes the input, so LEC
 /// compares each input. The register of an output drives the output, so LEC
 /// sees each output as a free input. Its next value is 0, because a register
-/// that is its own next value crashes CIRCT (#20).
+/// that is its own next value crashes CIRCT (#20). The registers are
+/// `seq.firreg`, as the Verilog import makes them, because `--canonicalize`
+/// deletes a `seq.compreg` that nothing reads and keeps a `seq.firreg`.
 ///
 /// `verilog_stand_ins` writes the same stand-in in Verilog. `firtool` cannot
 /// make it from this MLIR, because it deletes the registers of the inputs:
@@ -363,11 +365,14 @@ fn stand_in(name: &str, header: &str) -> Result<String> {
         let p = &port.name;
         match port.dir {
             Dir::In => {
-                let _ = writeln!(out, "  %{reg} = seq.compreg %{p}, %{clock} : i{width}");
+                let _ = writeln!(out, "  %{reg} = seq.firreg %{p} clock %{clock} : i{width}");
             }
             Dir::Out => {
                 let _ = writeln!(out, "  %{zeros} = hw.constant 0 : i{width}");
-                let _ = writeln!(out, "  %{reg} = seq.compreg %{zeros}, %{clock} : i{width}");
+                let _ = writeln!(
+                    out,
+                    "  %{reg} = seq.firreg %{zeros} clock %{clock} : i{width}"
+                );
                 zeros += 1;
                 outputs.push((format!("%{reg}"), format!("i{width}")));
             }
@@ -548,9 +553,9 @@ hw.module.extern @mem$$1x4_r0w0(in %clk : !seq.clock)
         assert_eq!(
             defined(LEAN, &models).unwrap(),
             "hw.module @blk(in %c : !seq.clock, in %a : i4, out y : i2) {\n  \
-             %reg$$blk$$a = seq.compreg %a, %c : i4\n  \
+             %reg$$blk$$a = seq.firreg %a clock %c : i4\n  \
              %0 = hw.constant 0 : i2\n  \
-             %reg$$blk$$y = seq.compreg %0, %c : i2\n  \
+             %reg$$blk$$y = seq.firreg %0 clock %c : i2\n  \
              hw.output %reg$$blk$$y : i2\n}\n\
              hw.module @top(in %clk : !seq.clock) {\n  hw.output\n}\n\
              hw.module @mem$$1x4_r0w0(in %clk : !seq.clock) {\n  hw.output\n}\n"
