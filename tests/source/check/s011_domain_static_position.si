@@ -1,0 +1,10 @@
+// S011: a domain has no data, so it is never static. A module argument that holds the domain gives the text of the domain.
+// TOP M()
+module C(comptime p: UInt[8]) {
+}
+module M() {
+    let d = clock;
+    // expected-error S011 @+2
+    // expected-message: a module argument holds the domain `clock`, but a domain is never static; remove it from this static position
+    instance u = C(d);
+}

@@ -1,0 +1,14 @@
+// S011: an argument of a comptime `fn` takes only static values. An array of registers is no static value, also when
+// the parameter has a data type.
+// TOP M()
+comptime fn f(p: [UInt[8]; 2]) -> Nat {
+    return 1;
+}
+module M() {
+    reg r: UInt[8] = 0;
+    r := 1;
+    let rs = [r, r];
+    // expected-error S011 @+2
+    // expected-message: an argument of a comptime fn takes only static values, but a value of `[Reg[UInt[8]]; 2]` can hold handles; pass the data through a port, or use the handles in the module that declares them
+    let n = f(rs);
+}

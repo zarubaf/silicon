@@ -1,7 +1,7 @@
 // S011: a `const` takes only static values, so its type is no handle type. The error is at the item, when a use evaluates it.
 // TOP M()
 // expected-error S011 @+2
-// expected-message: a const takes only static values, so its type cannot be the handle type `Reg[UInt[8]]`; use a data type, for example `UInt[8]`
+// expected-message: a const takes only static values, so its type cannot be `Reg[UInt[8]]`, a type that holds a handle type; use a data type, for example `UInt[8]`
 const X: Reg[UInt[8]] = 1;
 module M() {
     let q = X;
