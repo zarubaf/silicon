@@ -233,15 +233,19 @@ The normal form of the aggregate `a` at `pos` (section 5.1). A reference without
 checks the size limit before the static value exists (section 5.4). Then it charges the zero
 size of its type from the metadata. Another part keeps its form.
 -/
-def normalize (pos : Pos) : Agg → M Val
+def Agg.normal (pos : Pos) : Agg → M Agg
   | .ref b t => do
     if t.info.leaves = 0 then
       if over t.info.zeroSize then fail .S015 pos zeroLimitText
       charge pos t.info.zeroSize
     match Agg.part (← get).specs pos b t with
-    | some a => return a.val
+    | some a => return a
     | none => fail .S010 pos s!"{t.text} has no zero"
-  | a => pure a.val
+  | a => pure a
+
+/-! The normal form of the aggregate `a` at `pos` as a value (`Agg.normal`). -/
+def normalize (pos : Pos) (a : Agg) : M Val := do
+  return (← Agg.normal pos a).val
 
 /-!
 A read at `pos` of the name `b` of the type `t`: a port, a register, a wire, or a child output
@@ -250,9 +254,13 @@ first (`S015`), as `T()` does. A read of a leaf in a container adds the `above` 
 leaf to this depth (section 5.4). Then it gives the reference in its normal form. A selection of
 the reference has a smaller depth, so it makes no check.
 -/
-def readRef (pos : Pos) (b : Base) (t : Ty) (above : Nat := 0) : M Val := do
+def readAgg (pos : Pos) (b : Base) (t : Ty) (above : Nat := 0) : M Agg := do
   bounded pos (above + t.zeroDepth)
-  normalize pos (.ref b t)
+  Agg.normal pos (.ref b t)
+
+/-! The read of `readAgg` as a value. -/
+def readRef (pos : Pos) (b : Base) (t : Ty) (above : Nat := 0) : M Val := do
+  return (← readAgg pos b t above).val
 
 /-! The fix `{h}` of the `S010` text of `read` (section 6.2), by the kind of the value. -/
 def readHint : Val → String
@@ -272,8 +280,8 @@ The read of the handle `h` at `pos` in a `data` context, under `above` nodes of 
 comes first. A child input is never read (`S017`). A memory and an instance are not data
 (`S010`), and their texts of section 6.2 name the fix. A domain is not data.
 -/
-def readHandle (pos : Pos) (above : Nat) : Handle → M Val
-  | .res _ _ ty path => readRef pos (.name path) ty above
+def readHandle (pos : Pos) (above : Nat) : Handle → M Agg
+  | .res _ _ ty path => readAgg pos (.name path) ty above
   | .input _ path q => fail .S017 pos (inputText path q)
   | h@(.mem _ path ..) =>
     fail .S010 pos s!"`{sourceOf path}` is a memory, not data; {readHint (.handle h)}"
@@ -291,7 +299,7 @@ passes, so the selection reads only the part that it selects.
 -/
 def baseData (pos : Pos) : Val → M Val
   | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
-  | .handle h => readHandle pos 0 h
+  | .handle h => do return (← readHandle pos 0 h).val
   | v => pure v
 
 /-!
@@ -329,11 +337,9 @@ the result. The result is a new value.
 mutual
   def readPart (pos : Pos) (above : Nat) : Agg → M Agg
     | .handle h => do
-      let v ← readHandle pos above h
-      if v matches .agg _ then charge pos v.size
-      match v.agg? with
-      | some a => return a
-      | none => fail .S010 pos s!"{v.text} is not data"
+      let a ← readHandle pos above h
+      if a.val matches .agg _ then charge pos a.size
+      return a
     | a@(.array n ⟨xs⟩) =>
       match n.ty with
       | .array e _ =>
