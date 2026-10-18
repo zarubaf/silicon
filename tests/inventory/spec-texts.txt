@@ -67,3 +67,5 @@ lean | S007 Arity of `read` | 314
 rust | S007 Arity of `read` | 314
 rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
+rust | S010 Typed use at a container of handles | 278
+pin | S010 Typed use at a container of handles | 278
