@@ -182,3 +182,58 @@ fn w7_the_type_of_an_instance_statement_costs_its_arguments() {
     doubles(&n, &twice);
     assert!(twice.counts.total() <= 6 * twice.used);
 }
+
+/// The run of the module `M` in `src` with the fuel budget `fuel`.
+fn run_fuel(fuel: u64, depth: u64, src: &str) -> Run {
+    let file = load(src).unwrap();
+    let budget = Budget { fuel, depth };
+    match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
+        Ok(Ok(design)) => Run {
+            counts: of(fuel),
+            used: design.used(),
+            error: None,
+        },
+        Ok(Err(e)) => Run {
+            counts: of(fuel),
+            used: 0,
+            error: Some((e.code.to_string(), e.message)),
+        },
+        Err(Abort::Usage(m)) => panic!("{m}"),
+        Err(Abort::Stack(e)) => panic!("{e}"),
+    }
+}
+
+/// W3. `k` bindings `let x = read(r)` of a register with `m` rows of 64 leaves. A binding
+/// charges the zero size of the type before its leaves expand, so the work follows the fuel. A
+/// doubled number of bindings gives at most twice the work, and a run with half of the fuel
+/// stops with `S015` before it expands the leaves of the later bindings.
+#[test]
+fn w3_a_binding_of_a_read_expands_its_leaves_after_its_charge() {
+    let source = |k: usize, m: usize| {
+        let mut src = format!(
+            "module M() {{\n    input x: [[UInt[8]; 64]; {m}];\n    output o: UInt[8];\n    \
+             reg r: [[UInt[8]; 64]; {m}] = [[UInt[8]; 64]; {m}]();\n    r := x;\n"
+        );
+        for i in 0..k {
+            writeln!(src, "    let q{i} = read(r);").unwrap();
+        }
+        src.push_str("    o := read(r)[0][0];\n}\n");
+        src
+    };
+    let (n, twice) = (
+        passing(80, 1000, &source(8, 8)),
+        passing(81, 1000, &source(16, 8)),
+    );
+    doubles(&n, &twice);
+    assert!(twice.counts.total() <= 8 * twice.used);
+    let wide = passing(82, 1000, &source(16, 16));
+    assert!(wide.counts.total() <= 8 * wide.used);
+    let half = run_fuel(wide.used / 2, 1000, &source(16, 16));
+    assert_eq!(half.error.as_ref().map(|e| e.0.as_str()), Some("S015"));
+    assert!(
+        half.counts.total() <= 8 * (wide.used / 2),
+        "{} {}",
+        half.counts.total(),
+        wide.used / 2
+    );
+}

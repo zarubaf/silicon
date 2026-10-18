@@ -475,6 +475,9 @@ impl Evaluator<'_> {
         if builtin == Prelude::Diagnostic && vs.len() == 2 {
             return self.diagnose(pos, g, vs);
         }
+        if builtin == Prelude::Read {
+            return self.read_call(pos, g, &vs);
+        }
         if matches!(builtin, Prelude::ReadPort | Prelude::WritePort) {
             return self.port_call(pos, g, builtin, vs);
         }
