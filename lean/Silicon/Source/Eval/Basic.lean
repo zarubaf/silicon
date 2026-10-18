@@ -629,7 +629,8 @@ the struct items whose parameter types evaluate now. `guard` is the innermost gu
 depth check there reports at it. `inst` is the emitted name of the current instantiation, else
 `-`. `calls` holds the call frames from the module body, innermost first (section 8.2). A frame
 is the item name of the callee and the position of its call. A call adds its frame in one step,
-and the records share the list.
+and the records share the list. `digest` makes the digest of an emitted name (section 7.1), so a
+test can replace it.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -644,6 +645,7 @@ structure Ctx where
   site : Option Pos
   inst : String
   calls : List (String × Pos)
+  digest : String → String
 
 /-! The symbol of the local number `id` in the current item. Each binder has one. -/
 def Ctx.binder (c : Ctx) (id : Nat) : Nat := ((c.syms.binders[c.item]?).bind (·[id]?)).getD 0
@@ -798,6 +800,17 @@ structure Inst where
   units : Nat
   pos : Pos
 
+/-!
+The tables of the instantiations. `table` maps the serialization of each `InstantiationId` to
+its state, and `names` holds the emitted name of each instantiation that is in progress or done.
+`work` is the work of the current instantiation.
+-/
+structure Insts where
+  table : Std.HashMap String Status := {}
+  names : Std.HashSet String := {}
+  done : Array Inst := #[]
+  work : Work := { body := { domain := none } }
+
 end Silicon.Source.Elab
 
 namespace Silicon.Source.Eval
@@ -813,8 +826,8 @@ specializations. It also holds the locals of the current frame and the names of 
 instantiation. `holds` counts the waiting results that hold each local of the frame (section
 5.4). `changes` counts the mutations of each local of the frame, so an index finds that it
 changed its root (section 5.4). `pending` counts the open windows of each root of the frame
-(section 9.1). `records` holds the observation records of the elaboration in their order
-(section 8.2).
+(section 9.1). `inst` holds the tables of the instantiations. `records` holds the observation
+records of the elaboration in their order (section 8.2).
 -/
 structure St where
   fuel : Nat
@@ -825,6 +838,7 @@ structure St where
   changes : Std.HashMap Nat Nat
   pending : Std.TreeMap Nat Nat compare
   naming : Naming
+  inst : Elab.Insts
   records : Array Record
 
 /-!
@@ -879,6 +893,12 @@ def charge (pos : Pos) (units : Nat) : M Unit :=
 def exhausted (pos : Pos) : M α := do
   charge pos 1
   fail .S015 pos "the fuel is exhausted; raise --fuel"
+
+/-! Runs `act` and gives the fuel that it uses. The result reads only a difference of fuel. -/
+def measure (act : M α) : M (α × Nat) := do
+  let start := (← get).fuel
+  let a ← act
+  return (a, start - (← get).fuel)
 
 /-! A monad that runs `M` and changes its context. `Elab` runs its walk in such a monad. -/
 class Runs (m : Type → Type) extends Monad m, MonadLiftT M m, MonadReaderOf Ctx m,
