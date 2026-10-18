@@ -585,16 +585,16 @@ fn the_first_error_is_the_first_in_position_order() {
 }
 
 #[test]
-fn a_plain_fn_has_no_hardware_statement() {
-    for stmt in [
-        "input a: Bool;",
-        "output a: Bool;",
-        "reg a: Bool = false;",
-        "wire a: Bool;",
-        "instance u = M();",
-    ] {
+fn a_plain_fn_has_no_port() {
+    for stmt in ["input a: Bool;", "output a: Bool;"] {
         let src = format!("fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
         assert_eq!(first_error(&src), Some((Code::S004, 2, 3)), "{stmt}");
+        let parsed = parse(&src);
+        assert_eq!(
+            parsed.errors[0].message,
+            "a helper cannot declare a port; declare the port in the module body and pass its \
+             value to the helper"
+        );
         // `comptime fn` and `module` keep the statement. `typeck` checks the first.
         let comptime = format!("comptime fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
         assert_eq!(first_error(&comptime), None, "{stmt}");
@@ -602,8 +602,22 @@ fn a_plain_fn_has_no_hardware_statement() {
         assert_eq!(first_error(&module), None, "{stmt}");
     }
     // The rule ends with the body.
-    let src = "fn f() -> Nat { return 1; }\nmodule M() { wire w: Bool; }\n";
+    let src = "fn f() -> Nat { return 1; }\nmodule M() { input w: Bool; }\n";
     assert_eq!(first_error(src), None);
+}
+
+#[test]
+fn a_plain_fn_has_resource_statements() {
+    for stmt in [
+        "reg a: Bool = false;",
+        "wire a: Bool;",
+        "mem m: [Bool; 4];",
+        "instance u = M();",
+        "a := true;",
+    ] {
+        let src = format!("fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
+        assert_eq!(first_error(&src), None, "{stmt}");
+    }
 }
 
 #[test]
