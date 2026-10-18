@@ -246,25 +246,138 @@ def normalize (pos : Pos) : Agg → M Val
 /-!
 A read at `pos` of the name `b` of the type `t`: a port, a register, a wire, or a child output
 (section 5.5). The read makes a value of the depth of a zero of `t`, so it checks this depth
-first (`S015`), as `T()` does. Then it gives the reference in its normal form. A selection of
+first (`S015`), as `T()` does. A read of a leaf in a container adds the `above` nodes over the
+leaf to this depth (section 5.4). Then it gives the reference in its normal form. A selection of
 the reference has a smaller depth, so it makes no check.
 -/
-def readRef (pos : Pos) (b : Base) (t : Ty) : M Val := do
-  bounded pos t.zeroDepth
+def readRef (pos : Pos) (b : Base) (t : Ty) (above : Nat := 0) : M Val := do
+  bounded pos (above + t.zeroDepth)
   normalize pos (.ref b t)
 
+/-! The fix `{h}` of the `S010` text of `read` (section 6.2), by the kind of the value. -/
+def readHint : Val → String
+  | .handle (.mem ..) => "read a word with `read_port`"
+  | .handle (.inst ..) => "read an output of the instance, for example `u.q`"
+  | .handle (.domain _) => "a domain has no value, so remove the `read`"
+  | _ => "use the value directly, without `read`"
+
+/-! The `S017` text "`read` of an input" of the input `q` of the child at `path` (section 6.2). -/
+def inputText (path : Path) (q : Port) : String :=
+  s!"the input `{q.name}` of `{sourceOf path}` is a target only; read the value that you bind " ++
+    "to it"
+
 /-!
-The data of a value at a use that reads it: the implicit read. A register, a wire, and an own
-output give a reference to their name, in its normal form (`readRef`). Thus a scalar gives a
-hardware value, and an aggregate a lazy reference with no charge (section 9.2). A child input is
-never read (`S017`). An instance and a domain are not data.
+The read of the handle `h` at `pos` in a `data` context, under `above` nodes of a container
+(section 5.4). A register, a wire, and an own output read by `readRef`, so the depth check
+comes first. A child input is never read (`S017`). A memory and an instance are not data
+(`S010`), and their texts of section 6.2 name the fix. A domain is not data.
+-/
+def readHandle (pos : Pos) (above : Nat) : Handle → M Val
+  | .res _ _ ty path => readRef pos (.name path) ty above
+  | .input _ path q => fail .S017 pos (inputText path q)
+  | h@(.mem _ path ..) =>
+    fail .S010 pos s!"`{sourceOf path}` is a memory, not data; {readHint (.handle h)}"
+  | .inst _ path .. =>
+    let r := sourceOf path
+    fail .S010 pos s!"`{r}` is an instance, not data; read its outputs as `{r}.q`"
+  | h => fail .S010 pos s!"{(Val.handle h).text} is not data"
+
+/-!
+The data of a value at a use that only selects from it. These uses are the base of an index, of
+a selector, and of a field, and the argument of `len`. A register, a wire, and an own output
+give a reference to their name, in its normal form (`readRef`). Thus a scalar gives a hardware
+value, and an aggregate a lazy reference with no charge (section 9.2). A container of handles
+passes, so the selection reads only the part that it selects.
+-/
+def baseData (pos : Pos) : Val → M Val
+  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
+  | .handle h => readHandle pos 0 h
+  | v => pure v
+
+/-!
+The data type of a type with the handle flag: each `Reg[T]` and `Wire[T]` in an array or a
+tuple becomes `T`. A read of a container of handles gives a value of this type (section 5.4).
+Another type stays.
+-/
+mutual
+  def dataTy : Ty → Ty
+    | .reg t | .wire t => t
+    | .array t n => .array (dataTy t) n
+    | .tuple ⟨ts⟩ => .tuple ⟨dataTys ts⟩
+    | t => t
+
+  def dataTys : List Ty → List Ty
+    | [] => []
+    | t :: ts => dataTy t :: dataTys ts
+end
+
+/-! The text of a node of handles in a `data` context (section 6.2). -/
+def handlesText (n : Node) : Agg → String
+  | .list .. => s!"a `data` context does not read the list of handles `{n.ty.text}`; read each " ++
+    "element, for example `read(hs[0])`"
+  | _ => s!"a `data` context does not read the record of handles `{n.ty.text}`; construct the " ++
+    "data record from the fields, for example `P(read(h.a), read(h.b))`"
+
+/-!
+The read at `pos` of the part `a` of a container of handles, under `above` nodes (section 5.4).
+The caller charged the recursive size of the root. The walk visits the parts in packing order.
+It does not enter a part of a type without the handle flag, because that part is data already.
+A record node of handles and a list node are `S010`. A handle leaf reads by `readHandle`, so its
+depth check comes first. Then a reference charges the zero size of its type, before it goes into
+the result. The result is a new value.
+-/
+mutual
+  def readPart (pos : Pos) (above : Nat) : Agg → M Agg
+    | .handle h => do
+      let v ← readHandle pos above h
+      if v matches .agg _ then charge pos v.size
+      match v.agg? with
+      | some a => return a
+      | none => fail .S010 pos s!"{v.text} is not data"
+    | a@(.array n ⟨xs⟩) =>
+      match n.ty with
+      | .array e _ =>
+        if e.info.handles then do
+          return .mkArray (dataTy e) (← readParts pos (above + 1) xs).toArray
+        else pure a
+      | _ => pure a
+    | a@(.tuple n ⟨xs⟩) =>
+      match n.ty with
+      | .tuple ⟨ts⟩ =>
+        if n.ty.info.handles then do
+          return .mkTuple ⟨dataTys ts⟩ (← readParts pos (above + 1) xs).toArray
+        else pure a
+      | _ => pure a
+    | a@(.record n _) =>
+      if n.ty.info.handles then fail .S010 pos (handlesText n a) else pure a
+    | a@(.list n ..) => fail .S010 pos (handlesText n a)
+    | a => pure a
+
+  def readParts (pos : Pos) (above : Nat) : List Agg → M (List Agg)
+    | [] => pure []
+    | x :: xs => do return (← readPart pos above x) :: (← readParts pos above xs)
+end
+
+/-!
+The data of a value at a use that reads it: the implicit read (section 9.2). A handle reads by
+`readHandle`. A container of a type with the handle flag charges its recursive size first.
+Then each leaf reads in packing order (`readPart`), and the error is at `pos`. Another value is
+data already.
 -/
 def data (pos : Pos) : Val → M Val
-  | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
-  | .handle (.res _ _ ty path) => readRef pos (.name path) ty
-  | .handle (.input ..) => fail .S017 pos "an input of a child is a target; it is never read"
-  | .handle h => fail .S010 pos s!"{(Val.handle h).text} is not data"
-  | v => pure v
+  | .agg a => do
+    unless a.ty?.any (·.info.handles) do return .agg a
+    charge pos a.size
+    return (← readPart pos 0 a).val
+  | v => baseData pos v
+
+/-!
+The data of a value at a typed use at the type `t`. A position of a type with the handle flag
+is `raw` (section 9.2). Thus a container there keeps its handles, and only a scalar handle reads
+(`baseData`). A position of another type reads each handle (`data`).
+-/
+def dataAt (pos : Pos) (t : Ty) (v : Val) : M Val :=
+  if t.info.handles then baseData pos v else data pos v
 
 /-!
 The selector `.i` at `pos`, with its number literal at `q`. The result is the number of the
@@ -711,7 +824,7 @@ def element (pos : Pos) : Val → M (Part × Option Pos)
     fail .S010 pos (s!"the domain `{x}` is not an element; a domain has no value, so remove " ++
       "it from the literal")
   | v@(.handle (.res .output ..)) => do
-    match (← data pos v).agg? with
+    match (← baseData pos v).agg? with
     | some a => pure (.value a, none)
     | none => fail .S010 pos s!"{v.text} is not data"
   | .handle h => pure (.value (.handle h), none)
@@ -1043,7 +1156,7 @@ it charges no size. A string needs a scan, so it charges the size of the string 
 -/
 def lenOf (pos : Pos) : List Val → M Value
   | [v] => do
-    match ← data pos v with
+    match ← baseData pos v with
     | .static (.array _ xs) | .static (.list _ xs) | .agg (.array _ xs) => return .int xs.size
     | .agg (.ref _ (.array _ k)) => return .int k
     | .static v@(.str s) => do

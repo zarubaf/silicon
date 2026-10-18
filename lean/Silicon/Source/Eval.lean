@@ -126,7 +126,12 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
 Hardware values follow v0.1 sections 1 and 3:
 
 - A use that reads a value reads a register, a wire, or an own output by its name. An input of
-  a child is never read (`S017`). An instance and a domain are not data (`S010`).
+  a child is never read (`S017`). A memory, an instance, and a domain are not data (`S010`).
+- A use that reads a container of a type with the handle flag charges its recursive size first.
+  Then it reads each handle leaf in packing order, with a depth check of the result for each
+  register and wire leaf (`data`). A record of handles and a list of handles are `S010`. The
+  base of a selection and the argument of `len` read only a handle, so `rs[0] + 1` reads only
+  `rs[0]` (`baseData`). A position of a type with the handle flag reads no container (`dataAt`).
 - An operator with a hardware operand makes a hardware node. A static operand becomes a
   constant node: a static integer first takes the finite type of the other operand.
 - A static `&&` or `||` that does not decide gives its right operand, also a hardware one.
@@ -909,7 +914,7 @@ A typed use of `v` at the type `t`. It reads a handle. A hardware value needs th
 a hardware aggregate converts part by part (`typedAgg`).
 -/
 def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
-  match ← data pos (← settle pos t v) with
+  match ← dataAt pos t (← settle pos t v) with
   | .static x => return (Agg.typed t (← conform pos t x)).val
   | .hw h =>
     if h.ty.same t then return .hw h
@@ -922,7 +927,7 @@ The typed use of `v` at `t` at `pos` after the copy of `v` charged. A read of an
 handle gives a reference, so it charges the zero size of its type before the typed use.
 -/
 def readUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
-  let d ← data pos (← settle pos t v)
+  let d ← dataAt pos t (← settle pos t v)
   if v matches .handle _ && d matches .agg _ then charge pos d.size
   conformVal pos t d
 
@@ -982,10 +987,10 @@ def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
       match (← handleUse pos t v).agg? with
       | some a => return a
       | none => fail .S010 pos s!"{v.text} is not a handle"
-    conformAgg pos t (← item q (← data q (← settle pos t v)))
+    conformAgg pos t (← item q (← dataAt q t (← settle pos t v)))
   | .element x => do
     laterHandle pos t
-    match ← data x (← settle pos t v) with
+    match ← dataAt x t (← settle pos t v) with
     | .static w => conform pos t w
     | w =>
       if w.hasHw then fail .S011 x "a list holds no hardware value"
@@ -1454,13 +1459,6 @@ def diagnose (p : Pos) (g : String) (m v : Val) : M (Option Out) := do
   modify fun s => { s with records := s.records.push line }
   return some ⟨.static .unit, false, none⟩
 
-/-! The fix `{h}` of the `S010` text of `read` (section 6.2), by the kind of the value. -/
-def readHint : Val → String
-  | .handle (.mem ..) => "read a word with `read_port`"
-  | .handle (.inst ..) => "read an output of the instance, for example `u.q`"
-  | .handle (.domain _) => "a domain has no value, so remove the `read`"
-  | _ => "use the value directly, without `read`"
-
 /-!
 `read` at `p` with the values `vs` of its arguments, after its node and its name (section 5.4).
 `g` is the name of the callee. The argument evaluated in the `raw` context, so its copy charges
@@ -1482,8 +1480,7 @@ def readOf (p : Pos) (g : String) (vs : List Val) : M (Option Out) := do
     let r ← readRef p (.name path) t
     return some ⟨r, !(r matches .static _), none⟩
   | .handle (.input _ path q) =>
-    fail .S017 p (s!"the input `{q.name}` of `{sourceOf path}` is a target only; read the " ++
-      "value that you bind to it")
+    fail .S017 p (inputText path q)
   | v => fail .S010 p s!"`{g}` takes a register or a wire, not {v.about}; {readHint v}"
 
 /-!
@@ -2245,7 +2242,7 @@ mutual
             return some ⟨.static (.type (← spec n p i xs)), false, none⟩
         let [x] := xs | fail .S010 p "an index of a value has one argument"
         let o ← need b (← eval n b)
-        let v ← data p o.value
+        let v ← baseData p o.value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
         let k ← changesOf o
         hold o
@@ -2273,7 +2270,8 @@ mutual
           | none => fail .S010 p s!"the instance has no port `{f.name}`"
         | v => do
           -- A data field selection is a data context (section 9.2), so an input handle is S017.
-          let w ← if v matches .handle (.res ..) | .handle (.input ..) then data p v else pure v
+          let w ← if v matches .handle (.res ..) | .handle (.input ..) then baseData p v
+            else pure v
           return some (part o w (← field p f w))
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
       | .tuple p xs => do
@@ -2289,7 +2287,7 @@ mutual
         | none => return some ⟨(← arrayOf p (values es)).val, false, none⟩
       | .select p b q i => do
         let o ← need b (← eval n b)
-        let v ← data p o.value
+        let v ← baseData p o.value
         return some (part o v (← select p q i v))
       | .arrayType p t k => structural do
         let e ← typeExpr n t
