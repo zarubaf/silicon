@@ -1,0 +1,9 @@
+// The depth of a handle type is 1 plus the depth of its part. `Reg[B]` with `B` of depth 3 has depth 4.
+// With the nesting depth 4 the file elaborates, and with 3 the use of `Reg[B]` fails with `S015`.
+// DEPTH 4
+// TOP M()
+module M() {
+    type A = [UInt[8]; 2];
+    type B = [A; 2];
+    type H = Reg[B];
+}

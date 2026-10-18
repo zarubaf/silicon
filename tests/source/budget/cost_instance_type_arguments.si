@@ -1,0 +1,14 @@
+// `Instance[M, args]` gives each argument its typed use and charges its size, and then it charges the size
+// of the type. Each of the four uses charges the four arguments of 16 elements again.
+// FUEL 978
+// TOP M()
+module C(comptime a: [UInt[8]; 16], comptime b: [UInt[8]; 16], comptime c: [UInt[8]; 16], comptime d: [UInt[8]; 16]) domains() {
+    output q: Bool;
+    q := true;
+}
+const X: [UInt[8]; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+module M() domains() {
+    comptime for i in 0..4 {
+        type H = Instance[C, X, X, X, X];
+    }
+}

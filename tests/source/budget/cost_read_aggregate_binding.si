@@ -1,0 +1,14 @@
+// `let q = read(r)` binds a copy of a reference. The binding charges the zero size of the type once,
+// and then it expands the leaves of `q`: a register of 16 leaves pays for each binding.
+// FUEL 1304
+// TOP M()
+module M() {
+    input x: [UInt[8]; 16];
+    output o: UInt[8];
+    reg r: [UInt[8]; 16] = [UInt[8]; 16]();
+    r := x;
+    comptime for i in 0..4 {
+        let q = read(r);
+    }
+    o := read(r)[3];
+}

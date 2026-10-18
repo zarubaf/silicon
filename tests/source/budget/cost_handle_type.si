@@ -1,0 +1,20 @@
+// A handle type charges its node, its argument, and its recursive size, and a typed `let` at a handle type
+// charges 1 for the copy and compares the types by identity. The aliases of a handle type charge
+// the size of the type and no copy.
+// FUEL 445
+// TOP M()
+module M() {
+    input x: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: UInt[8];
+    r := x;
+    w := x;
+    type A = Reg[[UInt[8]; 4]];
+    type B = Mem[[UInt[8]; 2], 16];
+    comptime for i in 0..8 {
+        type C = A;
+        type D = B;
+        let a: Reg[UInt[8]] = r;
+        let b: Wire[UInt[8]] = w;
+    }
+}
