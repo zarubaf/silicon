@@ -1670,14 +1670,14 @@ impl Evaluator<'_> {
 
     /// A block at `pos`. It charges as a statement. The statements of a module body run as
     /// module statements.
-    fn block(&mut self, pos: Pos, ss: &[Stmt], module: bool) -> Res<Option<Val>> {
+    fn block(&mut self, pos: Pos, ss: &[Stmt]) -> Res<Option<Val>> {
         self.charge(pos, 1)?;
-        self.stmts(ss, module)
+        self.stmts(ss)
     }
 
-    fn stmts(&mut self, ss: &[Stmt], module: bool) -> Res<Option<Val>> {
+    fn stmts(&mut self, ss: &[Stmt]) -> Res<Option<Val>> {
         for s in ss {
-            if let Some(r) = self.stmt(s, module)? {
+            if let Some(r) = self.stmt(s)? {
                 return Ok(Some(r));
             }
         }
@@ -1720,8 +1720,8 @@ impl Evaluator<'_> {
     }
 
     /// A statement. The result is the value of a `return`. A statement of a module body makes
-    /// hardware; elsewhere such a statement is `S011`.
-    fn stmt(&mut self, s: &Stmt, module: bool) -> Res<Option<Val>> {
+    /// hardware; in a function body such a statement is `S011`.
+    fn stmt(&mut self, s: &Stmt) -> Res<Option<Val>> {
         self.charge(stmt_pos(s), 1)?;
         match s {
             Stmt::Local {
@@ -1746,17 +1746,16 @@ impl Evaluator<'_> {
                 let o = self.eval(value)?;
                 let o = need(value, o)?;
                 let v = self.typed_use(*pos, rt, true, o, Whole)?;
-                // A module body runs on after a `return`, as the walk of Lean `Elab` does.
-                Ok((!module).then_some(v))
+                Ok(Some(v))
             }
             Stmt::CtIf { pos, cond, yes, no } => {
                 let c = self.eval(cond)?;
                 let c = need(cond, c)?;
                 if self.test(*pos, self.store.seen(&c))? {
-                    self.block(*pos, yes, module)
+                    self.block(*pos, yes)
                 } else {
                     match no {
-                        Some(no) => self.block(*pos, no, module),
+                        Some(no) => self.block(*pos, no),
                         None => Ok(None),
                     }
                 }
@@ -1767,8 +1766,8 @@ impl Evaluator<'_> {
                 lo,
                 hi,
                 body,
-            } => self.ct_for(*pos, var, lo, hi, body, module),
-            Stmt::Block { body, .. } => self.stmts(body, module),
+            } => self.ct_for(*pos, var, lo, hi, body),
+            Stmt::Block { body, .. } => self.stmts(body),
             Stmt::Alias { name, ty, .. } => {
                 let t = self.type_expr(ty)?;
                 let id = self.decl(name)?;
@@ -1796,7 +1795,7 @@ impl Evaluator<'_> {
             | Stmt::Input { pos, .. }
             | Stmt::Output { pos, .. }
             | Stmt::Inst { pos, .. }
-                if !module =>
+                if self.ret.is_some() =>
             {
                 fail(
                     Code::S011,
@@ -1821,7 +1820,6 @@ impl Evaluator<'_> {
         lo: &Expr,
         hi: &Expr,
         body: &[Stmt],
-        module: bool,
     ) -> Res<Option<Val>> {
         let first = self.eval(lo)?;
         let first = need(lo, first)?;
@@ -1853,7 +1851,7 @@ impl Evaluator<'_> {
             };
             let r = self.in_item(item, frame, |ev| {
                 ev.bind(id, slot);
-                ev.block(pos, body, module)
+                ev.block(pos, body)
             })?;
             if let Some(r) = r {
                 return Ok(Some(r));

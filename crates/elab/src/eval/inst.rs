@@ -1008,7 +1008,7 @@ impl Evaluator<'_> {
                             },
                         );
                     }
-                    ev.block(*mp, body, true)
+                    ev.block(*mp, body)
                 })
             });
             ev.inst = outer_inst;
