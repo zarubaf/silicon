@@ -320,10 +320,6 @@ theorem bounded_f (p : Pos) (d : Nat) : Follows cap (bounded p d) (bounded p d) 
 theorem notHandle_f (p : Pos) (t : Ty) : Follows cap (notHandle p t) (notHandle p t) := by
   unfold notHandle; follows
 
-theorem laterHandle_f (p : Pos) (t : Ty) :
-    Follows cap (laterHandle p t) (laterHandle p t) := by
-  unfold laterHandle; follows
-
 theorem staticHandle_f (p : Pos) (s : String) (t : Ty) :
     Follows cap (staticHandle p s t) (staticHandle p s t) := by
   unfold staticHandle; follows
@@ -674,18 +670,22 @@ theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (readUse p t v) (readUse p t v) := by
   unfold readUse; follows [settle_f, dataAt_f, conformVal_f]
 
+theorem handleWrong_f (p : Pos) (t : Ty) (v : Val) :
+    Follows cap (handleWrong (α := α) p t v) (handleWrong p t v) := by
+  unfold handleWrong; follows
+
 theorem handleUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (handleUse p t v) (handleUse p t v) := by
-  unfold handleUse; follows
+  unfold handleUse; follows [handleWrong_f]
 
 theorem valueUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) :
     Follows cap (valueUse p t c v) (valueUse p t c v) := by
-  unfold valueUse; follows [laterHandle_f, readUse_f, conformVal_f]
+  unfold valueUse; follows [handleUse_f, readUse_f, conformVal_f]
 
 theorem siteUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
     Follows cap (siteUse p t c v k) (siteUse p t c v k) := by
   cases k <;> unfold siteUse <;>
-    follows [handleUse_f, valueUse_f, laterHandle_f, conformAgg_f, item_f, dataAt_f, settle_f,
+    follows [handleUse_f, valueUse_f, conformAgg_f, item_f, dataAt_f, settle_f,
       conform_f]
 
 theorem typedUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
@@ -820,7 +820,7 @@ theorem iteration_f (p : Pos) (i : Binder) (v : Int) {x y : M α} (h : Follows c
 theorem copyIn_f (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) (a : Actual) :
     Follows cap (copyIn p c q t a) (copyIn p c q t a) := by
   unfold copyIn
-  follows [laterHandle_f, staticHandle_f, static_f, settle_f, conform_f, typedUse_f, named_f,
+  follows [handleWrong_f, staticHandle_f, static_f, settle_f, conform_f, typedUse_f, named_f,
     bindLocal_f]
 
 theorem result_f (p : Pos) (path : Names.Path) (u : String) (o : Option Val) :

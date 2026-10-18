@@ -2088,25 +2088,99 @@ def heldText (a : String) : String :=
 #guard said (handleLets "  let mut a = o;\n  a = 5;\n") == heldText "a value of `Int`"
 
 /-!
-A handle at an argument, a `mut` actual, or a `push` element is `S010` at the call until #278
-(section 6.2).
+An argument at a handle type gets the typed use at a handle type, at the call (section 5.6). A
+`mut` actual needs the exact type of its formal, with the same text, and an own output there
+names its fix. The copy charges first, so one unit less stops at the call. A `push` element has
+the same check at the call.
 -/
-def laterText : String :=
-  "the handle type `Reg[UInt[8]]` is not supported here yet; use it in a typed `let`, or pass " ++
-    "the data value, for example `read(h)`"
-#guard said (handleLets "  let a = g(r);\n") == laterText
-#guard cost (handleLets "  let a = g(r);\n") "M" (fuel := 163) == "S010 20:11"
-#guard cost (handleLets "  let a = g(r);\n") "M" (fuel := 162) == "S015 20:11"
-#guard said (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n") == laterText
-#guard cost (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n") "M" (fuel := 176) ==
-  "S010 21:11"
-#guard cost (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n") "M" (fuel := 175) ==
-  "S015 21:11"
-#guard said (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") == laterText
-#guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") "M"
+#guard exact (handleLets "  let a = g(r);\n  r := i;\n") "M" 361
+#guard said (handleLets "  let a = g(s);\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+#guard cost (handleLets "  let a = g(s);\n") "M" (fuel := 163) == "S010 20:11"
+#guard cost (handleLets "  let a = g(s);\n") "M" (fuel := 162) == "S015 20:11"
+#guard exact (handleLets "  let mut b: Reg[UInt[8]] = r;\n  let a = h(b);\n  r := i;\n") "M" 375
+#guard said (handleLets "  let mut b = s;\n  let a = h(b);\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+#guard cost (handleLets "  let mut b = s;\n  let a = h(b);\n") "M" (fuel := 165) == "S010 21:11"
+#guard cost (handleLets "  let mut b = s;\n  let a = h(b);\n") "M" (fuel := 164) == "S015 21:11"
+#guard said (handleLets "  let mut b = o;\n  let a = h(b);\n") == ownText
+#guard said (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(s);\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+#guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(s);\n") "M"
   (fuel := 169) == "S010 21:3"
-#guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(r);\n") "M"
+#guard cost (handleLets "  let mut xs = list(Reg[UInt[8]]);\n  xs.push(s);\n") "M"
   (fuel := 168) == "S015 21:11"
+
+/-!
+Formals and results of container types with the handle flag (section 5.6). `k` takes a tuple
+with a handle position. `sw` swaps two handles of a `mut` tuple. `pr` returns a handle and a
+read. `rt` returns a handle field of a struct. `gt` grows a list of types in a tuple with a
+handle.
+-/
+def handleFormals (body : String) : String :=
+  "fn k(x: (UInt[8], Reg[UInt[8]])) -> Bool { return true; }\n" ++
+  "fn sw(mut x: (Reg[UInt[8]], Reg[UInt[8]])) -> Bool {\n" ++
+  "  let t = x.0;\n  x.0 = x.1;\n  x.1 = t;\n  return true;\n}\n" ++
+  "fn pr(x: Reg[UInt[8]]) -> (Reg[UInt[8]], UInt[8]) { return (x, read(x)); }\n" ++
+  "fn rt(x: S) -> Reg[UInt[8]] { return x.a; }\n" ++
+  "fn bad() -> Reg[UInt[8]] { return 3; }\n" ++
+  "fn gt(mut x: (Reg[UInt[8]], List[Type])) -> Bool {\n" ++
+  "  x.1.push([[[[UInt[8]; 1]; 1]; 1]; 1]);\n  return true;\n}\n" ++
+  handleLets body
+
+/-!
+A handle position of a container type needs a handle of exactly its type (section 5.4). The text
+names the type of the position and the leaf at it. All checks come first in packing order, then
+the conversion charge, then the fit checks. Thus `(300, s)` is `S010`, and `(300, r)` is `S012`
+after the charge. A handle at a data position is not read.
+-/
+#guard exact (handleFormals "  let a = k((3, r));\n  r := i;\n") "M" 400
+#guard said (handleFormals "  let a = k((300, s));\n") ==
+  typedText "Reg[UInt[8]]" "a handle of `Reg[UInt[4]]`"
+#guard cost (handleFormals "  let a = k((300, s));\n") "M" (fuel := 196) == "S010 34:11"
+#guard cost (handleFormals "  let a = k((300, s));\n") "M" (fuel := 195) == "S015 34:11"
+#guard said (handleFormals "  let a = k((300, r));\n") == "300 does not fit UInt[8]"
+#guard cost (handleFormals "  let a = k((300, r));\n") "M" (fuel := 202) == "S012 34:11"
+#guard cost (handleFormals "  let a = k((300, r));\n") "M" (fuel := 201) == "S015 34:11"
+#guard cost (handleFormals "  let a = k((r, r));\n") "M" (fuel := 195) == "S010 34:11"
+#guard cost (handleFormals "  let a = k((r, r));\n") "M" (fuel := 194) == "S015 34:11"
+
+/-!
+A `mut` formal of a container type passes the handles in and writes them back. A place of
+another type is `S010` at the call, with the type of the formal and the value of the place.
+-/
+#guard exact (handleFormals "  let mut p = (r, q);\n  let a = sw(p);\n  r := i;\n") "M" 416
+#guard said (handleFormals "  let mut p = (r, s);\n  let a = sw(p);\n") ==
+  typedText "(Reg[UInt[8]], Reg[UInt[8]])" "a value of `(Reg[UInt[8]], Reg[UInt[4]])`"
+#guard cost (handleFormals "  let mut p = (r, s);\n  let a = sw(p);\n") "M" (fuel := 202) ==
+  "S010 35:11"
+#guard cost (handleFormals "  let mut p = (r, s);\n  let a = sw(p);\n") "M" (fuel := 201) ==
+  "S015 35:11"
+
+/-!
+A result of a handle type keeps the handle, and a `return` of another value is `S010` at the
+statement. A result binds only its hardware leaves to `0ret` (section 7.3), so a handle result
+binds nothing.
+-/
+#guard exact (handleFormals "  let a = pr(r);\n  r := a.1;\n") "M" 430
+#guard names (handleFormals "  let a = pr(r);\n  r := a.1;\n") "M" "M" ==
+  ["pr$0c$0ret$1e", "a$1e", "r", "q", "s", "w", "u"]
+#guard exact (handleFormals "  let a = rt(S(r));\n  a := i;\n") "M" 387
+#guard names (handleFormals "  let a = rt(S(r));\n  a := i;\n") "M" "M" ==
+  ["r", "q", "s", "w", "u"]
+#guard said (handleFormals "  let a = bad();\n") == typedText "Reg[UInt[8]]" "a value of `Int`"
+#guard cost (handleFormals "  let a = bad();\n") "M" (fuel := 166) == "S010 10:28"
+#guard cost (handleFormals "  let a = bad();\n") "M" (fuel := 165) == "S015 10:28"
+
+/-!
+The write-back of a value of a type with the handle flag checks the depth of the value. A static
+value has the same check (section 5.4). The list of `gt` grows in the callee. Thus the depth 7
+passes the `push` and stops at the write-back, at the call. The depth 8 passes.
+-/
+def growing : String :=
+  handleFormals "  let mut t = ((r, list(Type)),);\n  let a = gt(t.0);\n  r := i;\n"
+#guard cost growing "M" (depth := 7) == "S015 35:11"
+#guard (cost growing "M" (depth := 8)).startsWith "total 490"
 
 /-!
 A container holds handle leaves (section 5.1). An element and a field of a handle type are `raw`

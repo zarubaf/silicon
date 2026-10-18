@@ -932,26 +932,32 @@ def readUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
   conformVal pos t d
 
 /-!
+The error at `pos` of a typed use of `v` at the handle type `t`: `S010` with the text "Typed use
+at a handle type". An own output has no handle type, so its text names the fix: use it as data.
+-/
+def handleWrong (pos : Pos) (t : Ty) (v : Val) : M α := do
+  if let .handle (.res .output _ _ path) := v then
+    let r := sourceOf path
+    fail .S010 pos
+      s!"`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
+  fail .S010 pos (handleUseText t v.about)
+
+/-!
 The typed use at `pos` of `v` at the handle type `t` (section 5.4, step 3 of a typed use at a
 handle type). The handle type of `v` equals `t`, else `S010`. The compare has no charge, and
-nothing reads `v`. An own output has no handle type, so its text names the fix: use it as data.
+nothing reads `v` (`handleWrong`).
 -/
 def handleUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
   match v with
   | .handle h => if h.ty?.any (·.same t) then return v
   | _ => pure ()
-  if let .handle (.res .output _ _ path) := v then
-    let r := sourceOf path
-    fail .S010 pos
-      s!"`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
-  fail .S010 pos (s!"expected `{t.text}`, but the value is {v.about}; a handle type takes only " ++
-    "a handle of exactly this type, so give such a handle or change the type")
+  handleWrong pos t v
 
 /-!
 The position of a typed use (section 5.4). Its index is the form of the result, so each position
 gives the form that its caller stores.
 
-- `binding`: a typed `let` or an assignment to a `let mut` local. A handle type keeps the handle.
+- `binding`: a typed `let` or an assignment to a `let mut` local.
 - `value`: an argument, a `return`, or the value of a `:=`.
 - `field q`: a field of a constructor, with its argument at the node `q`, in a data context
   (section 9.2).
@@ -964,24 +970,24 @@ inductive Site : Type → Type where
   | element (x : Pos) : Site Value
 
 /-!
-The conversion of `v` at the data type `t` at a `binding` or a `value` position, after its copy.
-A typed use reads a handle. A read of an aggregate gives a reference, and its binding expands the
-reference into its leaves. Thus a copy also charges the size of the reference, the zero size of
-its type, before the typed use (`readUse`).
+The typed use of `v` at the type `t` at a `binding` or a `value` position, after its copy. A
+handle type keeps the handle (`handleUse`). A typed use at a data type reads a handle. A read of
+an aggregate gives a reference, and its binding expands the reference into its leaves. Thus a
+copy also charges the size of the reference, the zero size of its type, before the typed use
+(`readUse`). A container type with the handle flag reads no container (`dataAt`), and it checks
+each handle position by its type (`typedAgg`).
 -/
 def valueUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : M Val := do
-  laterHandle pos t
-  if copies then readUse pos t v else conformVal pos t v
+  if handleTy? t then handleUse pos t v
+  else if copies then readUse pos t v else conformVal pos t v
 
 /-!
-The typed use of `v` at the type `t` at a position after its copy (section 5.4). A handle type at
-a `binding` and at a `field` keeps the handle (`handleUse`): a field of a handle type is in the
-`raw` context (section 9.2). At each other position, a handle type is `S010` until #278
-(`laterHandle`). Then the value converts by the rule of its position.
+The typed use of `v` at the type `t` at a position after its copy (section 5.4). A position of a
+handle type is in the `raw` context (section 9.2), so it keeps the handle (`handleUse`), also at
+an argument, a `return`, and a `field`. Then the value converts by the rule of its position.
 -/
 def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
-  | .binding => if handleTy? t then handleUse pos t v else valueUse pos t copies v
-  | .value => valueUse pos t copies v
+  | .binding | .value => valueUse pos t copies v
   | .field q => do
     if handleTy? t then
       match (← handleUse pos t v).agg? with
@@ -989,8 +995,8 @@ def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
       | none => fail .S010 pos s!"{v.text} is not a handle"
     conformAgg pos t (← item q (← dataAt q t (← settle pos t v)))
   | .element x => do
-    laterHandle pos t
-    match ← dataAt x t (← settle pos t v) with
+    let w ← if handleTy? t then handleUse pos t v else dataAt x t (← settle pos t v)
+    match w with
     | .static w => conform pos t w
     | w =>
       if w.hasHw then fail .S011 x "a list holds no hardware value"
@@ -1299,8 +1305,12 @@ writes into the live root.
 def writeBack (p : Pos) (outs : List (Place × Val)) : M Unit := do
   for (pl, v) in outs do
     mutation p pl.name
-    -- Another value has the type of the place, so it keeps the depth of the root.
-    if let .static w := v then bounded p (pl.keys.length + w.depth)
+    -- Another value has the type of the place, so it keeps the depth of the root. A list in a
+    -- value of a type with the handle flag can grow, so its depth comes from the value.
+    match v with
+    | .static w => bounded p (pl.keys.length + w.depth)
+    | .agg a => if a.ty?.any (·.info.handles) then bounded p (pl.keys.length + a.depth)
+    | _ => pure ()
     charge p v.size
     store p p pl v
 
@@ -1309,8 +1319,9 @@ Binds the actual `a` to the formal `q` of the type `t` in the frame of the calle
 A value charges its copy, then its typed use. It is static in a `comptime fn` and at a `comptime`
 parameter. A place charges the copy of its part, and its type is exactly `t`, else `S010` at the
 call `p`. It is static in a `comptime fn`. Its formal is a mutable local. A handle type is
-`S011` at a static position (`staticHandle`). A `mut` actual gets no typed use, so a handle
-type there is `S010` until #278 (`laterHandle`).
+`S011` at a static position (`staticHandle`). A `mut` actual gets no typed use. Take a formal
+or a place of a type with the handle flag. There, another type is `S010` with the text "Typed
+use at a handle type" (section 5.6).
 -/
 def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
   | .value v => do
@@ -1323,9 +1334,11 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
     bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
   | .place pl => do
     charge p pl.part.size
-    if c then staticHandle p "an argument of a comptime fn" t else laterHandle p t
+    if c then staticHandle p "an argument of a comptime fn" t
     let pt := pl.ty <|> pl.part.ty?
     unless pt.any (·.same t) do
+      if t.info.handles || pt.any (·.info.handles) then
+        handleWrong p t pl.part
       let u := match pt with | some u => u.text | none => pl.part.text
       fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
     let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
@@ -1333,13 +1346,15 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
 
 /-!
 The result of the body of the function `u` in the call frame `path`. A result with a hardware
-leaf gets the role `0ret` there, in the place of a name, and each hardware leaf follows it. A
-result never takes a version (section 7.3). A body without `return` at its end is `S010` at the
-call `p`.
+leaf gets the role `0ret` there, in the place of a name, and each hardware leaf follows it. Only
+the hardware leaves bind, so a result without one binds nothing. A result never takes a version
+(section 7.3). A body without `return` at its end is `S010` at the call `p`.
 -/
 def result (p : Pos) (path : Path) (u : String) : Option Val → M Val
   | some (.hw h) => bindHw p (path.push (.role .ret)) h
-  | some (.agg a) => do return .agg (← bindAgg p (path.push (.role .ret)) a)
+  | some (.agg a) => do
+    if a.leaves = 0 then return .agg a
+    return .agg (← bindAgg p (path.push (.role .ret)) a)
   | some v => pure v
   | none => fail .S010 p s!"`{u}` ends without `return`"
 

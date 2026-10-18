@@ -3647,24 +3647,23 @@ def handleText (v : String) : String :=
   "S015 1:31"
 
 /-!
-Each other typed use at a handle type is `S010` until #278, after the copy (section 5.4). A
+Each other typed use at a handle type has the same check after the copy (section 5.4). A
 `return` has it at the statement. An argument, a `mut` actual, and a `push` element have it at
-the call.
+the call. A `mut` actual gets no typed use, but its text is the same (section 5.6).
 -/
-def laterText : String :=
-  "the handle type `Reg[Bool]` is not supported here yet; use it in a typed `let`, or pass the " ++
-    "data value, for example `read(h)`"
-#guard said "fn f() -> Reg[Bool] { return true; }" "f()" 12 == s!"S010 1:23 {laterText}"
+#guard said "fn f() -> Reg[Bool] { return true; }" "f()" 12 ==
+  s!"S010 1:23 {handleText "a value of `Bool`"}"
 #guard out "fn f() -> Reg[Bool] { return true; }" "f()" 11 == "S015 1:23"
-#guard said "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 == s!"S010 1:1 {laterText}"
+#guard said "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 10 ==
+  s!"S010 1:1 {handleText "a value of `Bool`"}"
 #guard out "fn g(x: Reg[Bool]) -> Int { return 0; }" "g(true)" 9 == "S015 1:1"
 def mutHandle : String :=
   "fn h(mut x: Reg[Bool]) -> Int { return 0; }\nfn f() -> Int { let mut a = true; return h(a); }"
-#guard said mutHandle "f()" 16 == s!"S010 2:42 {laterText}"
+#guard said mutHandle "f()" 16 == s!"S010 2:42 {handleText "a value of `Bool`"}"
 #guard out mutHandle "f()" 15 == "S015 2:42"
 def pushHandle : String :=
   "fn f() -> Int { let mut xs = list(Reg[Bool]); xs.push(true); return 0; }"
-#guard said pushHandle "f()" 20 == s!"S010 1:47 {laterText}"
+#guard said pushHandle "f()" 20 == s!"S010 1:47 {handleText "a value of `Bool`"}"
 #guard out pushHandle "f()" 19 == "S015 1:55"
 
 /-!
