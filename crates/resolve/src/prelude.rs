@@ -144,55 +144,123 @@ impl Prelude {
     }
 }
 
-/// The name of the prelude struct.
-pub(crate) const RESPONSE: &str = "ReadResponse";
-
-/// The nodes of the prelude struct, by their number for `NodeId::prelude`.
-pub(crate) mod node {
-    pub(crate) const NAME: usize = 0;
-    pub(crate) const PARAM: usize = 1;
-    pub(crate) const PARAM_TYPE: usize = 2;
-    pub(crate) const DATA: usize = 3;
-    pub(crate) const DATA_TYPE: usize = 4;
-    pub(crate) const VALID: usize = 5;
-    pub(crate) const VALID_TYPE: usize = 6;
+/// What a name node of a prelude struct points to.
+#[derive(Clone, Copy)]
+pub(crate) enum Leaf {
+    /// A name of the prelude, such as `Type`, `Bool`, `String`, `Nat`, or `List`.
+    Prim(&'static str),
+    /// The first parameter of its own struct.
+    Param,
 }
 
-/// The prelude struct `struct ReadResponse(comptime T: Type) { data: T, valid: Bool }`. The
-/// resolver gives its names their targets itself and never looks them up, so a user item
-/// `Bool` or `Type` cannot change it. It has no source position: each position is `0:0`.
-pub(crate) fn response_item() -> Item {
-    let pos = Pos { line: 0, col: 0 };
-    let ident = |k: usize, name: &str| Ident {
-        pos,
-        id: NodeId::prelude(k),
-        name: name.to_owned(),
-    };
-    let named = |k: usize, name: &str| TypeExpr::Name {
-        pos,
-        id: NodeId::prelude(k),
-        name: name.to_owned(),
-    };
-    Item::Struct {
-        pos,
-        name: ident(node::NAME, RESPONSE),
-        params: vec![Param {
-            pos,
-            mode: ParamMode::Comptime,
-            name: ident(node::PARAM, "T"),
-            ty: named(node::PARAM_TYPE, "Type"),
-        }],
-        fields: vec![
-            StructField {
-                name: ident(node::DATA, "data"),
-                ty: named(node::DATA_TYPE, "T"),
-            },
-            StructField {
-                name: ident(node::VALID, "valid"),
-                ty: named(node::VALID_TYPE, "Bool"),
-            },
-        ],
+/// A prelude struct, as the declaration it acts as (design section 5.6).
+pub(crate) struct PreludeStruct {
+    pub(crate) name: &'static str,
+    params: &'static [(&'static str, Leaf)],
+    fields: &'static [(&'static str, Leaf)],
+}
+
+/// The name of the prelude struct that a port call finds.
+pub(crate) const RESPONSE: &str = "ReadResponse";
+
+/// The prelude structs, in the order of design section 5.6. They follow the user items. A field
+/// type refers to a prelude struct by its index here, never through the item scope.
+pub(crate) const STRUCTS: [PreludeStruct; 1] = [PreludeStruct {
+    name: RESPONSE,
+    params: &[("T", Leaf::Prim("Type"))],
+    fields: &[("data", Leaf::Param), ("valid", Leaf::Prim("Bool"))],
+}];
+
+/// A prelude struct item, built already resolved, with the target of each name node in it.
+pub(crate) struct Built {
+    pub(crate) item: Item,
+    pub(crate) uses: Vec<(NodeId, Leaf)>,
+}
+
+/// Numbers the nodes of the prelude struct items from 0 with `NodeId::prelude`, and records the
+/// target of each name node.
+struct Builder {
+    next: usize,
+    uses: Vec<(NodeId, Leaf)>,
+}
+
+impl Builder {
+    const POS: Pos = Pos { line: 0, col: 0 };
+
+    fn id(&mut self) -> NodeId {
+        self.next += 1;
+        NodeId::prelude(self.next - 1)
     }
+
+    fn ident(&mut self, name: &str) -> Ident {
+        Ident {
+            pos: Self::POS,
+            id: self.id(),
+            name: name.to_owned(),
+        }
+    }
+
+    /// A name node that points to `leaf` in the struct `s`: its id and its text.
+    fn leaf(&mut self, leaf: Leaf, s: &PreludeStruct) -> (NodeId, String) {
+        let id = self.id();
+        self.uses.push((id, leaf));
+        let text = match leaf {
+            Leaf::Prim(name) => name,
+            Leaf::Param => s.params.first().map_or("", |p| p.0),
+        };
+        (id, text.to_owned())
+    }
+
+    fn ty(&mut self, leaf: Leaf, s: &PreludeStruct) -> TypeExpr {
+        let (id, name) = self.leaf(leaf, s);
+        TypeExpr::Name {
+            pos: Self::POS,
+            id,
+            name,
+        }
+    }
+
+    fn item(&mut self, s: &PreludeStruct) -> Built {
+        let name = self.ident(s.name);
+        let params = s
+            .params
+            .iter()
+            .map(|&(p, leaf)| Param {
+                pos: Self::POS,
+                mode: ParamMode::Comptime,
+                name: self.ident(p),
+                ty: self.ty(leaf, s),
+            })
+            .collect();
+        let fields = s
+            .fields
+            .iter()
+            .map(|&(f, ty)| StructField {
+                name: self.ident(f),
+                ty: self.ty(ty, s),
+            })
+            .collect();
+        Built {
+            item: Item::Struct {
+                pos: Self::POS,
+                name,
+                params,
+                fields,
+            },
+            uses: std::mem::take(&mut self.uses),
+        }
+    }
+}
+
+/// The prelude struct items, with no source position: each position is `0:0`. The resolver gives
+/// their names their targets itself and never looks them up, so a user item `Bool` or `Type`
+/// cannot change them.
+pub(crate) fn build() -> Vec<Built> {
+    let mut builder = Builder {
+        next: 0,
+        uses: Vec::new(),
+    };
+    STRUCTS.iter().map(|s| builder.item(s)).collect()
 }
 
 /// The slice of a prelude name that a later slice adds, for the message of `S003`.
