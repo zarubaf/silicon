@@ -336,7 +336,7 @@ impl Builder {
 /// `e` of type `from` as a value of type `to`: `resize` within one
 /// signedness, `reinterpret` across, a Bool selects all zeros or all ones,
 /// and a finite value gives its low bit as a Bool.
-fn adapt(e: HExpr, from: &Want, to: &Want) -> Option<HExpr> {
+pub(super) fn adapt(e: HExpr, from: &Want, to: &Want) -> Option<HExpr> {
     if from.types == to.types {
         return Some(e);
     }

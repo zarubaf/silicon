@@ -30,15 +30,16 @@
 //!   later module, and a type that reads no parameter of that module
 //!   (`S010`, `S005`).
 
-use super::hw::Want;
+use super::hw::{Want, adapt};
+use super::inst::Child;
 use super::{Builder, Built, Ctx, Hw, Module, Names, Sig};
 use crate::eval::{Env, Fault, Value};
-use crate::program::{FTy, HExpr, Place, Radix, SExpr, Scalar, Stmt, Ty};
+use crate::program::{FTy, HBin, HExpr, Place, Radix, SExpr, Scalar, Stmt, Ty};
 use num_bigint::BigInt;
 
 /// The most resource helpers, and the most handle statements of a frame.
-const RES_HELPERS: u32 = 4;
-const HANDLE_STMTS: u32 = 3;
+const RES_HELPERS: u32 = 3;
+const HANDLE_STMTS: u32 = 2;
 /// The depth of the hardware expressions that the helpers and their calls
 /// hold: small, so that the mean text of a program stays near its bound.
 pub(super) const HANDLE_DEPTH: u32 = 1;
@@ -62,6 +63,21 @@ pub(super) enum Role {
     },
     /// Declares resources, and returns some of them.
     Declare,
+    /// Binds each element of a list of handles in a loop.
+    List(ListOf),
+}
+
+/// The elements of the list that a list helper binds.
+#[derive(Clone)]
+pub(super) enum ListOf {
+    Reg(Ty),
+    Wire(Ty),
+    /// The input `port` of a child of module `module`, of the type `ty`.
+    Input {
+        module: usize,
+        port: String,
+        ty: Ty,
+    },
 }
 
 /// A step from a container of handles to an element.
@@ -167,6 +183,18 @@ pub(super) fn at(root: &str, steps: &[Step]) -> HExpr {
         })
 }
 
+/// A kind of handle statement of a frame.
+enum Class {
+    /// A memory of the module with its two port calls.
+    Direct,
+    /// A call of one of the helpers of one role that bind a fresh resource.
+    Binder(Vec<usize>),
+    /// A call of one of the helpers that declare resources.
+    Declare(Vec<usize>),
+    /// A group: a list, a loop that fills it, and the call that binds it.
+    List,
+}
+
 /// The number of address bits of a memory with `depth` words (spec 7.6).
 fn address_bits(depth: u32) -> u32 {
     depth.next_power_of_two().trailing_zeros().max(1)
@@ -204,24 +232,38 @@ impl Builder {
     /// The helpers `H<k>`, from the hand tape.
     pub(super) fn res_helpers(&mut self) -> Built {
         self.on_hand(|b| {
-            for k in 0..b.tape.below(RES_HELPERS + 1) {
-                let h = b.res_helper(k as usize)?;
+            for _ in 0..b.tape.below(RES_HELPERS + 1) {
+                let h = b.res_helper(format!("H{}", b.res_helpers.len()))?;
+                let of = match &h.role {
+                    Role::List(ListOf::Reg(t)) => Some((true, t.clone())),
+                    Role::List(ListOf::Wire(t)) => Some((false, t.clone())),
+                    _ => None,
+                };
                 b.res_helpers.push(h);
                 note!(b, res_helpers);
+                // A group can push the result of a helper that declares one
+                // element, so a list helper often comes with such a helper.
+                if let Some((reg, ty)) = of
+                    && b.tape.flag()
+                {
+                    let name = format!("H{}", b.res_helpers.len());
+                    let factory = b.factory_helper(name, reg, &ty)?;
+                    b.res_helpers.push(factory);
+                }
             }
             Ok(())
         })
     }
 
     /// A helper of a random role.
-    fn res_helper(&mut self, k: usize) -> Built<ResHelper> {
-        let name = format!("H{k}");
-        match self.tape.below(10) {
+    fn res_helper(&mut self, name: String) -> Built<ResHelper> {
+        match self.tape.below(17) {
             0 | 1 => Ok(self.bind_helper(name, false)),
             2 | 3 => Ok(self.bind_helper(name, true)),
-            4 | 5 => self.input_helper(name),
-            6 | 7 => Ok(self.mem_helper(name)),
-            _ => self.declare_helper(name),
+            4..=6 => self.input_helper(name),
+            7..=9 => Ok(self.mem_helper(name)),
+            10..=13 => self.declare_helper(name),
+            n => Ok(self.list_helper(name, n - 14)),
         }
     }
 
@@ -232,17 +274,24 @@ impl Builder {
             statics: self.const_names(),
             hw,
             helpers: self.helpers.len(),
+            local: true,
             ..Ctx::default()
         }
     }
 
-    /// The data formals `x<n>` of a helper: one or two of a random type,
-    /// and the names that they make readable.
-    pub(super) fn data_formals(&mut self, names: &mut Names) -> (Vec<(String, FTy)>, Vec<Hw>) {
+    /// The data formals `x<n>` of a helper: one or two, and the names that
+    /// they make readable. The first one has the type `first` if there is
+    /// one, so that the value of a binding is short.
+    pub(super) fn data_formals(
+        &mut self,
+        names: &mut Names,
+        first: Option<(Ty, Scalar)>,
+    ) -> (Vec<(String, FTy)>, Vec<Hw>) {
         let mut params = Vec::new();
         let mut hw = Vec::new();
+        let mut first = first;
         for _ in 0..self.tape.between(1, 2) {
-            let (t, s) = self.data_ty();
+            let (t, s) = first.take().unwrap_or_else(|| self.data_ty());
             let name = names.fresh("x");
             params.push((name.clone(), FTy::Data(t.clone())));
             hw.push(Hw {
@@ -265,7 +314,7 @@ impl Builder {
             FTy::Reg(ty.clone())
         };
         let mut names = Names::default();
-        let (data, mut hw) = self.data_formals(&mut names);
+        let (data, mut hw) = self.data_formals(&mut names, Some((ty.clone(), scalar)));
         if !wire {
             hw.push(Hw {
                 expr: HExpr::Name("a0".to_owned()),
@@ -297,24 +346,12 @@ impl Builder {
     /// type `T` of an input of a later module. Without a later module that
     /// has such an input, a wire helper.
     fn input_helper(&mut self, name: String) -> Built<ResHelper> {
-        let inputs: Vec<(usize, String, Ty)> = self
-            .sigs
-            .iter()
-            .enumerate()
-            .skip(1)
-            .flat_map(|(j, sig)| {
-                sig.inputs
-                    .iter()
-                    .filter(|(_, t)| closed(sig, t))
-                    .map(move |(p, t)| (j, p.clone(), t.clone()))
-            })
-            .collect();
-        let Some((module, port, ty)) = inputs.get(self.tape.index(inputs.len())).cloned() else {
+        let Some((module, port, ty)) = self.input_candidate() else {
             return Ok(self.bind_helper(name, true));
         };
         let scalar = self.scalar(&ty)?;
         let mut names = Names::default();
-        let (data, hw) = self.data_formals(&mut names);
+        let (data, hw) = self.data_formals(&mut names, Some((ty.clone(), scalar)));
         let ctx = self.helper_ctx(hw);
         let want = Want {
             types: vec![scalar],
@@ -332,6 +369,24 @@ impl Builder {
             HExpr::Unit,
             Role::Input { module, port },
         ))
+    }
+
+    /// An input of a later module whose type reads no parameter of that
+    /// module: the module, the port, and the type.
+    pub(super) fn input_candidate(&mut self) -> Option<(usize, String, Ty)> {
+        let inputs: Vec<(usize, String, Ty)> = self
+            .sigs
+            .iter()
+            .enumerate()
+            .skip(1)
+            .flat_map(|(j, sig)| {
+                sig.inputs
+                    .iter()
+                    .filter(|(_, t)| closed(sig, t))
+                    .map(move |(p, t)| (j, p.clone(), t.clone()))
+            })
+            .collect();
+        inputs.get(self.tape.index(inputs.len())).cloned()
     }
 
     /// `fn H<k>(a0: Mem[T, N], x1: UInt[A], x2: T, x3: Bool, x4: Bool) -> T`
@@ -391,8 +446,10 @@ impl Builder {
         self.hand_below(HANDLE_STMTS + 1)
     }
 
-    /// One handle statement of a frame: a call of a helper that takes a
-    /// fresh resource, or a memory with its two port calls.
+    /// One handle statement of a frame. The draw picks a kind of statement
+    /// first, so that a kind with few helpers still occurs: the memory of
+    /// the module, a call of a helper of each role that binds a fresh
+    /// resource, a call of a helper that declares resources, or a group.
     pub(super) fn handle_stmt(
         &mut self,
         ctx: &mut Ctx,
@@ -400,14 +457,81 @@ impl Builder {
         out: &mut Vec<Stmt>,
     ) -> Built {
         self.on_hand(|b| {
+            let mut classes: Vec<Class> = Vec::new();
+            if m.clocked {
+                classes.push(Class::Direct);
+            }
+            let usable = b.usable(m);
+            for same in [
+                |r: &Role| matches!(r, Role::Reg),
+                |r: &Role| matches!(r, Role::Wire),
+                |r: &Role| matches!(r, Role::Input { .. }),
+                |r: &Role| matches!(r, Role::Mem { .. }),
+            ] {
+                let found: Vec<usize> = usable
+                    .iter()
+                    .copied()
+                    .filter(|&i| b.res_helpers.get(i).is_some_and(|h| same(&h.role)))
+                    .collect();
+                if !found.is_empty() {
+                    classes.push(Class::Binder(found));
+                }
+            }
             let declarers = b.usable_declarers(m);
-            if !declarers.is_empty() && b.tape.flag() {
-                return b.declare_call(ctx, m, &declarers, out);
+            if !declarers.is_empty() {
+                classes.push(Class::Declare(declarers));
             }
-            if m.clocked && (b.res_helpers.is_empty() || b.tape.below(3) == 0) {
-                return b.direct_mem(ctx, m, out);
+            if b.has_list_helper() {
+                classes.push(Class::List);
             }
-            b.bind_call(ctx, m, out)
+            let Some(class) = classes.get(b.tape.index(classes.len())) else {
+                return Ok(());
+            };
+            match class {
+                Class::Direct => b.direct_mem(ctx, m, out),
+                Class::Binder(found) => {
+                    let i = found.get(b.tape.index(found.len())).copied();
+                    i.map_or(Ok(()), |i| b.bind_call(ctx, m, i, out))
+                }
+                Class::Declare(declarers) => b.declare_call(ctx, m, declarers, out),
+                Class::List => b.list_group(ctx, m, out),
+            }
+        })
+    }
+
+    /// A call of each helper that no call names yet and that the module can
+    /// call, at the end of its top frame. A helper that no module calls only
+    /// makes the program longer, and the calls give the outputs of the
+    /// module resources to read.
+    pub(super) fn call_unused(
+        &mut self,
+        ctx: &mut Ctx,
+        m: &mut Module,
+        out: &mut Vec<Stmt>,
+    ) -> Built {
+        self.on_hand(|b| {
+            for i in 0..b.res_helpers.len() {
+                if b.called.contains(&i) {
+                    continue;
+                }
+                let Some(h) = b.res_helpers.get(i) else {
+                    continue;
+                };
+                match &h.role {
+                    Role::Declare => {
+                        if b.usable_declarers(m).contains(&i) {
+                            b.declare_call(ctx, m, &[i], out)?;
+                        }
+                    }
+                    Role::List(_) => b.list_group_of(ctx, m, i, out)?,
+                    _ => {
+                        if b.usable(m).contains(&i) {
+                            b.bind_call(ctx, m, i, out)?;
+                        }
+                    }
+                }
+            }
+            Ok(())
         })
     }
 
@@ -421,7 +545,7 @@ impl Builder {
                 Role::Reg | Role::Mem { .. } => m.clocked,
                 Role::Wire => true,
                 Role::Input { module, .. } => self.reachable(m, *module),
-                Role::Declare => false,
+                Role::Declare | Role::List(_) => false,
             })
             .map(|(i, _)| i)
             .collect()
@@ -430,11 +554,7 @@ impl Builder {
     /// A fresh resource of the type of the first formal of a helper, and
     /// the call that binds it. A wire binds at once and then reads. A
     /// register binds at the end of the frame.
-    fn bind_call(&mut self, ctx: &mut Ctx, m: &mut Module, out: &mut Vec<Stmt>) -> Built {
-        let usable = self.usable(m);
-        let Some(&i) = usable.get(self.tape.index(usable.len())) else {
-            return Ok(());
-        };
+    fn bind_call(&mut self, ctx: &mut Ctx, m: &mut Module, i: usize, out: &mut Vec<Stmt>) -> Built {
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
         match h.role {
             Role::Wire | Role::Reg => {
@@ -459,7 +579,7 @@ impl Builder {
                         ty: ty.clone(),
                     });
                 }
-                ctx.hw.push(Hw {
+                ctx.publish(Hw {
                     expr: HExpr::Name(name),
                     ty: Some(ty.clone()),
                     types,
@@ -473,14 +593,14 @@ impl Builder {
                 let call = self.binder_call(ctx, i, first)?;
                 out.push(call);
                 note!(self, bind_input_calls);
-                self.expose_child_outputs(ctx, &child)?;
+                self.expose_child_handles(ctx, &child)?;
             }
             Role::Mem { word, depth } => {
                 let name = m.names.fresh("n");
                 out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
                 self.mem_ports(ctx, &mut m.names, (&name, &word, depth), Some(i), out)?;
             }
-            Role::Declare => {}
+            Role::Declare | Role::List(_) => {}
         }
         Ok(())
     }
@@ -547,7 +667,7 @@ impl Builder {
     /// Makes the data `expr` of type `ty` a readable name.
     pub(super) fn push_read(&mut self, ctx: &mut Ctx, expr: HExpr, ty: &Ty) -> Built {
         let types = self.types(ty, &ctx.envs)?;
-        ctx.hw.push(Hw {
+        ctx.publish(Hw {
             expr,
             ty: Some(ty.clone()),
             types,
@@ -561,11 +681,53 @@ impl Builder {
     /// text of the program longer.
     pub(super) fn actual(&mut self, ctx: &Ctx, scalar: Scalar) -> HExpr {
         let types = vec![scalar; ctx.envs.len()];
-        let names: Vec<&Hw> = ctx.hw.iter().filter(|h| h.types == types).collect();
+        let names: Vec<&Hw> = ctx
+            .hw
+            .iter()
+            .chain(&ctx.hand)
+            .filter(|h| h.types == types)
+            .collect();
         match names.get(self.tape.index(names.len())) {
             Some(h) if self.tape.below(4) != 0 => h.expr.clone(),
             _ => HExpr::Static(self.short(scalar)),
         }
+    }
+
+    /// The outputs of a child that a helper or a group declared, as names
+    /// of the hand tape only: the main tape does not see them.
+    pub(super) fn expose_child_handles(&mut self, ctx: &mut Ctx, child: &Child) -> Built {
+        let (hw, enums) = (ctx.hw.len(), ctx.enums.len());
+        self.expose_child_outputs(ctx, child)?;
+        if !ctx.local {
+            let outputs = ctx.hw.split_off(hw);
+            ctx.hand.extend(outputs);
+            ctx.enums.truncate(enums);
+        }
+        Ok(())
+    }
+
+    /// The value `e` of an output of the wanted type, with a name of the
+    /// hand tape mixed in: `read ^ e`, or `read != e` for a `Bool`. The
+    /// outputs of a module thus depend on the resources of its helpers.
+    pub(super) fn mix_hand(&mut self, ctx: &Ctx, want: &Want, e: HExpr) -> HExpr {
+        self.on_hand(|b| {
+            if ctx.hand.is_empty() || b.tape.below(3) == 0 {
+                return e;
+            }
+            let Some(h) = ctx.hand.get(b.tape.index(ctx.hand.len())) else {
+                return e;
+            };
+            let Some(read) = adapt(h.expr.clone(), &Want::of(h), want) else {
+                return e;
+            };
+            note!(b, mixed_outputs);
+            let op = if want.types.first() == Some(&Scalar::Bool) {
+                HBin::Ne
+            } else {
+                HBin::Xor
+            };
+            HExpr::Binary(op, Box::new(read), Box::new(e))
+        })
     }
 
     /// A short literal of type `scalar`: below 8 in magnitude.
@@ -594,6 +756,7 @@ impl Builder {
     /// `skip`, which must be data formals.
     fn data_args(&mut self, ctx: &Ctx, i: usize, skip: usize) -> Built<(String, Vec<HExpr>)> {
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
+        self.called.insert(i);
         let mut args = Vec::new();
         for (_, t) in h.params.iter().skip(skip) {
             let FTy::Data(t) = t else {
@@ -606,7 +769,7 @@ impl Builder {
     }
 
     /// `H<i>(first, e, ...);`
-    fn binder_call(&mut self, ctx: &Ctx, i: usize, first: HExpr) -> Built<Stmt> {
+    pub(super) fn binder_call(&mut self, ctx: &Ctx, i: usize, first: HExpr) -> Built<Stmt> {
         let (name, args) = self.binder_args(ctx, i, first)?;
         Ok(Stmt::Call(name, args))
     }
@@ -641,7 +804,7 @@ impl Builder {
             types: self.types(ty, &ctx.envs)?,
             ty: Some(ty.clone()),
         };
-        let value = self.driver_at(ctx, &want, HANDLE_DEPTH);
+        let value = self.driver_at(&ctx.view(), &want, HANDLE_DEPTH);
         Ok(Stmt::Connect(place_of(first), value))
     }
 }
@@ -667,7 +830,8 @@ mod tests {
     #[test]
     fn programs_call_each_kind_of_binder() {
         const TAPES: usize = 256;
-        let mut with = [0usize; 6];
+        let mut with = [0usize; 7];
+        let mut declarer_elements = 0;
         for tape in tapes(TAPES) {
             let mut b = Builder::new(tape);
             let p = b.program();
@@ -680,13 +844,25 @@ mod tests {
                 s.bind_mem_calls,
                 s.direct_mems,
                 s.declare_calls,
+                s.list_groups,
             ]) {
                 *n += usize::from(seen > 0);
             }
+            declarer_elements += usize::from(s.list_declarer_elements > 0);
         }
-        for n in with {
-            assert!(n * 10 >= TAPES, "{with:?} of {TAPES}");
+        let names = [
+            "register binder",
+            "wire binder",
+            "input binder",
+            "memory binder",
+            "module memory",
+            "declaring helper",
+            "list of handles",
+        ];
+        for (name, n) in names.iter().zip(with) {
+            assert!(n * 10 >= TAPES, "{name}: {n} of {TAPES}: {with:?}");
         }
+        assert!(declarer_elements > 0, "no list holds a result of a helper");
     }
 
     /// A call of a helper that takes resources is a statement of a module

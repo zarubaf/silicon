@@ -330,6 +330,11 @@ impl<'a> Walk<'a> {
                     self.hexpr(a);
                 }
             }
+            Stmt::HList(_, t) => self.fty(t),
+            Stmt::HPush(list, h) => {
+                self.rename(list);
+                self.hexpr(h);
+            }
             Stmt::Mem(_, t, depth) => {
                 self.ty(t);
                 self.sexpr(depth);
@@ -865,7 +870,7 @@ impl<'a> Walk<'a> {
                     self.fty(t);
                 }
             }
-            FTy::Array(t, _) => self.fty(t),
+            FTy::Array(t, _) | FTy::List(t) => self.fty(t),
             FTy::Struct(name) => self.rename(name),
             FTy::Unit => {}
         }
@@ -1264,6 +1269,7 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::Reg(n, _, _)
         | Stmt::Wire(n, _)
         | Stmt::Mem(n, _, _)
+        | Stmt::HList(n, _)
         | Stmt::Let { name: n, .. }
         | Stmt::StaticLet(n, _, _)
         | Stmt::MutLet(n, _, _)

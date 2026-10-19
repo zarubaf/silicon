@@ -227,7 +227,23 @@ impl Walk<'_> {
             Item::Helper { name, body, .. } if name == f => Some(body),
             _ => None,
         });
-        self.run(body.ok_or(Fault::Type)?, &mut Env::default(), frame)
+        // A loop over the elements of a list of handles has nothing to
+        // elaborate, and the evaluator knows no handle, so only the
+        // statements that can elaborate run.
+        for s in body.ok_or(Fault::Type)? {
+            if matches!(
+                s,
+                Stmt::Instance(..)
+                    | Stmt::Call(..)
+                    | Stmt::Let {
+                        value: HExpr::Call(..),
+                        ..
+                    }
+            ) {
+                self.run(std::slice::from_ref(s), &mut Env::default(), frame)?;
+            }
+        }
+        Ok(())
     }
 
     /// The record line of `logged`, which a statement of `frame` made.

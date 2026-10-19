@@ -87,6 +87,7 @@ pub fn twin(program: &Program) -> Twin {
             })
             .collect(),
         calls: 0,
+        lists: BTreeMap::new(),
         enums: program
             .items
             .iter()
@@ -265,6 +266,10 @@ struct Writer<'a> {
     enums: BTreeMap<String, EnumDef>,
     /// The helper calls that the twin has inlined.
     calls: u32,
+    /// The elements of each list of handles of the module, in push order.
+    /// A push in a loop body must reach the list of the module, so the
+    /// lists live here and not in a frame.
+    lists: BTreeMap<String, Vec<HVal>>,
 }
 
 impl Writer<'_> {
@@ -301,6 +306,7 @@ impl Writer<'_> {
                 body: vec![Stmt::Error(format!("no module {module}"))],
             };
         };
+        self.lists.clear();
         let mut fr = Frame {
             env: Env::of(params, args),
             ..Frame::default()
@@ -331,7 +337,9 @@ impl Writer<'_> {
             FTy::Wire(t) => FTy::Wire(self.ty(t, fr)),
             FTy::Input(t) => FTy::Input(self.ty(t, fr)),
             FTy::Mem(t, depth) => FTy::Mem(self.ty(t, fr), self.fold(depth, fr)),
-            FTy::Instance(..) | FTy::Tuple(_) | FTy::Array(..) | FTy::Struct(_) => t.clone(),
+            FTy::Instance(..) | FTy::Tuple(_) | FTy::Array(..) | FTy::Struct(_) | FTy::List(_) => {
+                t.clone()
+            }
         }
     }
 
@@ -505,11 +513,11 @@ impl Writer<'_> {
             _ => panic!("a selection of the builder is on no container: {e:?}"),
         };
         match e {
-            HExpr::Name(n) => fr
-                .handles
-                .get(n)
-                .cloned()
-                .unwrap_or_else(|| HVal::Res(fr.name(n))),
+            HExpr::Name(n) => match (fr.handles.get(n), self.lists.get(n)) {
+                (Some(h), _) => h.clone(),
+                (None, Some(xs)) => HVal::Seq(xs.clone()),
+                (None, None) => HVal::Res(fr.name(n)),
+            },
             HExpr::Field(u, f) => match fr.handles.get(u) {
                 Some(HVal::Rec(fields)) => fields.iter().find(|(n, _)| n == f).map_or_else(
                     || panic!("a field of the builder is missing: {e:?}"),
@@ -670,6 +678,13 @@ impl Writer<'_> {
                 self.inline(f, args, fr, out);
             }
             Stmt::Mem(..) | Stmt::WritePort { .. } => self.memory(s, fr, out),
+            Stmt::HList(n, _) => {
+                self.lists.insert(n.clone(), Vec::new());
+            }
+            Stmt::HPush(n, h) => {
+                let h = self.handle(h, fr);
+                self.lists.entry(n.clone()).or_default().push(h);
+            }
         }
     }
 
@@ -726,6 +741,22 @@ impl Writer<'_> {
         out.push(Stmt::Instance(fr.declare(u), child, Vec::new()));
     }
 
+    /// The bound `hi` of a loop with `len(g)` of a list of handles replaced
+    /// by the number of its elements: the evaluator knows no handle.
+    fn length(&self, hi: &SExpr, fr: &Frame) -> SExpr {
+        let SExpr::Len(inner) = hi else {
+            return hi.clone();
+        };
+        let SExpr::Name(n) = &**inner else {
+            return hi.clone();
+        };
+        let len = match (fr.handles.get(n), self.lists.get(n)) {
+            (Some(HVal::Seq(xs)), _) | (None, Some(xs)) => xs.len(),
+            _ => return hi.clone(),
+        };
+        SExpr::Int(BigInt::from(len), Radix::Dec)
+    }
+
     /// One block for each iteration of a `comptime for`. A fault of the
     /// builder keeps the statement `s`.
     fn unroll(
@@ -735,11 +766,17 @@ impl Writer<'_> {
         fr: &Frame,
         out: &mut Vec<Stmt>,
     ) {
-        let (Some(Value::Int(lo)), Some(Value::Int(hi))) = (self.value(lo, fr), self.value(hi, fr))
+        let hi = self.length(hi, fr);
+        let (Some(Value::Int(lo)), Some(Value::Int(hi))) =
+            (self.value(lo, fr), self.value(&hi, fr))
         else {
             out.push(s.clone());
             return;
         };
+        // A loop that pushes handles keeps its declarations in the scope of
+        // the module, where the later calls bind them. Their names carry the
+        // iteration, so no two iterations share a name.
+        let flat = body.iter().any(|s| matches!(s, Stmt::HPush(..)));
         for value in loop_values(&lo, &hi) {
             let suffix = format!(
                 "_{binder}_{}{}",
@@ -748,7 +785,10 @@ impl Writer<'_> {
             );
             let mut env = fr.env.clone();
             env.statics.insert(binder.to_owned(), value);
-            out.push(self.block(body, fr, env, suffix));
+            match self.block(body, fr, env, suffix) {
+                Stmt::Block(inner) if flat => out.extend(inner),
+                block => out.push(block),
+            }
         }
     }
 
@@ -1404,6 +1444,57 @@ mod tests {
         assert_eq!(
             t.text,
             "module M0() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    reg r0_c1: UInt[4] = 0;\n    reg r1_c1: UInt[4] = 0;\n    reg r2_c2: UInt[4] = 0;\n    wire w0_c2: UInt[4];\n    instance u0_c3 = M1();\n    r1_c1 := i0;\n    r2_c2 := i0;\n    w0_c2 := i0;\n    u0_c3.i0 := i0;\n    o0 := ((read(r1_c1) +% r2_c2) +% u0_c3.o0);\n}\nmodule M1() domains() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    o0 := i0;\n}\n"
+        );
+        assert!(t.static_names().is_empty(), "{:?}", t.static_names());
+    }
+
+    /// A group: the loop that pushes declarations runs without blocks, so
+    /// the call after it binds the resources of the iterations. The bound
+    /// `len(a0)` of the helper is the number of pushes.
+    #[test]
+    fn the_twin_unrolls_a_list_of_handles_and_its_helper() {
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![
+                ("a0".to_owned(), FTy::List(Box::new(FTy::Reg(uint(4))))),
+                ("x1".to_owned(), uint(4).into()),
+            ],
+            mut_first: false,
+            ret: FTy::Unit,
+            body: vec![Stmt::For(
+                "j0".to_owned(),
+                int(0),
+                SExpr::Len(Box::new(sname("a0"))),
+                vec![Stmt::Connect(
+                    Place::Path(HExpr::Index(Box::new(hname("a0")), sname("j0"))),
+                    hbin(HBin::Xor, hname("x1"), HExpr::Make(uint(4), sname("j0"))),
+                )],
+            )],
+            result: HExpr::Unit,
+        };
+        let body = vec![
+            Stmt::Input("i0".to_owned(), uint(4)),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            Stmt::HList("G0".to_owned(), FTy::Reg(uint(4))),
+            Stmt::For(
+                "j1".to_owned(),
+                int(0),
+                int(2),
+                vec![
+                    Stmt::Reg("r0".to_owned(), uint(4), int(0)),
+                    Stmt::HPush("G0".to_owned(), hname("r0")),
+                ],
+            ),
+            Stmt::Call("H0".to_owned(), vec![hname("G0"), hname("i0")]),
+            connect("o0", HExpr::Index(Box::new(hname("G0")), int(1))),
+        ];
+        let t = twin(&program(
+            vec![helper, module("M0", &[], true, body)],
+            Vec::new(),
+        ));
+        assert_eq!(
+            t.text,
+            "module M0() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    reg r0_j1_0: UInt[4] = 0;\n    reg r0_j1_1: UInt[4] = 0;\n    let x1_c1: UInt[4] = i0;\n    {\n        r0_j1_0 := (x1_c1 ^ UInt[4](0));\n    }\n    {\n        r0_j1_1 := (x1_c1 ^ UInt[4](1));\n    }\n    o0 := r0_j1_1;\n}\n"
         );
         assert!(t.static_names().is_empty(), "{:?}", t.static_names());
     }
