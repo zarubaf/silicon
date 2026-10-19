@@ -649,8 +649,12 @@ impl Builder {
             Leaf::Reg(ty) => {
                 self.read_handle(ctx, &first, ty)?;
                 if !part.bound {
-                    note!(self, container_binds, !part.path.is_empty());
                     let via = self.binder_for(true, ty);
+                    note!(
+                        self,
+                        container_binds,
+                        !part.path.is_empty() && via.is_none()
+                    );
                     ctx.pending.push(Pending {
                         first,
                         via,
@@ -660,8 +664,12 @@ impl Builder {
             }
             Leaf::Wire(ty) => {
                 if !part.bound {
-                    note!(self, container_binds, !part.path.is_empty());
                     let via = self.binder_for(false, ty);
+                    note!(
+                        self,
+                        container_binds,
+                        !part.path.is_empty() && via.is_none()
+                    );
                     out.push(self.bind_handle(ctx, &first, via, ty)?);
                 }
                 self.read_handle(ctx, &first, ty)?;
