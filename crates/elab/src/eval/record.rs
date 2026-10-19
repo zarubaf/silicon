@@ -191,7 +191,8 @@ impl Evaluator<'_> {
                 Code::S010,
                 pos,
                 format!(
-                    "a zero `T()` needs a hardware data type, not {}",
+                    "a zero `T()` needs a hardware data type, not `{}`; write a full value, for \
+                     example a constructor with one value for each field",
                     self.tys.text(t)
                 ),
             );
@@ -225,7 +226,8 @@ impl Evaluator<'_> {
                 Code::S007,
                 pos,
                 format!(
-                    "a struct constructor takes 0 or {} argument(s), but it has {}",
+                    "a struct constructor takes 0 or {} argument(s), but it has {}; pass one \
+                     value for each field, or none for the zero",
                     fields.len(),
                     xs.len()
                 ),
@@ -343,7 +345,11 @@ impl Evaluator<'_> {
                         fail(
                             Code::S010,
                             pos,
-                            format!("`{g}` needs a hardware data type, not {}", self.tys.text(t)),
+                            format!(
+                                "`data_bits` needs a hardware data type, not `{}`; only a \
+                                 fixed-width type has a bit count, for example `UInt[8]`",
+                                self.tys.text(t)
+                            ),
                         )
                     }
                 }

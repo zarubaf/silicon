@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The prelude of slices 1 to 3. A later slice adds its own names, so a use of one of them is
-//! `S003` until then. The prelude struct `ReadResponse` is an item, built here already resolved.
+//! The prelude of slices 1 to 4. The prelude structs are items, built here already resolved.
 
-use parse::ast::{Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr};
+use parse::ast::{Expr, Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr};
 
 /// A name of the prelude: the scalar types and functions of slice 1, `Unit` and `len` of the
 /// containers of slice 2, `Type` and `data_bits` of the types as values, and `String`, `List`,
@@ -151,13 +150,23 @@ pub(crate) enum Leaf {
     Prim(&'static str),
     /// The first parameter of its own struct.
     Param,
+    /// The prelude struct with this index in [`STRUCTS`].
+    Struct(usize),
+}
+
+/// The type of a field of a prelude struct.
+#[derive(Clone, Copy)]
+pub(crate) enum FieldTy {
+    One(Leaf),
+    /// `List[T]`.
+    List(Leaf),
 }
 
 /// A prelude struct, as the declaration it acts as (design section 5.6).
 pub(crate) struct PreludeStruct {
     pub(crate) name: &'static str,
     params: &'static [(&'static str, Leaf)],
-    fields: &'static [(&'static str, Leaf)],
+    fields: &'static [(&'static str, FieldTy)],
 }
 
 /// The name of the prelude struct that a port call finds.
@@ -165,11 +174,64 @@ pub(crate) const RESPONSE: &str = "ReadResponse";
 
 /// The prelude structs, in the order of design section 5.6. They follow the user items. A field
 /// type refers to a prelude struct by its index here, never through the item scope.
-pub(crate) const STRUCTS: [PreludeStruct; 1] = [PreludeStruct {
-    name: RESPONSE,
-    params: &[("T", Leaf::Prim("Type"))],
-    fields: &[("data", Leaf::Param), ("valid", Leaf::Prim("Bool"))],
-}];
+pub(crate) const STRUCTS: [PreludeStruct; 6] = [
+    PreludeStruct {
+        name: RESPONSE,
+        params: &[("T", Leaf::Prim("Type"))],
+        fields: &[
+            ("data", FieldTy::One(Leaf::Param)),
+            ("valid", FieldTy::One(Leaf::Prim("Bool"))),
+        ],
+    },
+    PreludeStruct {
+        name: "FieldInfo",
+        params: &[],
+        fields: &[
+            ("name", FieldTy::One(Leaf::Prim("String"))),
+            ("ty", FieldTy::One(Leaf::Prim("Type"))),
+        ],
+    },
+    PreludeStruct {
+        name: "TypeInfo",
+        params: &[],
+        fields: &[
+            ("kind", FieldTy::One(Leaf::Prim("String"))),
+            ("fields", FieldTy::List(Leaf::Struct(1))),
+            ("element", FieldTy::One(Leaf::Prim("Type"))),
+            ("length", FieldTy::One(Leaf::Prim("Nat"))),
+            ("width", FieldTy::One(Leaf::Prim("Nat"))),
+            ("variants", FieldTy::List(Leaf::Struct(3))),
+        ],
+    },
+    PreludeStruct {
+        name: "VariantInfo",
+        params: &[],
+        fields: &[
+            ("name", FieldTy::One(Leaf::Prim("String"))),
+            ("tag", FieldTy::One(Leaf::Prim("Nat"))),
+            ("payload", FieldTy::List(Leaf::Prim("Type"))),
+        ],
+    },
+    PreludeStruct {
+        name: "PortKey",
+        params: &[],
+        fields: &[
+            ("name", FieldTy::One(Leaf::Prim("String"))),
+            ("indexed", FieldTy::One(Leaf::Prim("Bool"))),
+            ("index", FieldTy::One(Leaf::Prim("Nat"))),
+        ],
+    },
+    PreludeStruct {
+        name: "PortInfo",
+        params: &[],
+        fields: &[
+            ("key", FieldTy::One(Leaf::Struct(4))),
+            ("ty", FieldTy::One(Leaf::Prim("Type"))),
+            ("is_input", FieldTy::One(Leaf::Prim("Bool"))),
+            ("domain", FieldTy::One(Leaf::Prim("String"))),
+        ],
+    },
+];
 
 /// A prelude struct item, built already resolved, with the target of each name node in it.
 pub(crate) struct Built {
@@ -207,6 +269,7 @@ impl Builder {
         let text = match leaf {
             Leaf::Prim(name) => name,
             Leaf::Param => s.params.first().map_or("", |p| p.0),
+            Leaf::Struct(k) => STRUCTS.get(k).map_or("", |t| t.name),
         };
         (id, text.to_owned())
     }
@@ -217,6 +280,25 @@ impl Builder {
             pos: Self::POS,
             id,
             name,
+        }
+    }
+
+    fn field_ty(&mut self, ty: FieldTy, s: &PreludeStruct) -> TypeExpr {
+        match ty {
+            FieldTy::One(leaf) => self.ty(leaf, s),
+            FieldTy::List(leaf) => {
+                let base = self.ty(Leaf::Prim("List"), s);
+                let (id, name) = self.leaf(leaf, s);
+                TypeExpr::Index {
+                    pos: Self::POS,
+                    base: Box::new(base),
+                    args: vec![Expr::Name {
+                        pos: Self::POS,
+                        id,
+                        name,
+                    }],
+                }
+            }
         }
     }
 
@@ -237,7 +319,7 @@ impl Builder {
             .iter()
             .map(|&(f, ty)| StructField {
                 name: self.ident(f),
-                ty: self.ty(ty, s),
+                ty: self.field_ty(ty, s),
             })
             .collect();
         Built {
@@ -261,14 +343,6 @@ pub(crate) fn build() -> Vec<Built> {
         uses: Vec::new(),
     };
     STRUCTS.iter().map(|s| builder.item(s)).collect()
-}
-
-/// The slice of a prelude name that a later slice adds, for the message of `S003`.
-pub(crate) fn later_slice(name: &str) -> Option<u8> {
-    Some(match name {
-        "FieldInfo" | "TypeInfo" | "PortKey" | "PortInfo" => 4,
-        _ => return None,
-    })
 }
 
 /// The text of `S003` at `Domain`, which waits for more domains (#11).

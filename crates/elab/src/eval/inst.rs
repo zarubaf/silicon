@@ -1179,7 +1179,8 @@ impl Evaluator<'_> {
                 Code::S010,
                 pos,
                 format!(
-                    "a port, a register, and a wire need a hardware data type, not {}",
+                    "a port, a register, and a wire need a hardware data type, not `{}`; use a \
+                     fixed-width type, for example `UInt[8]`",
                     self.tys.text(t)
                 ),
             )

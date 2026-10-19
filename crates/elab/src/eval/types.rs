@@ -603,10 +603,12 @@ impl Evaluator<'_> {
                 Code::S007,
                 pos,
                 format!(
-                    "`{}` takes {} argument(s), but it has {}",
+                    "`{}` takes {} argument(s), but it has {}; pass one argument for each \
+                     `comptime` parameter of `{}`",
                     name.name,
                     params.len(),
-                    args.len()
+                    args.len(),
+                    name.name
                 ),
             );
         }
