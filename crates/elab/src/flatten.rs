@@ -38,7 +38,7 @@
 
 use crate::agg::{Agg, Base};
 use crate::eval::{Bind, Design, Inst, Mem, Sink, addr_width};
-use crate::hw::{HwId, Kind, Op};
+use crate::hw::{HwId, Kind, Op, port_name};
 use crate::int::{Nat, constant, nat};
 use crate::layout::{self, Env, Leaves, Shapes};
 use crate::names::{Field, Name, PathId, Role, Sym, encode};
@@ -1351,9 +1351,10 @@ impl<'d> Lower<'d> {
             Sink::Child {
                 index,
                 inst,
-                ref port,
+                port,
                 ref ty,
             } => {
+                let port = &port_name(self.design.texts.get(port).map_or("", String::as_str));
                 let Some(conns) = conns.get_mut(index) else {
                     return defect("a connection names no child");
                 };
