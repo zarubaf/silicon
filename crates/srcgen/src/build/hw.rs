@@ -373,7 +373,16 @@ fn adapt(e: HExpr, from: &Want, to: &Want) -> Option<HExpr> {
 pub(super) fn reads_name(e: &HExpr) -> bool {
     match e {
         // The receiver of a receiver call is a name.
-        HExpr::Name(_) | HExpr::Field(..) | HExpr::Receiver(..) | HExpr::ReadPort { .. } => true,
+        HExpr::Name(_)
+        | HExpr::Field(..)
+        | HExpr::Receiver(..)
+        | HExpr::ReadPort { .. }
+        | HExpr::Index(..)
+        | HExpr::Select(..)
+        | HExpr::Read(_) => true,
+        HExpr::Tuple(args) | HExpr::Array(args) | HExpr::Record(_, args) => {
+            args.iter().any(reads_name)
+        }
         HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => false,
         HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => reads_name(a),
         HExpr::Binary(_, a, b) => reads_name(a) || reads_name(b),

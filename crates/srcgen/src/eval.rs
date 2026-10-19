@@ -496,6 +496,8 @@ pub(crate) fn record_ty(name: &str, args: &[Value], scope: &Scope) -> Result<Rec
             FieldTy::Static(t) => t.clone(),
             FieldTy::UInt(w) => STy::UInt(field_width(w, &env, scope)?),
             FieldTy::SInt(w) => STy::SInt(field_width(w, &env, scope)?),
+            // A struct of handles has no static value.
+            FieldTy::Handle(_) => return Err(Fault::Type),
         };
         fields.push((f.clone(), t));
     }

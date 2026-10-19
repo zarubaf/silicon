@@ -213,6 +213,10 @@ enum HVal {
     Res(String),
     /// The instance and the port.
     Port(String, String),
+    /// The elements of a tuple, an array, or a list of handles.
+    Seq(Vec<HVal>),
+    /// A struct of handles: its fields by name.
+    Rec(Vec<(String, HVal)>),
 }
 
 impl Frame {
@@ -238,19 +242,6 @@ impl Frame {
         match self.handles.get(name) {
             Some(HVal::Port(u, p)) => Place::Field(u.clone(), p.clone()),
             _ => Place::Name(self.name(name)),
-        }
-    }
-
-    /// The handle that the actual `e` of a handle formal names.
-    fn handle(&self, e: &HExpr) -> HVal {
-        match e {
-            HExpr::Name(n) => self
-                .handles
-                .get(n)
-                .cloned()
-                .unwrap_or_else(|| HVal::Res(self.name(n))),
-            HExpr::Field(u, p) => HVal::Port(self.name(u), p.clone()),
-            _ => panic!("a handle actual of the builder is no name: {e:?}"),
         }
     }
 }
@@ -340,6 +331,7 @@ impl Writer<'_> {
             FTy::Wire(t) => FTy::Wire(self.ty(t, fr)),
             FTy::Input(t) => FTy::Input(self.ty(t, fr)),
             FTy::Mem(t, depth) => FTy::Mem(self.ty(t, fr), self.fold(depth, fr)),
+            FTy::Instance(..) | FTy::Tuple(_) | FTy::Array(..) | FTy::Struct(_) => t.clone(),
         }
     }
 
@@ -462,6 +454,9 @@ impl Writer<'_> {
         let sub = |a: &HExpr| Box::new(self.hexpr(a, fr));
         match e {
             HExpr::Name(n) => HExpr::Name(fr.name(n)),
+            HExpr::Field(u, q) if matches!(fr.handles.get(u), Some(HVal::Rec(_))) => {
+                self.leaf(e, fr)
+            }
             HExpr::Field(u, q) => HExpr::Field(fr.name(u), q.clone()),
             HExpr::Static(s) => HExpr::Static(self.fold(s, fr)),
             HExpr::Make(t, s) => HExpr::Make(self.ty(t, fr), self.fold(s, fr)),
@@ -494,6 +489,83 @@ impl Writer<'_> {
                 en: sub(en),
                 receiver: *receiver,
             },
+            HExpr::Index(..) | HExpr::Select(..) => self.leaf(e, fr),
+            HExpr::Read(h) => HExpr::Read(sub(h)),
+            HExpr::Tuple(_) | HExpr::Array(_) | HExpr::Record(..) => {
+                panic!("a literal of handles reads as data: {e:?}")
+            }
+        }
+    }
+
+    /// The handle that the actual `e` of a handle formal names. A container
+    /// selects its element here, so the twin has no container.
+    fn handle(&self, e: &HExpr, fr: &Frame) -> HVal {
+        let seq = |b: &HExpr| match self.handle(b, fr) {
+            HVal::Seq(xs) => xs,
+            _ => panic!("a selection of the builder is on no container: {e:?}"),
+        };
+        match e {
+            HExpr::Name(n) => fr
+                .handles
+                .get(n)
+                .cloned()
+                .unwrap_or_else(|| HVal::Res(fr.name(n))),
+            HExpr::Field(u, f) => match fr.handles.get(u) {
+                Some(HVal::Rec(fields)) => fields.iter().find(|(n, _)| n == f).map_or_else(
+                    || panic!("a field of the builder is missing: {e:?}"),
+                    |(_, h)| h.clone(),
+                ),
+                _ => HVal::Port(fr.name(u), f.clone()),
+            },
+            HExpr::Select(b, k) => seq(b)
+                .get(*k as usize)
+                .cloned()
+                .unwrap_or_else(|| panic!("a selection of the builder is out of range: {e:?}")),
+            HExpr::Index(b, i) => match self.value(i, fr) {
+                Some(Value::Int(i)) => usize::try_from(i)
+                    .ok()
+                    .and_then(|i| seq(b).get(i).cloned())
+                    .unwrap_or_else(|| panic!("an index of the builder is out of range: {e:?}")),
+                _ => panic!("an index of the builder is not static: {e:?}"),
+            },
+            HExpr::Tuple(xs) | HExpr::Array(xs) => {
+                HVal::Seq(xs.iter().map(|x| self.handle(x, fr)).collect())
+            }
+            HExpr::Record(name, xs) => {
+                let fields = self.items.iter().find_map(|item| match item {
+                    Item::Struct(def) if def.name == *name => Some(&def.fields),
+                    _ => None,
+                });
+                let Some(fields) = fields else {
+                    panic!("a record of the builder names no struct: {name}");
+                };
+                HVal::Rec(
+                    fields
+                        .iter()
+                        .zip(xs)
+                        .map(|((f, _), x)| (f.clone(), self.handle(x, fr)))
+                        .collect(),
+                )
+            }
+            _ => panic!("a handle of the builder is no name or selection: {e:?}"),
+        }
+    }
+
+    /// The name of the resource that the selection `e` of a container of
+    /// handles names, read as data.
+    fn leaf(&self, e: &HExpr, fr: &Frame) -> HExpr {
+        match self.handle(e, fr) {
+            HVal::Res(n) => HExpr::Name(n),
+            _ => panic!("a read of the builder is on no register or wire: {e:?}"),
+        }
+    }
+
+    /// The `:=` target for the handle `h`.
+    fn place(h: HVal) -> Place {
+        match h {
+            HVal::Res(n) => Place::Name(n),
+            HVal::Port(u, p) => Place::Field(u, p),
+            HVal::Seq(_) | HVal::Rec(_) => panic!("a target of the builder is a container"),
         }
     }
 
@@ -562,7 +634,13 @@ impl Writer<'_> {
             Stmt::Connect(place, v) => {
                 let place = match place {
                     Place::Name(n) => fr.target(n),
-                    Place::Field(u, p) => Place::Field(fr.name(u), p.clone()),
+                    Place::Field(u, p) => match fr.handles.get(u) {
+                        Some(HVal::Rec(_)) => {
+                            Writer::place(self.handle(&HExpr::Field(u.clone(), p.clone()), fr))
+                        }
+                        _ => Place::Field(fr.name(u), p.clone()),
+                    },
+                    Place::Path(e) => Writer::place(self.handle(e, fr)),
                 };
                 out.push(Stmt::Connect(place, self.hexpr(v, fr)));
             }
@@ -591,6 +669,13 @@ impl Writer<'_> {
             Stmt::Call(f, args) => {
                 self.inline(f, args, fr, out);
             }
+            Stmt::Mem(..) | Stmt::WritePort { .. } => self.memory(s, fr, out),
+        }
+    }
+
+    /// A `mem` statement, or a `write_port` call.
+    fn memory(&mut self, s: &Stmt, fr: &mut Frame, out: &mut Vec<Stmt>) {
+        match s {
             Stmt::Mem(n, t, depth) => {
                 let (t, depth) = (self.ty(t, fr), self.fold(depth, fr));
                 out.push(Stmt::Mem(fr.declare(n), t, depth));
@@ -613,6 +698,7 @@ impl Writer<'_> {
                     receiver,
                 });
             }
+            _ => out.push(s.clone()),
         }
     }
 
@@ -677,10 +763,12 @@ impl Writer<'_> {
         out: &mut Vec<Stmt>,
     ) {
         let (callee, ret, result) = self.inline(call.0, call.1, fr, out);
-        let ty = match &ret {
-            FTy::Data(t) => Some(self.ty(t, &callee)),
-            _ => None,
+        let FTy::Data(t) = &ret else {
+            let h = self.handle(&result, &callee);
+            fr.handles.insert(name.to_owned(), h);
+            return;
         };
+        let ty = Some(self.ty(t, &callee));
         let value = self.hexpr(&result, &callee);
         out.push(Stmt::Let {
             name: fr.declare(name),
@@ -732,7 +820,7 @@ impl Writer<'_> {
                     value,
                 });
             } else {
-                callee.handles.insert(name.clone(), fr.handle(arg));
+                callee.handles.insert(name.clone(), self.handle(arg, fr));
             }
         }
         let body = self.stmts(body, &mut callee);
@@ -783,6 +871,12 @@ fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
             en: sub(en),
             receiver: *receiver,
         },
+        HExpr::Tuple(xs) => HExpr::Tuple(all(xs)),
+        HExpr::Array(xs) => HExpr::Array(all(xs)),
+        HExpr::Record(s, xs) => HExpr::Record(s.clone(), all(xs)),
+        HExpr::Index(b, i) => HExpr::Index(sub(b), i.clone()),
+        HExpr::Select(b, k) => HExpr::Select(sub(b), *k),
+        HExpr::Read(h) => HExpr::Read(sub(h)),
         HExpr::Unary(op, a) => HExpr::Unary(*op, sub(a)),
         HExpr::Binary(op, a, b) => HExpr::Binary(*op, sub(a), sub(b)),
         HExpr::If(c, a, b) => HExpr::If(sub(c), sub(a), sub(b)),
@@ -807,7 +901,8 @@ mod tests {
     use super::super::build::typed;
     use super::super::eval::Value;
     use super::super::program::{
-        ComptimeFn, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, STy, Stmt, Ty,
+        ComptimeFn, FieldTy, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, STy, Stmt,
+        StructDef, Ty,
     };
     use super::*;
     use num_bigint::BigInt;
@@ -1231,6 +1326,86 @@ mod tests {
             t.text,
             "module M0() {\n    input i0: UInt[2];\n    output o0: UInt[8];\n    mem n0: [UInt[8]; 4];\n    let x1_c1: UInt[2] = i0;\n    write_port(n0, x1_c1, UInt[8](7), true);\n    let l0_c1 = n0.read_port(x1_c1, true);\n    let l0: UInt[8] = l0_c1.data;\n    instance u0 = M1();\n    let x1_c2: UInt[4] = UInt[4](3);\n    u0.i0 := x1_c2;\n    o0 := l0;\n}\nmodule M1() domains() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    o0 := i0;\n}\n"
         );
+    }
+
+    /// Helpers that return an array, a struct, and an instance of handles:
+    /// the twin names the resource of each selection, so it has no
+    /// container, and a `:=` through a selection binds the resource.
+    #[test]
+    fn the_twin_resolves_the_containers_of_a_declaring_helper() {
+        let pair = Item::Struct(StructDef {
+            name: "T0".to_owned(),
+            params: Vec::new(),
+            fields: vec![
+                ("m0".to_owned(), FieldTy::Handle(FTy::Reg(uint(4)))),
+                ("m1".to_owned(), FieldTy::Handle(FTy::Wire(uint(4)))),
+            ],
+        });
+        let helper = |name: &str, ret: FTy, body: Vec<Stmt>, result: HExpr| Item::Helper {
+            name: name.to_owned(),
+            params: Vec::new(),
+            mut_first: false,
+            ret,
+            body,
+            result,
+        };
+        let reg = |n: &str| Stmt::Reg(n.to_owned(), uint(4), int(0));
+        let array = helper(
+            "H0",
+            FTy::Array(Box::new(FTy::Reg(uint(4))), 2),
+            vec![reg("r0"), reg("r1")],
+            HExpr::Array(vec![hname("r0"), hname("r1")]),
+        );
+        let record = helper(
+            "H1",
+            FTy::Struct("T0".to_owned()),
+            vec![reg("r2"), Stmt::Wire("w0".to_owned(), uint(4))],
+            HExpr::Record("T0".to_owned(), vec![hname("r2"), hname("w0")]),
+        );
+        let instance = helper(
+            "H2",
+            FTy::Instance("M1".to_owned(), Vec::new()),
+            vec![Stmt::Instance("u0".to_owned(), "M1".to_owned(), Vec::new())],
+            hname("u0"),
+        );
+        let call = |name: &str, f: &str| Stmt::Let {
+            name: name.to_owned(),
+            mutable: false,
+            ty: None,
+            value: HExpr::Call(f.to_owned(), Vec::new()),
+        };
+        let element = HExpr::Index(Box::new(hname("a")), int(1));
+        let body = vec![
+            Stmt::Input("i0".to_owned(), uint(4)),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            call("a", "H0"),
+            call("b", "H1"),
+            call("c", "H2"),
+            Stmt::Connect(Place::Path(element.clone()), hname("i0")),
+            Stmt::Connect(Place::Field("b".to_owned(), "m0".to_owned()), hname("i0")),
+            Stmt::Connect(Place::Field("b".to_owned(), "m1".to_owned()), hname("i0")),
+            Stmt::Connect(Place::Field("c".to_owned(), "i0".to_owned()), hname("i0")),
+            connect(
+                "o0",
+                hbin(
+                    HBin::Addw,
+                    hbin(
+                        HBin::Addw,
+                        HExpr::Read(Box::new(element)),
+                        HExpr::Field("b".to_owned(), "m0".to_owned()),
+                    ),
+                    HExpr::Field("c".to_owned(), "o0".to_owned()),
+                ),
+            ),
+        ];
+        let m0 = module("M0", &[], true, body);
+        let items = vec![pair, array, record, instance, m0, m1()];
+        let t = twin(&program(items, Vec::new()));
+        assert_eq!(
+            t.text,
+            "module M0() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    reg r0_c1: UInt[4] = 0;\n    reg r1_c1: UInt[4] = 0;\n    reg r2_c2: UInt[4] = 0;\n    wire w0_c2: UInt[4];\n    instance u0_c3 = M1();\n    r1_c1 := i0;\n    r2_c2 := i0;\n    w0_c2 := i0;\n    u0_c3.i0 := i0;\n    o0 := ((read(r1_c1) +% r2_c2) +% u0_c3.o0);\n}\nmodule M1() domains() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    o0 := i0;\n}\n"
+        );
+        assert!(t.static_names().is_empty(), "{:?}", t.static_names());
     }
 
     #[test]

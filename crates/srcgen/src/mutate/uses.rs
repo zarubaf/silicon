@@ -80,6 +80,7 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
             hexpr(root, addr, callees, uses);
             hexpr(root, en, callees, uses);
         }
+        HExpr::Index(a, _) | HExpr::Select(a, _) | HExpr::Read(a) => hexpr(root, a, callees, uses),
         HExpr::If(c, t, f) => {
             for x in [c, t, f] {
                 hexpr(root, x, callees, uses);
@@ -91,7 +92,10 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
                 hexpr(root, a, callees, uses);
             }
         }
-        HExpr::Ctor(_, _, args) => {
+        HExpr::Ctor(_, _, args)
+        | HExpr::Tuple(args)
+        | HExpr::Array(args)
+        | HExpr::Record(_, args) => {
             for a in args {
                 hexpr(root, a, callees, uses);
             }

@@ -474,7 +474,7 @@ impl Builder {
                 self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
                 extra -= 1;
             }
-            while handles > 0 && self.side_below(3) == 0 {
+            while handles > 0 && self.hand_below(3) == 0 {
                 self.handle_stmt(ctx, m, &mut out)?;
                 handles -= 1;
             }
@@ -560,10 +560,17 @@ impl Builder {
         } else {
             self.hw(ctx, &want, DEPTH)
         };
-        // An untyped `let mut` of a wire or a register names that wire or
-        // register, and `=` on it is no assignment; a typed one copies.
+        // An untyped `let mut` of a wire or a register, or of a selection
+        // from a container of handles, names that wire or register, and
+        // `=` on it is no assignment; a typed one copies.
+        let alias = |v: &HExpr| {
+            matches!(
+                v,
+                HExpr::Name(_) | HExpr::Field(..) | HExpr::Index(..) | HExpr::Select(..)
+            )
+        };
         let (ty, value) = match value {
-            Some(v) if !(mutable && matches!(v, HExpr::Name(_) | HExpr::Field(..))) => (None, v),
+            Some(v) if !(mutable && alias(&v)) => (None, v),
             Some(v) => (Some(t), v),
             None => (Some(t), self.value(ctx, &want, DEPTH)),
         };

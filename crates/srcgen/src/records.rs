@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use super::emitted::emitted;
 use super::eval::{Env, Fault, Logged, Scope, Value, convert, eval, exec_logged, loop_values};
-use super::program::{Item, SExpr, Stmt};
+use super::program::{HExpr, Item, SExpr, Stmt};
 
 /// The distinct argument tuples of each module, by module name.
 pub(crate) type Contexts = [(String, Vec<Vec<Value>>)];
@@ -201,6 +201,11 @@ impl Walk<'_> {
                         self.run(body, &mut inner, frame)?;
                     }
                 }
+                Stmt::Call(f, _)
+                | Stmt::Let {
+                    value: HExpr::Call(f, _),
+                    ..
+                } => self.enter(f, frame)?,
                 // A frame that no env reaches holds the `error`; it never
                 // runs. The builder never emits a `Block`.
                 Stmt::Error(_) | Stmt::Block(_) => return Err(Fault::Type),
@@ -208,6 +213,21 @@ impl Walk<'_> {
             }
         }
         Ok(())
+    }
+
+    /// A call of the helper `f` that takes resources: its body runs in the
+    /// instantiation of the caller (spec 9.5), so a child that it declares
+    /// elaborates here. A helper declares no `diagnostic`. A data helper
+    /// declares no resource, so a call of it enters nothing.
+    fn enter(&mut self, f: &str, frame: &Frame) -> Result<(), Fault> {
+        if !f.starts_with('H') {
+            return Ok(());
+        }
+        let body = self.items.iter().find_map(|item| match item {
+            Item::Helper { name, body, .. } if name == f => Some(body),
+            _ => None,
+        });
+        self.run(body.ok_or(Fault::Type)?, &mut Env::default(), frame)
     }
 
     /// The record line of `logged`, which a statement of `frame` made.
@@ -236,7 +256,7 @@ impl Walk<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::{MutFn, Radix, SBin, SExpr, STy, render_items};
+    use crate::program::{FTy, HExpr, MutFn, Radix, SBin, SExpr, STy, render_items};
     use num_bigint::BigInt;
 
     fn int(n: i64) -> SExpr {
@@ -468,6 +488,48 @@ mod tests {
             ["(record 6 5 M1$1 () (string \"d0\") (uint 8 1))"],
             "{text}"
         );
+    }
+
+    /// A call of a helper that declares a child elaborates the child at the
+    /// call, once for a repeated argument tuple: the record of the child
+    /// comes before the next record of the parent.
+    #[test]
+    fn a_helper_that_declares_a_child_records_at_its_call() {
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: Vec::new(),
+            mut_first: false,
+            ret: FTy::Unit,
+            body: vec![instance("u0", 1)],
+            result: HExpr::Unit,
+        };
+        let m1 = module(
+            "M1",
+            &["P0"],
+            vec![Stmt::Diagnostic("d0".to_owned(), name("P0"))],
+        );
+        let m0 = module(
+            "M0",
+            &[],
+            vec![
+                Stmt::Call("H0".to_owned(), Vec::new()),
+                Stmt::Diagnostic("d1".to_owned(), int(7)),
+                Stmt::Let {
+                    name: "t0".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: HExpr::Call("H0".to_owned(), Vec::new()),
+                },
+            ],
+        );
+        let items = [helper, m0, m1];
+        let text = render_items(&items);
+        let got = records(&items, &text, ("M0", &[]), &contexts(&[1])).unwrap();
+        let want = [
+            "(record 11 5 M1$1 () (string \"d0\") (int 1))",
+            "(record 7 5 M0 () (string \"d1\") (int 7))",
+        ];
+        assert_eq!(got, want, "{text}");
     }
 
     /// The builder and the walk must agree on the argument tuples.

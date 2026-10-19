@@ -161,8 +161,10 @@ impl<'a> Walk<'a> {
             }
             Item::Struct(def) => {
                 for (_, t) in &mut def.fields {
-                    if let FieldTy::UInt(w) | FieldTy::SInt(w) = t {
-                        self.width(w);
+                    match t {
+                        FieldTy::UInt(w) | FieldTy::SInt(w) => self.width(w),
+                        FieldTy::Handle(t) => self.fty(t),
+                        FieldTy::Static(_) => {}
                     }
                 }
             }
@@ -296,6 +298,7 @@ impl<'a> Walk<'a> {
             Stmt::Connect(place, v) => {
                 match place {
                     Place::Name(n) | Place::Field(n, _) => self.rename(n),
+                    Place::Path(e) => self.hexpr(e),
                 }
                 self.hexpr(v);
             }
@@ -851,6 +854,19 @@ impl<'a> Walk<'a> {
                 self.ty(t);
                 self.sexpr(depth);
             }
+            FTy::Instance(module, args) => {
+                self.rename(module);
+                for a in args {
+                    self.sexpr(a);
+                }
+            }
+            FTy::Tuple(ts) => {
+                for t in ts {
+                    self.fty(t);
+                }
+            }
+            FTy::Array(t, _) => self.fty(t),
+            FTy::Struct(name) => self.rename(name),
             FTy::Unit => {}
         }
     }
@@ -998,6 +1014,34 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// The expressions of handles and of memory ports.
+    fn handle_expr(&mut self, e: &mut HExpr) {
+        match e {
+            HExpr::Tuple(xs) | HExpr::Array(xs) => {
+                for x in xs {
+                    self.hexpr(x);
+                }
+            }
+            HExpr::Record(name, xs) => {
+                self.rename(name);
+                for x in xs {
+                    self.hexpr(x);
+                }
+            }
+            HExpr::Index(b, i) => {
+                self.hexpr(b);
+                self.sexpr(i);
+            }
+            HExpr::Select(b, _) | HExpr::Read(b) => self.hexpr(b),
+            HExpr::ReadPort { mem, addr, en, .. } => {
+                self.rename(mem);
+                self.hexpr(addr);
+                self.hexpr(en);
+            }
+            _ => {}
+        }
+    }
+
     fn hexpr(&mut self, e: &mut HExpr) {
         if self.hardware_enum_eq(e)
             || (matches!(e, HExpr::Static(s) if int_valued(s)) && self.arm_stage(e))
@@ -1078,11 +1122,13 @@ impl<'a> Walk<'a> {
                 }
             }
             HExpr::Unit => {}
-            HExpr::ReadPort { mem, addr, en, .. } => {
-                self.rename(mem);
-                self.hexpr(addr);
-                self.hexpr(en);
-            }
+            HExpr::Tuple(_)
+            | HExpr::Array(_)
+            | HExpr::Record(..)
+            | HExpr::Index(..)
+            | HExpr::Select(..)
+            | HExpr::Read(_)
+            | HExpr::ReadPort { .. } => self.handle_expr(e),
             HExpr::Receiver(recv, f, args) => {
                 self.hexpr(recv);
                 self.rename(f);

@@ -217,6 +217,14 @@ pub(crate) enum FTy {
     Input(Ty),
     /// `Mem[T, N]`.
     Mem(Ty, SExpr),
+    /// `Instance[M, args]`: the module and the arguments of its parameters.
+    Instance(String, Vec<SExpr>),
+    /// `(A, B)`, or `(A,)` for one element.
+    Tuple(Vec<FTy>),
+    /// `[A; N]`.
+    Array(Box<FTy>, u32),
+    /// A struct with handle fields, by name.
+    Struct(String),
 }
 
 impl From<Ty> for FTy {
@@ -379,14 +387,30 @@ pub(crate) enum HExpr {
         en: Box<HExpr>,
         receiver: bool,
     },
+    /// `(a, b)` of handles.
+    Tuple(Vec<HExpr>),
+    /// `[a, b]` of handles.
+    Array(Vec<HExpr>),
+    /// `S(a, b)`: a struct of handles.
+    Record(String, Vec<HExpr>),
+    /// `base[index]` of a container of handles, with a static index.
+    Index(Box<HExpr>, SExpr),
+    /// `base.N` of a tuple of handles.
+    Select(Box<HExpr>, u32),
+    /// `read(h)` of a register or a wire.
+    Read(Box<HExpr>),
 }
 
 /// The target of `:=`.
 #[derive(Clone, Debug)]
 pub(crate) enum Place {
     Name(String),
-    /// An input `u.p` of an instance.
+    /// An input `u.p` of an instance, or a field `s.f` of a struct of
+    /// handles.
     Field(String, String),
+    /// A selection from a container of handles, for example `t.0` or
+    /// `rs[1]`.
+    Path(HExpr),
 }
 
 #[derive(Clone, Debug)]
@@ -504,6 +528,8 @@ pub(crate) enum FieldTy {
     /// `UInt[W]` over the parameters of the struct.
     UInt(SExpr),
     SInt(SExpr),
+    /// A handle type, for a struct that holds handles.
+    Handle(FTy),
 }
 
 /// `struct name(comptime W0: Nat, ...) { m0: T0, ... }`. A struct without
@@ -783,6 +809,7 @@ fn render_struct(out: &mut String, def: &StructDef) {
             FieldTy::Static(t) => t.text(),
             FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
             FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
+            FieldTy::Handle(t) => fty(t),
         };
         line(out, 1, &format!("{f}: {t},"));
     }
@@ -870,6 +897,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             let place = match place {
                 Place::Name(n) => n.clone(),
                 Place::Field(inst, port) => format!("{inst}.{port}"),
+                Place::Path(e) => hexpr(e),
             };
             format!("{place} := {};", hexpr(v))
         }
@@ -931,6 +959,12 @@ fn fty(t: &FTy) -> String {
         FTy::Wire(t) => format!("Wire[{}]", ty(t)),
         FTy::Input(t) => format!("Input[{}]", ty(t)),
         FTy::Mem(t, depth) => format!("Mem[{}, {}]", ty(t), sexpr(depth)),
+        FTy::Instance(m, args) if args.is_empty() => format!("Instance[{m}]"),
+        FTy::Instance(m, args) => format!("Instance[{m}, {}]", list(args, sexpr)),
+        FTy::Tuple(ts) if ts.len() == 1 => format!("({},)", list(ts, fty)),
+        FTy::Tuple(ts) => format!("({})", list(ts, fty)),
+        FTy::Array(t, n) => format!("[{}; {n}]", fty(t)),
+        FTy::Struct(name) => name.clone(),
     }
 }
 
@@ -1169,6 +1203,13 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
             en,
             receiver: false,
         } => format!("read_port({mem}, {}, {})", hexpr(addr), hexpr(en)),
+        HExpr::Tuple(xs) if xs.len() == 1 => format!("({},)", list(xs, hexpr)),
+        HExpr::Tuple(xs) => format!("({})", list(xs, hexpr)),
+        HExpr::Array(xs) => format!("[{}]", list(xs, hexpr)),
+        HExpr::Record(s, xs) => format!("{s}({})", list(xs, hexpr)),
+        HExpr::Index(b, i) => format!("{}[{}]", hexpr(b), sexpr(i)),
+        HExpr::Select(b, k) => format!("{}.{k}", hexpr(b)),
+        HExpr::Read(h) => format!("read({})", hexpr(h)),
     }
 }
 
@@ -1684,6 +1725,59 @@ module M1(comptime P0: Nat) domains() {
         assert_eq!(
             out,
             "mem n0: [UInt[8]; 4];\nwrite_port(n0, i0, i1, i2);\nn0.write_port(i0, i1, i2);\nlet l1 = read_port(n0, i0, i2);\n"
+        );
+    }
+
+    #[test]
+    fn containers_of_handles_print() {
+        let def = Item::Struct(StructDef {
+            name: "T0".to_owned(),
+            params: Vec::new(),
+            fields: vec![
+                ("m0".to_owned(), FieldTy::Handle(FTy::Reg(u8()))),
+                ("m1".to_owned(), FieldTy::Handle(FTy::Wire(Ty::Bool))),
+            ],
+        });
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: Vec::new(),
+            mut_first: false,
+            ret: FTy::Tuple(vec![
+                FTy::Array(Box::new(FTy::Reg(u8())), 2),
+                FTy::Struct("T0".to_owned()),
+                FTy::Instance("M1".to_owned(), vec![dec(3)]),
+                FTy::Tuple(vec![FTy::Wire(Ty::Bool)]),
+            ]),
+            body: Vec::new(),
+            result: HExpr::Tuple(vec![
+                HExpr::Array(vec![hname("r0"), hname("r1")]),
+                HExpr::Record("T0".to_owned(), vec![hname("r2"), hname("w0")]),
+                hname("u0"),
+                HExpr::Tuple(vec![hname("w1")]),
+            ]),
+        };
+        assert_eq!(
+            render_items(&[def, helper]),
+            "struct T0 {\n    m0: Reg[UInt[8]],\n    m1: Wire[Bool],\n}\nfn H0() -> ([Reg[UInt[8]]; 2], T0, Instance[M1, 3], (Wire[Bool],)) {\n    return ([r0, r1], T0(r2, w0), u0, (w1,));\n}\n"
+        );
+        let pick = HExpr::Index(Box::new(hname("t0")), dec(1));
+        let sel = HExpr::Select(Box::new(hname("t1")), 0);
+        let body = vec![
+            Stmt::Connect(
+                Place::Path(pick.clone()),
+                HExpr::Read(Box::new(sel.clone())),
+            ),
+            Stmt::Connect(Place::Path(sel), hbin(HBin::Addw, pick, hname("i0"))),
+            Stmt::Connect(
+                Place::Field("t2".to_owned(), "m0".to_owned()),
+                HExpr::Field("t2".to_owned(), "m1".to_owned()),
+            ),
+        ];
+        let mut out = String::new();
+        stmts(&mut out, 0, &body);
+        assert_eq!(
+            out,
+            "t0[1] := read(t1.0);\nt1.0 := (t0[1] +% i0);\nt2.m0 := t2.m1;\n"
         );
     }
 

@@ -34,6 +34,7 @@ macro_rules! note {
 
 mod body;
 mod container;
+mod declare;
 mod diagnostics;
 mod enum_hw;
 mod enums;
@@ -435,6 +436,9 @@ struct Stats {
     bind_input_calls: u32,
     bind_mem_calls: u32,
     direct_mems: u32,
+    declare_calls: u32,
+    explicit_reads: u32,
+    container_reads: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -446,7 +450,11 @@ struct Builder {
     /// The same numbers from the end. The forms of enums draw from it, so
     /// a program without them is the program of the main tape alone.
     side: Tape,
-    /// Whether `on_side` has swapped `tape` and `side`.
+    /// The same numbers from the end, mixed. The forms of handles draw
+    /// from it, so that a program without them is the program of the other
+    /// tapes alone, enums included.
+    hand: Tape,
+    /// Whether `on_side` or `on_hand` has swapped `tape` with another.
     swapped: bool,
     /// The binders `B<n>` of static matches made so far.
     binders: u32,
@@ -460,6 +468,8 @@ struct Builder {
     helpers: Vec<Helper>,
     /// The helpers that take resources, from the side tape.
     res_helpers: Vec<handles::ResHelper>,
+    /// The structs of handles that those helpers return.
+    hstructs: Vec<StructDef>,
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
@@ -484,6 +494,14 @@ impl Builder {
             side: Tape {
                 numbers: tape.iter().rev().copied().collect::<Vec<_>>().into_iter(),
             },
+            hand: Tape {
+                numbers: tape
+                    .iter()
+                    .rev()
+                    .map(|n| (n ^ (n >> 16)).wrapping_mul(0x85EB_CA6B))
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            },
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -497,6 +515,7 @@ impl Builder {
             list_fns: Vec::new(),
             helpers: Vec::new(),
             res_helpers: Vec::new(),
+            hstructs: Vec::new(),
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
             hw_values: Vec::new(),
@@ -592,14 +611,25 @@ impl Builder {
                 body: h.body.clone(),
                 result: h.result.clone(),
             });
-        let res = self.res_helpers.iter().map(|h| Item::Helper {
-            name: h.name.clone(),
-            params: h.params.clone(),
-            mut_first: false,
-            ret: h.ret.clone(),
-            body: h.body.clone(),
-            result: h.result.clone(),
-        });
+        // A helper names the module of its child, so it stays out of the
+        // file when no module reaches that module.
+        let reached = |h: &&handles::ResHelper| {
+            h.children
+                .iter()
+                .all(|(j, _)| self.bodies.get(*j).is_some_and(Option::is_some))
+        };
+        let res = self
+            .res_helpers
+            .iter()
+            .filter(reached)
+            .map(|h| Item::Helper {
+                name: h.name.clone(),
+                params: h.params.clone(),
+                mut_first: false,
+                ret: h.ret.clone(),
+                body: h.body.clone(),
+                result: h.result.clone(),
+            });
         let modules = self.sigs.iter().zip(&self.bodies).filter_map(|(s, b)| {
             b.as_ref().map(|body| Item::Module {
                 name: s.name.clone(),
@@ -610,6 +640,7 @@ impl Builder {
         });
         self.file_items()
             .into_iter()
+            .chain(self.handle_struct_items())
             .chain(helpers)
             .chain(res)
             .chain(self.hw_value_items())
