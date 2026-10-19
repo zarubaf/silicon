@@ -353,3 +353,5 @@ unlisted | S020 the lowered design has a combinational cycle | 354
 unlisted | S021 the `match` has no arm | 354
 unlisted | S021 the `match` has no arm for its value | 354
 unlisted | S021 the `match` has no arm {} | 354
+unlisted | S001 brackets nest deeper than {} levels; raise --syn | 354
+unlisted | S001 invalid character in string | 354
