@@ -4,9 +4,17 @@
 
 use super::hw::Want;
 use super::stat::value_expr;
-use super::{Builder, Built, CONTEXTS, Ctx, Hw, HwEnum, Module};
+use super::{Builder, Built, CONTEXTS, Ctx, Hw, HwEnum, Module, Sig};
 use crate::eval::{Env, Fault, Value, convert};
 use crate::program::{HExpr, Place, SExpr, STy, Stmt};
+
+/// An instance that the builder declared: its name, the signature of its
+/// module, and the env of its arguments for each env of the caller.
+pub(super) struct Child {
+    pub(super) name: String,
+    pub(super) sig: Sig,
+    pub(super) envs: Vec<Env>,
+}
 
 impl Builder {
     /// Whether module `m` can instantiate module `j`: a later module, and a
@@ -57,7 +65,8 @@ impl Builder {
         Ok(true)
     }
 
-    /// `instance u = M<j>(args);` and the `:=` of each child input.
+    /// `instance u = M<j>(args);`, the `:=` of each child input, and the
+    /// outputs of the child as readable names.
     pub(super) fn instantiate(
         &mut self,
         ctx: &mut Ctx,
@@ -65,6 +74,19 @@ impl Builder {
         j: usize,
         out: &mut Vec<Stmt>,
     ) -> Built {
+        let child = self.declare_child(ctx, m, j, out)?;
+        self.bind_child_inputs(ctx, &child, None, out)?;
+        self.expose_child_outputs(ctx, &child)
+    }
+
+    /// `instance u = M<j>(args);`
+    pub(super) fn declare_child(
+        &mut self,
+        ctx: &mut Ctx,
+        m: &mut Module,
+        j: usize,
+        out: &mut Vec<Stmt>,
+    ) -> Built<Child> {
         let sig = self.sigs.get(j).cloned().ok_or(Fault::Type)?;
         let mut args = Vec::new();
         let again = self.known_tuple(j);
@@ -78,27 +100,50 @@ impl Builder {
         let name = m.names.fresh("u");
         out.push(Stmt::Instance(name.clone(), sig.name.clone(), args));
         let envs: Vec<Env> = tuples.iter().map(|a| Env::of(&sig.params, a)).collect();
-        for (p, t) in &sig.inputs {
-            let types = self.types(t, &envs)?;
+        Ok(Child { name, sig, envs })
+    }
+
+    /// The `:=` of each input of the child, but the input `skip`, which
+    /// the caller binds.
+    pub(super) fn bind_child_inputs(
+        &mut self,
+        ctx: &mut Ctx,
+        child: &Child,
+        skip: Option<&str>,
+        out: &mut Vec<Stmt>,
+    ) -> Built {
+        for (p, t) in &child.sig.inputs {
+            if skip == Some(p.as_str()) {
+                continue;
+            }
+            let types = self.types(t, &child.envs)?;
             let value = self.driver(ctx, &Want { types, ty: None });
-            let place = Place::Field(name.clone(), p.clone());
+            let place = Place::Field(child.name.clone(), p.clone());
             out.push(Stmt::Connect(place, value));
         }
-        for (p, def) in &sig.enum_inputs {
+        for (p, def) in &child.sig.enum_inputs {
             let value = self.enum_driver(ctx, def);
-            out.push(Stmt::Connect(Place::Field(name.clone(), p.clone()), value));
+            out.push(Stmt::Connect(
+                Place::Field(child.name.clone(), p.clone()),
+                value,
+            ));
         }
-        for (q, def) in &sig.enum_outputs {
+        Ok(())
+    }
+
+    /// The outputs of the child, as names that later values read.
+    pub(super) fn expose_child_outputs(&mut self, ctx: &mut Ctx, child: &Child) -> Built {
+        for (q, def) in &child.sig.enum_outputs {
             ctx.enums.push(HwEnum {
-                expr: HExpr::Field(name.clone(), q.clone()),
+                expr: HExpr::Field(child.name.clone(), q.clone()),
                 def: def.clone(),
                 hardware: true,
             });
         }
-        for (q, t) in &sig.outputs {
-            let types = self.types(t, &envs)?;
+        for (q, t) in &child.sig.outputs {
+            let types = self.types(t, &child.envs)?;
             ctx.hw.push(Hw {
-                expr: HExpr::Field(name.clone(), q.clone()),
+                expr: HExpr::Field(child.name.clone(), q.clone()),
                 ty: None,
                 types,
                 mutable: false,
