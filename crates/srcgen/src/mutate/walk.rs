@@ -12,6 +12,10 @@ use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
 use num_bigint::BigInt;
 use std::mem;
 
+/// The sites of `Kind::Delete` that one binding of a helper that takes
+/// resources makes.
+const DELETE_BINDING_SITES: usize = 8;
+
 /// A pre-order walk over the sites of one kind: items in order, then
 /// statements in order, then expressions left to right. Without a target
 /// it only counts the sites (and, for `Rename`, collects the names); with
@@ -210,7 +214,16 @@ impl<'a> Walk<'a> {
         while let Some(s) = body.get(i) {
             self.stmt += 1;
             let n = self.stmt;
-            if self.site(Kind::Delete) {
+            // A binding in a helper that takes resources is four sites of
+            // `Delete`: the other statements of a program far outnumber
+            // those, and a deleted binding there leaves a resource of its
+            // caller unbound.
+            let copies = if self.item.starts_with('H') && self.is_binding(s) {
+                DELETE_BINDING_SITES
+            } else {
+                1
+            };
+            if (0..copies).any(|_| self.site(Kind::Delete)) {
                 let effect = match (declared(s), s) {
                     (Some(name), _) => Effect::Gone(name.to_owned(), Some(self.index)),
                     (None, s) if top && self.is_binding(s) => Effect::Code(Some("S018")),
