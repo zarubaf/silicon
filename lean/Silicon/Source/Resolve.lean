@@ -167,13 +167,7 @@ def prelude : List (String × Ref) :=
    ("Wire", .type .wire), ("Input", .type .input), ("Mem", .type .mem),
    ("Instance", .type .instance), ("read", .fn .read)]
 
-/-!
-The prelude names of later slices, with their slice. A use of one is `S003`, and the message
-names the slice. `Domain` waits for more domains (#11), so it has its own text (`domainText`).
--/
-def laterPrelude : List (String × Nat) :=
-  [("FieldInfo", 4), ("TypeInfo", 4), ("PortKey", 4), ("PortInfo", 4)]
-
+/-! `Domain` waits for more domains (#11), so its `S003` has its own text. -/
 def domainText : String :=
   "`Domain` is not supported yet; it comes with more domains (#11); a module has one domain " ++
     "or none, so it needs no `Domain` value"
@@ -404,10 +398,39 @@ def response : Item :=
     [⟨⟨p, "data"⟩, .name p "T" (.local 0)⟩, ⟨⟨p, "valid"⟩, .name p "Bool" (.type .bool)⟩] true
 
 /-!
-The prelude struct items in the order of section 5.6. They follow the user items, so `base` is
-the index of the first one. `ReadResponse` comes first.
+A prelude struct of slice 4 (section 5.6) with the name `x` and the resolved fields `fs`. It has
+no parameters. Each form has the position `0:0`.
 -/
-def preludeStructs (_base : Nat) : List Item := [response]
+def preludeStruct4 (x : String) (fs : List (String × TypeExpr)) : Item :=
+  let p : Pos := ⟨0, 0⟩
+  .struct p ⟨p, x⟩ [] (fs.map fun (f, t) => ⟨⟨p, f⟩, t⟩) true
+
+/-!
+The prelude struct items in the order of section 5.6. They follow the user items, so `base` is
+the index of the first one. `ReadResponse` comes first. `String`, `Type`, `Nat`, `Bool`, and
+`List` are the prelude types. A field type refers to a prelude struct by its index from `base`,
+never by a lookup in the item scope.
+-/
+def preludeStructs (base : Nat) : List Item :=
+  let p : Pos := ⟨0, 0⟩
+  let prim (x : String) (t : PrimType) : TypeExpr := .name p x (.type t)
+  let item (x : String) (k : Nat) : Expr := .name p x (.item (base + k))
+  let list (x : Expr) : TypeExpr := .index p (prim "List" .list) [x]
+  let str := prim "String" .string
+  let ty := prim "Type" .type
+  let nat := prim "Nat" .nat
+  let bool := prim "Bool" .bool
+  [response,
+   preludeStruct4 "FieldInfo" [("name", str), ("ty", ty)],
+   preludeStruct4 "TypeInfo"
+     [("kind", str), ("fields", list (item "FieldInfo" 1)), ("element", ty), ("length", nat),
+      ("width", nat), ("variants", list (item "VariantInfo" 3))],
+   preludeStruct4 "VariantInfo"
+     [("name", str), ("tag", nat), ("payload", list (.name p "Type" (.type .type)))],
+   preludeStruct4 "PortKey" [("name", str), ("indexed", bool), ("index", nat)],
+   preludeStruct4 "PortInfo"
+     [("key", .name p "PortKey" (.item (base + 4))), ("ty", ty), ("is_input", bool),
+      ("domain", str)]]
 
 /-! The number of prelude struct items. -/
 def preludeCount : Nat := (preludeStructs 0).length
@@ -488,9 +511,7 @@ def inScope (act : M α) : M α := do
 
 /-! `S003` at `pos` for the name `n` that is neither declared nor in the prelude. -/
 def missing (pos : Pos) (n : String) : M Unit :=
-  let msg := match laterPrelude.lookup n with
-    | some k => s!"`{n}` is not supported yet; it comes in slice {k}"
-    | none => if n == "Domain" then domainText else s!"`{n}` is not declared"
+  let msg := if n == "Domain" then domainText else s!"`{n}` is not declared"
   recordUnknown ⟨.S003, pos, msg⟩
 
 /-!
@@ -542,7 +563,10 @@ The function `m` of a receiver call: a `fn` item of the item scope, else a prelu
 local does not hide it. Another name is `S003` at `m`.
 -/
 def method (m : Ident) : M Ref := do
-  let notFn : M Ref := do wrongKind m.pos m.name "a function"; return default
+  let notFn : M Ref := do
+    recordUnknown ⟨.S003, m.pos, s!"`{m.name}` is not a function; a receiver call `a.f()` " ++
+      s!"needs a function `f`, so write `{m.name}(a)` to call a type or a function value"⟩
+    return default
   match (← read).names.get? m.name with
   | some i => if (← read).items[i]? matches some (.fn ..) then return .item i else notFn
   | none =>

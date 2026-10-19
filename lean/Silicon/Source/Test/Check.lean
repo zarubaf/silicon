@@ -45,7 +45,8 @@ def modBody (s : String) : String := "module M(comptime W: Nat) {\n" ++ s ++ "\n
   "module Main() {\ninput enable: Bool;\noutput value: UInt[4];\n" ++
   "instance counter = Counter(4);\ncounter.enable := enable;\nvalue := counter.value;\n}")
 #guard ok "comptime fn g(n: Nat) -> Nat {\ncomptime if (n == 0) { return 1; }\nreturn g(n - 1);\n}"
-#guard (run "const A: Nat = 1;\nfn f() -> Nat { return A; }").toOption.map (·.size) == some 3
+#guard (run "const A: Nat = 1;\nfn f() -> Nat { return A; }").toOption.map (·.size) ==
+  some (2 + Resolve.preludeCount)
 
 /-! A hardware value outside a static position passes. -/
 #guard ok (modBody ("input a: UInt[W];\noutput b: UInt[W];\nreg r: UInt[W] = 0;\n" ++
@@ -324,7 +325,8 @@ is the call.
 #guard fails (fnBody "let t = S(true, false);\nreturn p;" ++ structs) .S007 2 9
 #guard fails (fnBody "let t = P[8](1);\nreturn p;" ++ structs) .S007 2 9
 #guard message (fnBody "let t = P[8](1);\nreturn p;" ++ structs) ==
-  "a struct constructor takes 0 or 2 argument(s), but it has 1"
+  "a struct constructor takes 0 or 2 argument(s), but it has 1; pass one value for each " ++
+    "field, or none for the zero"
 #guard fails (fnBody "let t = E(1);\nreturn p;" ++ structs) .S007 2 9
 
 /-!
@@ -590,7 +592,15 @@ arguments or none. The position is the type name, the index, or the call.
 #guard fails (fnBody "let r = ReadResponse[Bool, Bool];\nreturn p;") .S007 2 9
 #guard fails (fnBody "let r = ReadResponse[Bool](p);\nreturn p;") .S007 2 9
 #guard message (fnBody "let r = ReadResponse[Bool](p);\nreturn p;") ==
-  "a struct constructor takes 0 or 2 argument(s), but it has 1"
+  "a struct constructor takes 0 or 2 argument(s), but it has 1; pass one value for each " ++
+    "field, or none for the zero"
+#guard fails (fnBody "let r = TypeInfo(p);\nreturn p;") .S007 2 9
+#guard message (fnBody "let r = TypeInfo(p);\nreturn p;") ==
+  "a struct constructor takes 0 or 6 argument(s), but it has 1; pass one value for each " ++
+    "field, or none for the zero"
+#guard fails (fnBody "let r = PortKey[Bool]();\nreturn p;") .S007 2 9
+#guard message (fnBody "let r = PortKey[Bool]();\nreturn p;") ==
+  "`PortKey` takes 0 argument(s), but it has 1"
 #guard fails (fnBody "let r = ReadResponse(p, p);\nreturn p;") .S007 2 9
 
 /-!
@@ -604,7 +614,7 @@ def badStruct (pre : Bool) : Resolve.Item :=
 #guard match Check.check #[badStruct false] with
   | .error e => e.code == .S007 && e.pos == ⟨0, 0⟩
   | .ok _ => false
-#guard (Check.check #[Resolve.response]).toBool
+#guard (Check.check (Resolve.preludeStructs 0).toArray).toBool
 
 /-!
 The walk is linear and its stack follows the syntax depth. These inputs are at the default

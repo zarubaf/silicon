@@ -2721,8 +2721,7 @@ mutual
       let some fs := (← get).specs.parts t
         | fail .S010 p s!"{t.text} has no specialization"
       if fs.size != xs.length then
-        fail .S007 p
-          s!"a struct constructor takes 0 or {fs.size} argument(s), but it has {xs.length}"
+        fail .S007 p (Check.structArity fs.size xs.length)
       hold o
       let vs ← args n b xs
       release o
