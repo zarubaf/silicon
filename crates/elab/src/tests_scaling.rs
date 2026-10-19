@@ -11,8 +11,9 @@
 //!
 //! A template is a file of `tests/source/scaling/`. Its header has a line
 //! `// SCALE <name> <n0> <n1> <n2> <n3> <n4>` and a line `// TOP <top>`. The placeholder `{N}`
-//! stands for the size of the run. A block between `// REPEAT <i> <count>` and `// END` repeats
-//! `count` times, and `{i}` stands for the number of the copy. The text `NEST{open|core|close}`
+//! stands for the size of the run, and `{N2}` stands for N times N. A block between
+//! `// REPEAT <i> <count>` and `// END`
+//! repeats `count` times, and `{i}` stands for the number of the copy. The text `NEST{open|core|close}`
 //! nests one construct to the depth `{N}` inside one line: it writes `open` N times, then
 //! `core`, then `close` N times. `open` and `close` can be empty. The three parts hold no `{`,
 //! `}`, or `|`. For example `NEST{[|r|]}` at N = 2 is `[[r]]`, and `NEST{|a|[z()]}` is
@@ -193,18 +194,24 @@ fn nest(line: &str, n: u64) -> Result<String, String> {
     Ok(out)
 }
 
+/// The line `line` with `{N2}` as N times N and `{N}` as N.
+fn size_of(line: &str, n: u64) -> String {
+    line.replace("{N2}", &(n * n).to_string())
+        .replace("{N}", &n.to_string())
+}
+
 /// The source of the template at the size `n`.
 fn expand(t: &Template, n: u64) -> Result<String, String> {
     let mut out = String::new();
     let mut lines = t.lines.iter();
     while let Some(line) = lines.next() {
         let Some(rest) = line.strip_prefix("// REPEAT ") else {
-            out.push_str(&nest(&line.replace("{N}", &n.to_string()), n)?);
+            out.push_str(&nest(&size_of(line, n), n)?);
             out.push('\n');
             continue;
         };
         let (var, count) = rest.split_once(' ').ok_or("a bad `// REPEAT` line")?;
-        let count = count.replace("{N}", &n.to_string());
+        let count = size_of(count, n);
         let count: u64 = count
             .trim()
             .parse()
@@ -219,8 +226,7 @@ fn expand(t: &Template, n: u64) -> Result<String, String> {
         for i in 0..count {
             for l in &block {
                 out.push_str(&nest(
-                    &l.replace("{N}", &n.to_string())
-                        .replace(&format!("{{{var}}}"), &i.to_string()),
+                    &size_of(l, n).replace(&format!("{{{var}}}"), &i.to_string()),
                     n,
                 )?);
                 out.push('\n');
