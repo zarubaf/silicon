@@ -3,7 +3,7 @@
 //! of passes 2 and 3 apart, because pass 2 errors rank before pass 3 errors (design
 //! section 6.2). It recurses over the AST, so it runs on the front-end thread.
 
-use crate::prelude::{Built, DOMAIN_TEXT, INSTANCE_TEXT, Leaf, Prelude, STRUCTS, later_slice};
+use crate::prelude::{Built, DOMAIN_TEXT, INSTANCE_TEXT, Leaf, Prelude, STRUCTS};
 use crate::scope::Scopes;
 use crate::{
     Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target, VariantNames, VariantRef,
@@ -164,7 +164,8 @@ impl Walker {
     }
 
     /// Declares the prelude structs and gives the names of their items their targets, past the
-    /// item scope. Their names are not in the item scope, so a user item shadows them.
+    /// item scope. Their names are not in the item scope, so a user item shadows them. All
+    /// structs are declared first, because a field type can name a later struct.
     fn declare_prelude(&mut self, built: &[Built]) {
         let structs: Vec<(&Built, &Ident, &[Param])> = built
             .iter()
@@ -186,6 +187,7 @@ impl Walker {
                 let target = match leaf {
                     Leaf::Prim(name) => Prelude::of(name).map(Target::Prelude),
                     Leaf::Param => params.first().copied().map(Target::Decl),
+                    Leaf::Struct(k) => decls.get(k).copied().map(Target::Decl),
                 };
                 if let Some(target) = target {
                     self.names.insert(id, target);
@@ -675,7 +677,14 @@ impl Walker {
         if let (true, Some(target)) = (is_fn, target) {
             self.names.insert(name.id, target);
         } else {
-            self.reject(name.pos, format!("`{}` is not a function", name.name));
+            let n = &name.name;
+            self.reject(
+                name.pos,
+                format!(
+                    "`{n}` is not a function; a receiver call `a.f()` needs a function `f`, so \
+                     write `{n}(a)` to call a type or a function value"
+                ),
+            );
         }
     }
 
@@ -707,10 +716,10 @@ impl Walker {
     }
 
     fn unknown(&mut self, pos: Pos, name: &str) {
-        let message = match later_slice(name) {
-            Some(slice) => format!("`{name}` is not supported yet; it comes in slice {slice}"),
-            None if name == "Domain" => DOMAIN_TEXT.to_owned(),
-            None => format!("`{name}` is not declared"),
+        let message = if name == "Domain" {
+            DOMAIN_TEXT.to_owned()
+        } else {
+            format!("`{name}` is not declared")
         };
         self.reject(pos, message);
     }

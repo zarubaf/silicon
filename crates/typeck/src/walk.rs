@@ -347,7 +347,7 @@ impl<'a> Walker<'a> {
                     text,
                     missing: *params,
                     ctor: Ctor::Record(*fields),
-                    fix: String::new(),
+                    fix: format!("; pass one argument for each `comptime` parameter of `{name}`"),
                     inst: false,
                 }),
                 Sig::Alias | Sig::Enum => Some(Head {
@@ -427,7 +427,8 @@ impl<'a> Walker<'a> {
                             Code::S007,
                             pos,
                             format!(
-                                "a struct constructor takes 0 or {fields} argument(s), but it has {got}"
+                                "a struct constructor takes 0 or {fields} argument(s), but it has \
+                                 {got}; pass one value for each field, or none for the zero"
                             ),
                         );
                     }

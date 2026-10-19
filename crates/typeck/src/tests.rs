@@ -576,7 +576,7 @@ fn s007_a_struct_specialization_has_one_argument_per_parameter() {
     fails(&with_structs("const A: S[1] = 0;"), S007, 1, 10);
     assert_eq!(
         message(&with_structs("const A: S[1] = 0;")),
-        "`S` takes 0 argument(s), but it has 1"
+        "`S` takes 0 argument(s), but it has 1; pass one argument for each `comptime` parameter of `S`"
     );
     fails(&with_structs("const A: P[8][1] = 0;"), S007, 1, 10);
     fails(
@@ -598,7 +598,7 @@ fn s007_a_struct_with_parameters_is_not_bare() {
     fails(&with_structs("const A: P = 0;"), S007, 1, 10);
     assert_eq!(
         message(&with_structs("const A: P = 0;")),
-        "`P` takes 1 argument(s), but it has 0"
+        "`P` takes 1 argument(s), but it has 0; pass one argument for each `comptime` parameter of `P`"
     );
     for body in [
         "let t = P;\nreturn p;",
@@ -621,7 +621,7 @@ fn s007_a_struct_constructor_has_one_argument_per_field_or_none() {
     }
     assert_eq!(
         message(&with_structs(&fn_body("let t = P[8](1);\nreturn p;"))),
-        "a struct constructor takes 0 or 2 argument(s), but it has 1"
+        "a struct constructor takes 0 or 2 argument(s), but it has 1; pass one value for each field, or none for the zero"
     );
 }
 
@@ -1068,13 +1068,30 @@ fn s007_the_prelude_struct_has_one_index_and_two_constructor_arguments() {
     );
     assert_eq!(
         message(&fn_body("let r = ReadResponse[Bool](p);\nreturn p;")),
-        "a struct constructor takes 0 or 2 argument(s), but it has 1"
+        "a struct constructor takes 0 or 2 argument(s), but it has 1; pass one value for each field, or none for the zero"
     );
     fails(
         &fn_body("let r = ReadResponse(p, p);\nreturn p;"),
         S007,
         2,
         9,
+    );
+}
+
+#[test]
+fn s007_the_prelude_structs_of_slice_4_take_no_index_and_one_argument_per_field() {
+    ok(&fn_body(
+        "let k = PortKey(\"a\", true, 1);\nreturn k.indexed;",
+    ));
+    fails(&fn_body("let k: PortKey[Bool] = p;\nreturn p;"), S007, 2, 8);
+    assert_eq!(
+        message(&fn_body("let k: PortKey[Bool] = p;\nreturn p;")),
+        "`PortKey` takes 0 argument(s), but it has 1; pass one argument for each `comptime` parameter of `PortKey`"
+    );
+    fails(&fn_body("let t = TypeInfo(1);\nreturn p;"), S007, 2, 9);
+    assert_eq!(
+        message(&fn_body("let t = TypeInfo(1);\nreturn p;")),
+        "a struct constructor takes 0 or 6 argument(s), but it has 1; pass one value for each field, or none for the zero"
     );
 }
 

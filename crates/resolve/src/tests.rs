@@ -266,8 +266,16 @@ impl Ids {
 
 /// What the name node at a position of the file points to.
 fn target_at(resolved: &Resolved, at: Pos) -> Option<Target> {
-    let user = resolved.ast().len() - 1;
+    let user = resolved.prelude_struct("ReadResponse").unwrap_or(0);
     resolved.target(Ids::of_items(&resolved.ast()[..user]).at(at))
+}
+
+/// The `S003` text of a receiver call whose name `n` is not a function.
+fn not_a_function(n: &str) -> String {
+    format!(
+        "`{n}` is not a function; a receiver call `a.f()` needs a function `f`, so write \
+         `{n}(a)` to call a type or a function value"
+    )
 }
 
 fn run(src: &str) -> Result<Resolved, Failed> {
@@ -341,7 +349,7 @@ fn a_valid_file_resolves_every_name() {
     assert_eq!(decl_at(&r, pos(2, 4)).kind, Kind::Fn);
     assert_eq!(decl_at(&r, pos(6, 12)).kind, Kind::Input);
     assert_eq!(decl_at(&r, pos(6, 3)).kind, Kind::Output);
-    assert_eq!(r.ast().len(), 4);
+    assert_eq!(r.ast().len(), 3 + 6);
     assert_eq!(r.depth(), parse::DEFAULT_SYNTAX_DEPTH);
 }
 
@@ -461,9 +469,10 @@ fn an_unknown_name_is_s003_at_the_name() {
 }
 
 #[test]
-fn a_name_of_a_later_slice_prelude_is_s003() {
-    assert_eq!(errors("const A: PortKey = 1;\n"), [(S003, 1, 10)]);
-    assert_eq!(errors("const A: Nat = TypeInfo(1);\n"), [(S003, 1, 16)]);
+fn the_prelude_structs_of_slice_4_resolve() {
+    ok("const A: FieldInfo = 1;\nconst B: TypeInfo = 1;\nconst C: VariantInfo = 1;\n");
+    ok("const A: PortKey = 1;\nconst B: PortInfo = 1;\n");
+    ok("const A: Nat = TypeInfo(1);\n");
     ok("const A: Wire[Bool] = 1;\nconst B: Nat = read(1);\n");
     ok("module M() {\n  reg r: Reg[Bool] = false;\n}\n");
 }
@@ -684,15 +693,11 @@ fn the_name_after_a_dot_is_not_looked_up() {
 }
 
 #[test]
-fn the_message_of_a_later_slice_name_names_the_slice() {
+fn the_message_of_an_unknown_name_has_no_slice() {
     let message = |src: &str| match run(src) {
         Err(Failed::Names(errors)) => errors[0].message.clone(),
         _ => panic!("expected an error"),
     };
-    assert_eq!(
-        message("fn f(x: TypeInfo) -> Bool { return true; }\n"),
-        "`TypeInfo` is not supported yet; it comes in slice 4"
-    );
     assert_eq!(message("const A: Foo = 1;\n"), "`Foo` is not declared");
     ok("const Wire: Nat = 1;\nconst N: Nat = Wire;\n");
 }
@@ -845,7 +850,7 @@ fn a_deep_valid_input_resolves_on_a_test_thread() {
          module M() {blocks}\n"
     );
     let r = ok(&src);
-    assert_eq!(r.ast().len(), 5);
+    assert_eq!(r.ast().len(), 4 + 6);
     assert_eq!(r.decl(r.item("f").unwrap()).kind, Kind::Fn);
     drop(r);
 }
@@ -1219,7 +1224,7 @@ fn s003_the_name_of_a_receiver_call_is_not_a_function_there() {
     fails(&format!("{c}{}", fn_body("return p.g();")), 3, 10);
     assert_eq!(
         message(&format!("{c}{}", fn_body("return p.g();"))),
-        "`g` is not a function"
+        not_a_function("g")
     );
     fails(
         &format!("const len: Nat = 1;\n{}", fn_body("return p.len();")),
@@ -1239,16 +1244,13 @@ fn s003_the_name_of_a_receiver_call_is_not_a_function_there() {
     fails(&fn_body("return p.Bool();"), 2, 10);
     assert_eq!(
         message(&fn_body("return p.Bool();")),
-        "`Bool` is not a function"
+        not_a_function("Bool")
     );
     fails(&fn_body("return p.Reg();"), 2, 10);
-    assert_eq!(
-        message(&fn_body("return p.Reg();")),
-        "`Reg` is not a function"
-    );
+    assert_eq!(message(&fn_body("return p.Reg();")), not_a_function("Reg"));
     assert_eq!(
         message(&fn_body("return p.PortKey();")),
-        "`PortKey` is not supported yet; it comes in slice 4"
+        not_a_function("PortKey")
     );
 }
 
@@ -1541,11 +1543,16 @@ fn a_function_type_in_the_body_does_not_change_genericity() {
     assert!(!generic(src, "h"));
 }
 
+/// The item of the prelude struct `ReadResponse`.
+fn response_item(r: &Resolved) -> Option<&Item> {
+    r.ast().get(r.prelude_struct("ReadResponse")?)
+}
+
 /// The targets of the names of the prelude struct item, by their node ids: the name, the
 /// parameter `T`, its type, the type of `data`, and the type of `valid`.
 fn response_targets(r: &Resolved) -> [Option<Target>; 4] {
-    let Some(Item::Struct { params, fields, .. }) = r.ast().last() else {
-        panic!("the last item is the prelude struct");
+    let Some(Item::Struct { params, fields, .. }) = response_item(r) else {
+        panic!("the first prelude item is the prelude struct");
     };
     let ty = |t: &TypeExpr| match t {
         TypeExpr::Name { id, .. } => r.target(*id),
@@ -1557,6 +1564,37 @@ fn response_targets(r: &Resolved) -> [Option<Target>; 4] {
         ty(&fields[0].ty),
         ty(&fields[1].ty),
     ]
+}
+
+#[test]
+fn the_field_types_of_the_prelude_structs_never_go_through_the_item_scope() {
+    // A user `String` and a user `FieldInfo` shadow the names in the file, not in `TypeInfo`.
+    let r = ok("struct String { a: Bool }\nstruct FieldInfo { a: Bool }\n");
+    let item = |name: &str| &r.ast()[r.prelude_struct(name).unwrap()];
+    let Item::Struct { name: info, .. } = item("FieldInfo") else {
+        panic!("a struct");
+    };
+    let info = r.target(info.id);
+    assert_ne!(info, r.item("FieldInfo").map(Target::Decl));
+    let Item::Struct { fields, .. } = item("TypeInfo") else {
+        panic!("a struct");
+    };
+    assert_eq!(fields.len(), 6);
+    let TypeExpr::Name { id, .. } = &fields[0].ty else {
+        panic!("a type name");
+    };
+    assert_eq!(r.target(*id), Some(Target::Prelude(Prelude::String)));
+    let TypeExpr::Index { args, .. } = &fields[1].ty else {
+        panic!("a list type");
+    };
+    let Expr::Name { id, .. } = &args[0] else {
+        panic!("a name");
+    };
+    assert_eq!(
+        r.target(*id),
+        info,
+        "the list of `FieldInfo` names the prelude struct"
+    );
 }
 
 #[test]
@@ -1600,14 +1638,18 @@ fn a_user_function_shadows_a_memory_function_name() {
 }
 
 #[test]
-fn the_prelude_struct_is_the_last_item_and_changes_no_user_index() {
+fn the_prelude_structs_follow_the_user_items_and_change_no_user_index() {
     let src = "const A: Nat = 1;\nstruct S { a: Bool }\n";
     let r = ok(src);
-    assert_eq!(r.ast().len(), 3);
+    assert_eq!(r.ast().len(), 2 + 6);
     assert!(!r.is_prelude_item(0) && !r.is_prelude_item(1) && r.is_prelude_item(2));
+    assert!(r.is_prelude_item(7));
+    assert_eq!(r.prelude_struct("ReadResponse"), Some(2));
+    assert_eq!(r.prelude_struct("PortInfo"), Some(7));
+    assert_eq!(r.prelude_struct("Nope"), None);
     assert_eq!(r.item("A").map(|d| r.decl(d).kind), Some(Kind::Const));
     assert!(r.item("ReadResponse").is_none(), "not in the item scope");
-    let Some(Item::Struct { name, .. }) = r.ast().last() else {
+    let Some(Item::Struct { name, .. }) = r.ast().get(2) else {
         panic!("a struct");
     };
     assert_eq!(name.name, "ReadResponse");
@@ -1653,7 +1695,7 @@ fn a_user_bool_or_type_does_not_change_the_prelude_struct() {
 fn the_name_read_response_resolves_to_the_prelude_struct() {
     let src = "fn f() -> ReadResponse[Bool] { return ReadResponse[Bool](); }";
     let r = ok(src);
-    let Some(Item::Struct { name, .. }) = r.ast().last() else {
+    let Some(Item::Struct { name, .. }) = response_item(&r) else {
         panic!("a struct");
     };
     let want = r.target(name.id);
@@ -1685,8 +1727,8 @@ fn a_user_struct_shadows_the_prelude_struct() {
     );
     assert_eq!(
         r.ast().len(),
-        3,
-        "the prelude struct is still the last item"
+        2 + 6,
+        "the prelude structs still follow the user items"
     );
 }
 
@@ -1694,7 +1736,7 @@ fn a_user_struct_shadows_the_prelude_struct() {
 fn the_prelude_struct_is_no_function() {
     let src = fn_body("return p.ReadResponse();");
     assert_eq!(errors(&src), [(S003, 2, 10)]);
-    assert_eq!(message(&src), "`ReadResponse` is not a function");
+    assert_eq!(message(&src), not_a_function("ReadResponse"));
 }
 
 #[test]

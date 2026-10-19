@@ -94,7 +94,9 @@ impl TyId {
         h.write_usize(self.index);
     }
 
-    /// The number of nodes of the type term, plus the size of each integer in it.
+    /// The number of nodes of the type term, plus the size of each integer in it. This is the
+    /// fifth metadata number of design section 5.4. A read takes constant work. A saturated
+    /// number is above each budget. Lean `Ty.size` computes the same number with a walk.
     #[must_use]
     pub fn size(self) -> u64 {
         self.size
@@ -328,7 +330,7 @@ pub struct Spec {
     name: String,
     args: Vec<Value>,
     state: SpecState,
-    /// Whether the struct item is the prelude struct `ReadResponse`.
+    /// Whether the struct item is a prelude struct.
     prelude: bool,
 }
 
@@ -345,7 +347,7 @@ impl Spec {
         &self.name
     }
 
-    /// Whether the struct item is the prelude struct `ReadResponse`.
+    /// Whether the struct item is a prelude struct.
     #[must_use]
     pub fn prelude(&self) -> bool {
         self.prelude
