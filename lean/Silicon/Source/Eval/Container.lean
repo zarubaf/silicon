@@ -762,7 +762,9 @@ The zero `T()` of the type `t` at `pos` (section 5.6). A type that is not hardwa
 limit, and it charges its size from the metadata before it exists.
 -/
 def zero (pos : Pos) (t : Ty) : M Value := do
-  unless t.info.data do fail .S010 pos s!"a zero `T()` needs a hardware data type, not {t.text}"
+  unless t.info.data do
+    fail .S010 pos (s!"a zero `T()` needs a hardware data type, not `{t.text}`; write a full " ++
+      "value, for example a constructor with one value for each field")
   bounded pos t.zeroDepth
   if over t.info.zeroSize then fail .S015 pos zeroLimitText
   charge pos t.info.zeroSize

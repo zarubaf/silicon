@@ -1448,7 +1448,8 @@ def dataBitsOf (p : Pos) (g : String) : List Val → M (Option Out)
     if t.info.data then
       charge p (intSize t.info.width)
       return some ⟨.static (.int t.info.width), false, none⟩
-    else fail .S010 p s!"`{g}` needs a hardware data type, not {t.text}"
+    else fail .S010 p (s!"`data_bits` needs a hardware data type, not `{t.text}`; only a " ++
+      "fixed-width type has a bit count, for example `UInt[8]`")
   | [v] => fail .S010 p s!"`{g}` needs a type, not {v.text}"
   | vs => fail .S007 p s!"`{g}` takes 1 argument(s), but it has {vs.length}"
 
@@ -1680,7 +1681,7 @@ def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
     (ps : List Resolve.Param) (fs : List Resolve.StructField) (pre : Bool) (args : List Val) :
     M Ty := do
   if ps.length != args.length then
-    fail .S007 p s!"`{x.name}` takes {ps.length} argument(s), but it has {args.length}"
+    fail .S007 p (Check.structTypeArity x.name ps.length args.length)
   if (← read).binding.contains i then
     fail .S019 p s!"the parameter types of `{x.name}` depend on `{x.name}`"
   let work := nested p <| inFrame none <|
