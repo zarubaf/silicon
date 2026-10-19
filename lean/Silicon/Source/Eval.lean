@@ -428,7 +428,8 @@ def shut (id : Nat) : M Unit :=
 def static (pos : Pos) : Val → M Value
   | .static v => pure v
   | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
-  | v => fail .S011 pos s!"a static position needs a static value, not {v.text}"
+  | v => fail .S011 pos (s!"a static position needs a static value, not {v.about}; compute " ++
+    "the value from static values, for example from constants and `comptime` parameters")
 
 /-! A static condition. -/
 def test (pos : Pos) : Val → M Bool
@@ -3005,7 +3006,8 @@ mutual
     let s := (← get).inst
     match s.table[key]? with
     | some .inProgress =>
-      fail .S019 pos s!"the instantiation of `{m.name}` depends on itself"
+      fail .S019 pos (s!"the instantiation of `{m.name}` depends on itself, with the same " ++
+        "arguments; change an argument at each level, and end the recursion with a `comptime if`")
     | some (.done k) =>
       match s.done[k]? with
       | some d => return (d.iface, k)

@@ -121,6 +121,11 @@ def radixAfter (c : Char) : List Char → Option Nat
   | 'b' :: d :: _ => if c == '0' && isDigitOf 2 d then some 2 else none
   | _ => none
 
+/-! The text of a character that starts no token (section 6.2, "Invalid character"). -/
+def invalidChar : String :=
+  "invalid character; outside a string or a comment, the source has only names, numbers, " ++
+    "and symbols, and a name has only ASCII letters, digits, and `_`; remove the character"
+
 /-! The token that starts at `c`. A token of two characters sets `skip`. -/
 def begin (p : Pos) (c : Char) (rest : List Char) : Mode × Option Token :=
   let pair := rest.head?.map fun d => String.ofList [c, d]
@@ -137,7 +142,7 @@ def begin (p : Pos) (c : Char) (rest : List Char) : Mode × Option Token :=
 where
   short : Mode × Option Token :=
     if shortSymbols.contains c then (.top, some ⟨p, .symbol (String.singleton c)⟩)
-    else (.top, some ⟨p, .error "unexpected character"⟩)
+    else (.top, some ⟨p, .error invalidChar⟩)
 
 /-! The token list ends with the first error token. -/
 def push (tokens : List Token) : Option Token → Except (List Token) (List Token)
