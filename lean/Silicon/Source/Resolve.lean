@@ -13,10 +13,12 @@ no name. These rules settle the open points:
 
 - The prelude is the outermost scope. The item scope is inside it. A local scope is inside the
   item scope. Thus a declaration can shadow a prelude name, and a local can shadow an item.
-- The prelude struct `ReadResponse` (section 5.6) is one struct item after the user items, with
-  the `prelude` flag. It is built already resolved and never resolves in the item scope. Thus
-  a user `struct Bool` or `type Type` does not change it, and the user items keep their indices.
-  A prelude name `ReadResponse` refers to it. The walk never visits it, so it adds no error.
+- The prelude structs (section 5.6) are struct items after the user items, with the `prelude`
+  flag, in the order `ReadResponse`, `FieldInfo`, `TypeInfo`, `VariantInfo`, `PortKey`, and
+  `PortInfo` (`preludeStructs`). They are built already resolved, and no field type resolves in
+  the item scope. Thus a user `struct Bool`, `type Type`, `struct String`, or `struct FieldInfo`
+  does not change them, and the user items keep their indices. A prelude name of one refers to
+  it. The walk never visits them, so they add no error.
 - The item scope holds each `const`, `fn`, `module`, `struct`, `type`, and `enum` item. An item
   is visible in the full file, also before its declaration.
 - The parameters of a function or a module are in its outer local scope. The domain names of a
@@ -288,8 +290,7 @@ structure Variant where
 /-!
 The resolved item. A `Ref.item` holds the index of an item in the resolved file. The `domains`
 of a module without a clause hold the one default domain `clock`. A struct has the `prelude`
-flag when it is the prelude struct `ReadResponse` (`response`). An enum has its tag type and its
-variants.
+flag when it is a prelude struct (`preludeStructs`). An enum has its tag type and its variants.
 -/
 inductive Item where
   | const (pos : Pos) (name : Ident) (ty : TypeExpr) (value : Expr)
@@ -473,7 +474,7 @@ structure St where
 /-!
 The context of the walk holds the parsed items, for the kind of an item. It also holds the item
 scope, which maps each item name to its index. A receiver call looks up its name there, past
-each local. The prelude struct has the index after the user items.
+each local. The prelude structs have the indices after the user items.
 -/
 structure File where
   items : Array Source.Item

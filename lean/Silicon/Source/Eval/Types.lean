@@ -31,12 +31,13 @@ follow sections 5.1, 5.4, 5.5, and 5.6. These rules settle their open points:
   counts toward the nesting depth (`S015`). It evaluates the parameter types in the scope of the
   struct and binds the parameters as typed uses, with their charges and errors. The size of each
   argument charges right after its typed use, before the next parameter type. These charges come
-  before the lookup, because the lookup reads the arguments in full. The work of the prelude
-  struct `ReadResponse` reports each of its errors at the use (`atUse`). A first use then
-  charges the size of the struct type and evaluates the field types. Then it checks the depth of
-  the struct type (`S015`) and charges the sums of its metadata. A use in progress is `S019`. A
-  use of a done entry charges nothing more. A use of a struct item while its own parameter types
-  evaluate is `S019` too, because its key does not exist yet.
+  before the lookup, because the lookup reads the arguments in full. The work of a prelude
+  struct reports each of its errors at the use (`atUse`). The first use of `TypeInfo` completes
+  `FieldInfo` and `VariantInfo` inside this work, so their errors report at that use too. A
+  first use then charges the size of the struct type and evaluates the field types. Then it
+  checks the depth of the struct type (`S015`) and charges the sums of its metadata. A use in
+  progress is `S019`. A use of a done entry charges nothing more. A use of a struct item while
+  its own parameter types evaluate is `S019` too, because its key does not exist yet.
 - A handle type `Reg[T]`, `Wire[T]`, `Input[T]`, or `Mem[T, N]` checks its evaluated arguments
   with no charge, then its depth, then charges its size (`handleTy`). `Mem` shares the word and
   depth checks of a `mem` statement (`memWord`, `memDepth`). A handle type where a position

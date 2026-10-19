@@ -39,9 +39,9 @@ These rules settle the open points of the spec:
 - A struct type holds the number of its specialization, and a function value the index of its
   item. These numbers do not serialize, print, or add to the size. A key and an equality of
   types compare them in place of the names (`Ty.cmp`), as the Rust ids do.
-- The prelude struct `ReadResponse` has the token `prelude` in the place of `root`:
-  `(struct prelude ReadResponse ((type (uint 8))))`. A user struct with the same name thus has
-  another serialization.
+- A prelude struct has the token `prelude` in the place of `root`:
+  `(struct prelude ReadResponse ((type (uint 8))))` or `(struct prelude PortKey ())`. A user
+  struct with the same name thus has another serialization.
 - An enum type holds the index of its item, its name, and its metadata. It serializes as
   `(enum root <name> ())`, has the size 1, and compares by its item. Its metadata is that of a
   record of `UInt[W]` and `UInt[P]`, without the second part when `P` is 0.
@@ -86,7 +86,7 @@ mutual
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
   tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
   entry in the table of specializations, its item, its static arguments, and its metadata. Its
-  flag `prelude` marks the prelude struct `ReadResponse` (section 7.1). An enum type is the
+  flag `prelude` marks a prelude struct (section 7.1). An enum type is the
   index of its item, its name, and its metadata.
   `String` and `List[T]` are static types only. A function type is its parameter types with
   their `mut` marks, and its result type. The handle types `Reg[T]`, `Wire[T]`, `Input[T]`,
@@ -623,6 +623,10 @@ each static argument in it adds its size. Each `mut` mark of a function type is 
 named function has the size 1. An enum type has the size 1, and an enum value the size of a
 record of its tag and its payload. An empty payload adds nothing. A handle type has the size 1
 plus its parts, and `Instance[M, args]` adds its arguments as a struct type does (section 5.4).
+
+This size is the fifth metadata number of section 5.4. The Rust front end stores it with each
+type, so a read costs constant work. Lean does not store it: `Ty.size` walks the term. Both give
+the same number, and each read of it goes into a charge, so the charges agree.
 -/
 mutual
   def Ty.size : Ty → Nat
