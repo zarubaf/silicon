@@ -31,7 +31,7 @@ use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Scope, Value, eval, exec_static, leaf_bits, loop_values};
 use super::program::{
     EnumDef, FTy, HBin, HExpr, Item, Match, Pattern, Place, Program, Radix, SExpr, STy, Scalar,
-    Stmt, Ty, render_items,
+    Stmt, Ty, helper_of, is_resource_helper, render_items,
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -122,7 +122,7 @@ pub(crate) fn twin_items(program: &Program) -> (Vec<Item>, String) {
                 ret,
                 body,
                 result,
-            } if !is_resource(name) => {
+            } if !is_resource_helper(name) => {
                 let mut f = Frame::default();
                 Some(Item::Helper {
                     name: name.clone(),
@@ -250,12 +250,6 @@ impl Frame {
     }
 }
 
-/// Whether the helper `name` takes or declares resources. The twin inlines
-/// its calls.
-fn is_resource(name: &str) -> bool {
-    name.starts_with('H')
-}
-
 struct Writer<'a> {
     items: &'a [Item],
     scope: Scope,
@@ -332,17 +326,12 @@ impl Writer<'_> {
             .unwrap_or_else(|| e.clone())
     }
 
+    /// The type of a formal or a result of a helper that stays in the twin:
+    /// a data type, because the twin inlines each other helper.
     fn fty(&self, t: &FTy, fr: &Frame) -> FTy {
         match t {
             FTy::Data(t) => FTy::Data(self.ty(t, fr)),
-            FTy::Unit => FTy::Unit,
-            FTy::Reg(t) => FTy::Reg(self.ty(t, fr)),
-            FTy::Wire(t) => FTy::Wire(self.ty(t, fr)),
-            FTy::Input(t) => FTy::Input(self.ty(t, fr)),
-            FTy::Mem(t, depth) => FTy::Mem(self.ty(t, fr), self.fold(depth, fr)),
-            FTy::Instance(..) | FTy::Tuple(_) | FTy::Array(..) | FTy::Struct(_) | FTy::List(_) => {
-                t.clone()
-            }
+            other => other.clone(),
         }
     }
 
@@ -619,7 +608,7 @@ impl Writer<'_> {
             } => {
                 let ty = ty.as_ref().map(|t| self.ty(t, fr));
                 if let HExpr::Call(f, args) = value
-                    && is_resource(f)
+                    && is_resource_helper(f)
                 {
                     self.inline_let(name, *mutable, (f, args), fr, out);
                     return;
@@ -833,18 +822,7 @@ impl Writer<'_> {
         fr: &Frame,
         out: &mut Vec<Stmt>,
     ) -> (Frame, FTy, HExpr) {
-        let found = self.items.iter().find_map(|item| match item {
-            Item::Helper {
-                name,
-                params,
-                ret,
-                body,
-                result,
-                ..
-            } if name == f => Some((params, ret, body, result)),
-            _ => None,
-        });
-        let Some((params, ret, body, result)) = found else {
+        let Some((params, ret, body, result)) = helper_of(self.items, f) else {
             panic!("a call of the builder names no helper: {f}");
         };
         self.calls += 1;

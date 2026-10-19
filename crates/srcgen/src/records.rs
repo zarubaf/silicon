@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 
 use super::emitted::emitted;
 use super::eval::{Env, Fault, Logged, Scope, Value, convert, eval, exec_logged, loop_values};
-use super::program::{HExpr, Item, SExpr, Stmt};
+use super::program::{HExpr, Item, SExpr, Stmt, helper_of, is_resource_helper};
 
 /// The distinct argument tuples of each module, by module name.
 pub(crate) type Contexts = [(String, Vec<Vec<Value>>)];
@@ -220,13 +220,10 @@ impl Walk<'_> {
     /// elaborates here. A helper declares no `diagnostic`. A data helper
     /// declares no resource, so a call of it enters nothing.
     fn enter(&mut self, f: &str, frame: &Frame) -> Result<(), Fault> {
-        if !f.starts_with('H') {
+        if !is_resource_helper(f) {
             return Ok(());
         }
-        let body = self.items.iter().find_map(|item| match item {
-            Item::Helper { name, body, .. } if name == f => Some(body),
-            _ => None,
-        });
+        let body = helper_of(self.items, f).map(|(_, _, body, _)| body);
         // A loop over the elements of a list of handles has nothing to
         // elaborate, and the evaluator knows no handle, so only the
         // statements that can elaborate run.

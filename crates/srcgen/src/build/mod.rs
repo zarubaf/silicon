@@ -492,7 +492,6 @@ struct Stats {
     hw_binders: u32,
     hw_complete_matches: u32,
     hw_expr_scrutinees: u32,
-    res_helpers: u32,
     bind_wire_calls: u32,
     bind_reg_calls: u32,
     bind_input_calls: u32,
@@ -500,9 +499,7 @@ struct Stats {
     direct_mems: u32,
     declare_calls: u32,
     scratch_calls: u32,
-    mixed_outputs: u32,
     list_groups: u32,
-    list_declarer_elements: u32,
     decl_regs: u32,
     decl_wires: u32,
     decl_mems: u32,
@@ -546,7 +543,7 @@ struct Builder {
     enums: Vec<EnumDef>,
     list_fns: Vec<ListFn>,
     helpers: Vec<Helper>,
-    /// The helpers that take resources, from the side tape.
+    /// The helpers that take resources, from the hand tape.
     res_helpers: Vec<handles::ResHelper>,
     /// The structs of handles that those helpers return.
     hstructs: Vec<StructDef>,
@@ -730,7 +727,7 @@ impl Builder {
         });
         self.file_items()
             .into_iter()
-            .chain(self.handle_struct_items())
+            .chain(self.hstructs.iter().cloned().map(Item::Struct))
             .chain(helpers)
             .chain(res)
             .chain(self.hw_value_items())

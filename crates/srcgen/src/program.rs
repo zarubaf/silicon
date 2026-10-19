@@ -558,6 +558,32 @@ pub(crate) struct ComptimeFn {
     pub(crate) step: SExpr,
 }
 
+/// Whether the helper `name` takes or declares resources. The builder names
+/// such a helper `H<k>`; the twin inlines its calls, and the records walk
+/// enters it.
+pub(crate) fn is_resource_helper(name: &str) -> bool {
+    name.starts_with('H')
+}
+
+/// The parts of the helper `name` among `items`: its formals, its result
+/// type, its body, and its result.
+pub(crate) type HelperParts<'a> = (&'a [(String, FTy)], &'a FTy, &'a [Stmt], &'a HExpr);
+
+/// The helper `name` among `items`.
+pub(crate) fn helper_of<'a>(items: &'a [Item], name: &str) -> Option<HelperParts<'a>> {
+    items.iter().find_map(|item| match item {
+        Item::Helper {
+            name: n,
+            params,
+            ret,
+            body,
+            result,
+            ..
+        } if n == name => Some((params.as_slice(), ret, body.as_slice(), result)),
+        _ => None,
+    })
+}
+
 #[derive(Clone, Debug)]
 pub(crate) enum Item {
     Const {
