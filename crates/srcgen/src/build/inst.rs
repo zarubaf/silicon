@@ -2,7 +2,7 @@
 //! Instances: the choice of a child, its arguments, and the argument
 //! tuples that become the contexts of the child.
 
-use super::hw::Want;
+use super::hw::{DEPTH, Want};
 use super::stat::value_expr;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, HwEnum, Module, Sig};
 use crate::eval::{Env, Fault, Value, convert};
@@ -75,7 +75,7 @@ impl Builder {
         out: &mut Vec<Stmt>,
     ) -> Built {
         let child = self.declare_child(ctx, m, j, out)?;
-        self.bind_child_inputs(ctx, &child, None, out)?;
+        self.bind_child_inputs(ctx, &child, None, DEPTH, out)?;
         self.expose_child_outputs(ctx, &child)
     }
 
@@ -110,6 +110,7 @@ impl Builder {
         ctx: &mut Ctx,
         child: &Child,
         skip: Option<&str>,
+        depth: u32,
         out: &mut Vec<Stmt>,
     ) -> Built {
         for (p, t) in &child.sig.inputs {
@@ -117,7 +118,7 @@ impl Builder {
                 continue;
             }
             let types = self.types(t, &child.envs)?;
-            let value = self.driver(ctx, &Want { types, ty: None });
+            let value = self.driver_at(ctx, &Want { types, ty: None }, depth);
             let place = Place::Field(child.name.clone(), p.clone());
             out.push(Stmt::Connect(place, value));
         }

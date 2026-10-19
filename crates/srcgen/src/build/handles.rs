@@ -42,7 +42,7 @@ const RES_HELPERS: u32 = 6;
 const HANDLE_STMTS: u32 = 1;
 /// The depth of the hardware expressions that the helpers and their calls
 /// hold: small, so that the mean text of a program stays near its bound.
-pub(super) const HANDLE_DEPTH: u32 = 1;
+pub(super) const HANDLE_DEPTH: u32 = 0;
 /// The most resources that handle forms declare in a program, counted once
 /// for each env that runs the declaration, and the most that one statement
 /// of a frame declares. A statement waits when the rest of the budget does
@@ -657,7 +657,7 @@ impl Builder {
             }
             Role::Input { module, port } => {
                 let child = self.declare_child(ctx, m, module, out)?;
-                self.bind_child_inputs(ctx, &child, Some(&port), out)?;
+                self.bind_child_inputs(ctx, &child, Some(&port), HANDLE_DEPTH, out)?;
                 let first = HExpr::Field(child.name.clone(), port);
                 let call = self.binder_call(ctx, i, first)?;
                 out.push(call);
@@ -965,7 +965,6 @@ mod tests {
                 + s.list_groups;
             calls += usize::from(any > 0);
         }
-        eprintln!("COVER {with:?} calls {calls}");
         for (form, n) in &with {
             assert!(
                 n * 10 >= TAPES,
