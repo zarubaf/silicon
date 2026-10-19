@@ -207,6 +207,12 @@ pub(crate) enum Ty {
 pub(crate) enum FTy {
     /// A hardware data type.
     Data(Ty),
+    /// `()`.
+    Unit,
+    /// `Reg[T]`.
+    Reg(Ty),
+    /// `Wire[T]`.
+    Wire(Ty),
 }
 
 impl From<Ty> for FTy {
@@ -359,6 +365,8 @@ pub(crate) enum HExpr {
     Ctor(String, String, Vec<HExpr>),
     /// A `match` with a hardware scrutinee: all arms evaluate.
     Match(Match<HExpr, HExpr>),
+    /// `()`, the result of a helper without a value.
+    Unit,
 }
 
 /// The target of `:=`.
@@ -413,6 +421,8 @@ pub(crate) enum Stmt {
     Block(Vec<Stmt>),
     /// `diagnostic("dK", value);` of a static value, in a module body.
     Diagnostic(String, SExpr),
+    /// `h(args);`: a call of a helper that returns `()`.
+    Call(String, Vec<HExpr>),
 }
 
 /// A `comptime fn` that builds a list:
@@ -867,6 +877,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             stmts(out, depth + 1, body);
             "}".to_owned()
         }
+        Stmt::Call(f, args) => format!("{f}({});", list(args, hexpr)),
     };
     line(out, depth, &text);
 }
@@ -874,6 +885,9 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
 fn fty(t: &FTy) -> String {
     match t {
         FTy::Data(t) => ty(t),
+        FTy::Unit => "()".to_owned(),
+        FTy::Reg(t) => format!("Reg[{}]", ty(t)),
+        FTy::Wire(t) => format!("Wire[{}]", ty(t)),
     }
 }
 
@@ -1099,6 +1113,7 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
         HExpr::Match(m) => matched(m, hexpr, hexpr),
         HExpr::Ctor(e, v, args) if args.is_empty() => format!("{e}::{v}"),
         HExpr::Ctor(e, v, args) => format!("{e}::{v}({})", list(args, hexpr)),
+        HExpr::Unit => "()".to_owned(),
     }
 }
 
@@ -1523,6 +1538,30 @@ module M1(comptime P0: Nat) domains() {
             render_items(&items),
             "const F0: fn (mut List[Int], Nat) -> Bool = k0;\nconst F1: fn (UInt[8], Bool) -> SInt[C0] = h0;\n"
         );
+    }
+
+    #[test]
+    fn helpers_that_take_resources_print() {
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![
+                ("a0".to_owned(), FTy::Reg(u8())),
+                ("a1".to_owned(), FTy::Wire(Ty::Bool)),
+                ("x2".to_owned(), u8().into()),
+            ],
+            mut_first: false,
+            ret: FTy::Unit,
+            body: vec![Stmt::Connect(Place::Name("a0".to_owned()), hname("x2"))],
+            result: HExpr::Unit,
+        };
+        assert_eq!(
+            render_items(&[helper]),
+            "fn H0(a0: Reg[UInt[8]], a1: Wire[Bool], x2: UInt[8]) -> () {\n    a0 := x2;\n    return ();\n}\n"
+        );
+        let call = Stmt::Call("H0".to_owned(), vec![hname("r0"), hname("w0"), hname("i0")]);
+        let mut out = String::new();
+        stmts(&mut out, 0, &[call]);
+        assert_eq!(out, "H0(r0, w0, i0);\n");
     }
 
     #[test]

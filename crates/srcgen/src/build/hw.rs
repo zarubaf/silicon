@@ -117,7 +117,12 @@ impl Builder {
     /// a name in scope instead, so that the state and the outputs depend on
     /// the inputs, and a run tests hardware, not constants.
     pub(super) fn driver(&mut self, ctx: &Ctx, w: &Want) -> HExpr {
-        let e = self.value(ctx, w, DEPTH);
+        self.driver_at(ctx, w, DEPTH)
+    }
+
+    /// `driver` with a hardware expression of the depth `depth`.
+    pub(super) fn driver_at(&mut self, ctx: &Ctx, w: &Want, depth: u32) -> HExpr {
+        let e = self.value(ctx, w, depth);
         if reads_name(&e) {
             return e;
         }
@@ -369,7 +374,7 @@ pub(super) fn reads_name(e: &HExpr) -> bool {
     match e {
         // The receiver of a receiver call is a name.
         HExpr::Name(_) | HExpr::Field(..) | HExpr::Receiver(..) => true,
-        HExpr::Static(_) | HExpr::Make(..) => false,
+        HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => false,
         HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => reads_name(a),
         HExpr::Binary(_, a, b) => reads_name(a) || reads_name(b),
         HExpr::If(c, t, e) => reads_name(c) || reads_name(t) || reads_name(e),

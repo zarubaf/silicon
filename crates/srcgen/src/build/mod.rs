@@ -39,6 +39,7 @@ mod enum_hw;
 mod enums;
 mod file;
 mod fnvalues;
+mod handles;
 mod hw;
 mod hw_match;
 mod inst;
@@ -67,9 +68,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
-/// `comptime fn`, `s` static `let`, `j` loop binder, `B` binder of a static `match`. A static name is one
-/// of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFB";
+/// `comptime fn`, `s` static `let`, `j` loop binder, `B` binder of a static
+/// `match`, `G` list of handles, `H` helper that takes resources. A static
+/// name is one of them and digits; the twin must have none.
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGH";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -266,6 +268,8 @@ struct Ctx {
     counters: Vec<String>,
     /// The hardware names of an enum type.
     enums: Vec<HwEnum>,
+    /// The resources that this frame declared and has not bound yet.
+    pending: Vec<handles::Pending>,
 }
 
 impl Ctx {
@@ -308,6 +312,7 @@ impl Ctx {
             lists: Vec::new(),
             counters: Vec::new(),
             enums: self.enums.clone(),
+            pending: Vec::new(),
         }
     }
 }
@@ -424,6 +429,9 @@ struct Stats {
     hw_binders: u32,
     hw_complete_matches: u32,
     hw_expr_scrutinees: u32,
+    res_helpers: u32,
+    bind_wire_calls: u32,
+    bind_reg_calls: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -447,6 +455,8 @@ struct Builder {
     enums: Vec<EnumDef>,
     list_fns: Vec<ListFn>,
     helpers: Vec<Helper>,
+    /// The helpers that take resources, from the side tape.
+    res_helpers: Vec<handles::ResHelper>,
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
@@ -483,6 +493,7 @@ impl Builder {
             enums: Vec::new(),
             list_fns: Vec::new(),
             helpers: Vec::new(),
+            res_helpers: Vec::new(),
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
             hw_values: Vec::new(),
@@ -510,6 +521,7 @@ impl Builder {
         self.fn_values()?;
         self.nested_fns()?;
         self.signatures();
+        self.res_helpers()?;
         let params = self
             .sigs
             .first()
@@ -577,6 +589,14 @@ impl Builder {
                 body: h.body.clone(),
                 result: h.result.clone(),
             });
+        let res = self.res_helpers.iter().map(|h| Item::Helper {
+            name: h.name.clone(),
+            params: h.params.clone(),
+            mut_first: false,
+            ret: FTy::Unit,
+            body: h.body.clone(),
+            result: HExpr::Unit,
+        });
         let modules = self.sigs.iter().zip(&self.bodies).filter_map(|(s, b)| {
             b.as_ref().map(|body| Item::Module {
                 name: s.name.clone(),
@@ -588,6 +608,7 @@ impl Builder {
         self.file_items()
             .into_iter()
             .chain(helpers)
+            .chain(res)
             .chain(self.hw_value_items())
             .chain(modules)
             .collect()
