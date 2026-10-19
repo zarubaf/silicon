@@ -4,6 +4,7 @@ comptime fn f(p: (Bool, Bool)) -> Bool { return true; }
 module M() {
     input x: Bool;
     let p = (x, x);
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `(Bool, Bool)`; compute the value from static values, for example from constants and `comptime` parameters
     let a = f(p);
 }

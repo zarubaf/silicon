@@ -4,6 +4,7 @@ module M() {
     input i: UInt[1];
     let h = i;
     let a = [1, 2];
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[1]`; compute the value from static values, for example from constants and `comptime` parameters
     let b = a[h];
 }

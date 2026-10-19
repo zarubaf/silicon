@@ -3,6 +3,7 @@
 module M() {
     input x: UInt[4];
     let y = x +% 1;
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[4]`; compute the value from static values, for example from constants and `comptime` parameters
     type A = [Bool; y];
 }

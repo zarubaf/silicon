@@ -1,4 +1,5 @@
 // S001: the lexical error at 3:9 comes before the syntax error on line 4.
-// expected-error S001 @+1
+// expected-error S001 @+2
+// expected-message: invalid character; outside a string or a comment, the source has only names, numbers, and symbols, and a name has only ASCII letters, digits, and `_`; remove the character
 const X $ = 1;
 const Y = ;

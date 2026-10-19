@@ -7,6 +7,7 @@ module C(comptime W: UInt[8]) {
 module M() {
     input x: UInt[8];
     let y = x +% 1;
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[8]`; compute the value from static values, for example from constants and `comptime` parameters
     type H = Instance[C, y];
 }

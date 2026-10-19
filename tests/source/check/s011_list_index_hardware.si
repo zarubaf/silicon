@@ -5,6 +5,7 @@ module M() {
     let h = i;
     let mut xs = list(Int);
     xs.push(1);
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[2]`; compute the value from static values, for example from constants and `comptime` parameters
     let c = xs[h];
 }

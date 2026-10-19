@@ -5,6 +5,7 @@ module C(comptime o: Op) {}
 module M() {
     input x: UInt[8];
     let o = Op::Load(x);
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `Op`; compute the value from static values, for example from constants and `comptime` parameters
     instance c = C(o);
 }
