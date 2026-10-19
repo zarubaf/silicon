@@ -96,7 +96,13 @@ def failsAt (s : String) (line col : Nat) (depth : Nat := defaultSyntaxDepth) : 
 #guard error? (lex defaultSyntaxDepth "a b") == none
 
 /-! The tokens before an error stay, so the parser can report an earlier error first. -/
-#guard kinds "import x $" == [.keyword "import", .ident "x", .error "unexpected character"]
+#guard kinds "import x $" == [.keyword "import", .ident "x", .error invalidChar]
+
+/-! The text of an invalid character (section 6.2), in full, at its position. -/
+#guard (error? (lex defaultSyntaxDepth "let a$b = 1;")).map (fun e => (e.code, e.pos, e.msg)) ==
+  some (.S001, ⟨1, 6⟩, "invalid character; outside a string or a comment, the source has only " ++
+    "names, numbers, and symbols, and a name has only ASCII letters, digits, and `_`; remove " ++
+    "the character")
 
 /-! A number literal is below 2^65536 in each radix. Leading zeros do not count. -/
 def top : Nat := 2 ^ 65536 - 1

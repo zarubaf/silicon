@@ -1245,7 +1245,8 @@ def armEffect (g : String) : String :=
 #guard said (sMem true "  let x: UInt[read_port(k, 0, true)] = 0;\n") ==
   "a type or a constant has no graph effect such as `read_port`; call it before and use the result"
 #guard said (sMod "  let z = if (c) { pop(xs) } else { 0 };\n") ==
-  "a hardware arm changes a binding from before the arm"
+  "a hardware arm cannot change `xs`, a binding from before the arm; change `xs` before the " ++
+    "`if` or `match`, and use the result in the arm"
 #guard said (sMem true "  let z = if (c) { read_port(q, a, c) } else { 0 };\n") ==
   armEffect "read_port"
 
@@ -3073,5 +3074,36 @@ def readLoop : String :=
 #guard s018 "  wire w: UInt[8];\n  comptime for i in 0..2 {\n    drive(w, x);\n  }\n"
     "fn drive(w: Wire[UInt[8]], x: UInt[8]) -> () {\n  w := x;\n  return ();\n}\n" ==
   s!"S018 2:3 {twiceIn "w" "drive"}"
+
+/-!
+The texts of section 6.2 for an arm mutation (`S016`), a value at a static position (`S011`),
+and an instantiation cycle (`S019`). Each text is in full, from a module body and from a helper.
+-/
+def armChange (x : String) : String :=
+  s!"a hardware arm cannot change `{x}`, a binding from before the arm; change `{x}` before " ++
+    "the `if` or `match`, and use the result in the arm"
+#guard failure (sMod "  let z = if (c) { pop(xs) } else { 0 };\n") 100000000 ==
+  s!"S016 13:20 {armChange "xs"}"
+#guard failure ("fn g(c: Bool) -> Nat {\n  let mut ys = list(Nat);\n  push(ys, 1);\n" ++
+    "  let z = if (c) { pop(ys) } else { 0 };\n  return 0;\n}\n" ++
+    sMod "  let z = g(c);\n") 100000000 ==
+  s!"S016 4:20 {armChange "ys"}"
+def notStatic (a : String) : String :=
+  s!"a static position needs a static value, not {a}; compute the value from static values, " ++
+    "for example from constants and `comptime` parameters"
+#guard failure ("module M() {\n  input x: UInt[8];\n  input i: UInt[1];\n" ++
+    "  reg r: UInt[8] = 0;\n  reg s: UInt[8] = 0;\n  r := x;\n  s := x;\n" ++
+    "  let j = i;\n  let rs = [r, s];\n  rs[j] := x;\n}\n") 100000000 ==
+  s!"S011 10:6 {notStatic "a value of `UInt[1]`"}"
+#guard failure ("fn mk(x: UInt[8]) -> UInt[8] {\n  reg r: UInt[8] = x;\n  r := x;\n" ++
+    "  return r;\n}\nmodule M() {\n  input a: UInt[8];\n  output o: UInt[8];\n" ++
+    "  o := mk(a);\n}\n") 100000000 ==
+  s!"S011 2:3 {notStatic "a value of `UInt[8]`"}"
+def cycle (m : String) : String :=
+  s!"the instantiation of `{m}` depends on itself, with the same arguments; change an " ++
+    "argument at each level, and end the recursion with a `comptime if`"
+#guard failure "module M() {\n  instance a = M();\n}\n" 100000000 == s!"S019 2:3 {cycle "M"}"
+#guard failure ("fn again() -> Nat {\n  instance u = M();\n  return 1;\n}\n" ++
+    "module M() {\n  let n = again();\n}\n") 100000000 == s!"S019 2:3 {cycle "M"}"
 
 end Silicon.Source.Test.Elab

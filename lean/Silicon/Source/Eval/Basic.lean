@@ -615,7 +615,8 @@ structure Guard where
 
 def Guard.change (g : Guard) (x : String) : String :=
   match g.kind with
-  | .arm => "a hardware arm changes a binding from before the arm"
+  | .arm => s!"a hardware arm cannot change `{x}`, a binding from before the arm; change `{x}` " ++
+    "before the `if` or `match`, and use the result in the arm"
   | .structural => s!"a type or a constant cannot change `{x}`; change `{x}` before it, " ++
     "keep the result in a `let`, and use that name here"
 
