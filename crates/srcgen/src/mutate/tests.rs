@@ -5,8 +5,8 @@ use super::super::build::typed;
 use super::super::eval::Value;
 use super::super::program::tests::{TEXT, program};
 use super::super::program::{
-    EnumDef, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Ports, Program, Radix, SBin, SExpr,
-    STy, Scalar, Stmt, Ty, Un, Variant,
+    EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Ports, Program, Radix, SBin,
+    SExpr, STy, Scalar, Stmt, Ty, Un, Variant,
 };
 use super::*;
 use num_bigint::{BigInt, BigUint};
@@ -1485,4 +1485,135 @@ fn a_kind_without_a_site_falls_back_to_the_earlier_kinds() {
     }
     // The draw of the kind `ArmStage` has a site.
     assert!(staged(index(Kind::ArmStage)));
+}
+
+/// `fn H0(a0: Reg[UInt[8]], x1: UInt[8]) -> ()` binds `a0`, and `H1()`
+/// declares and binds a register of its own.
+fn handle_items() -> Vec<Item> {
+    let binder = Item::Helper {
+        name: "H0".to_owned(),
+        params: vec![
+            ("a0".to_owned(), FTy::Reg(u8())),
+            ("x1".to_owned(), u8().into()),
+        ],
+        mut_first: false,
+        ret: FTy::Unit,
+        body: vec![connect("a0", name("x1"))],
+        result: HExpr::Unit,
+    };
+    let declarer = Item::Helper {
+        name: "H1".to_owned(),
+        params: vec![("x0".to_owned(), u8().into())],
+        mut_first: false,
+        ret: FTy::Unit,
+        body: vec![
+            Stmt::Reg("r0".to_owned(), u8(), dec(0)),
+            connect("r0", name("x0")),
+        ],
+        result: HExpr::Unit,
+    };
+    vec![binder, declarer]
+}
+
+fn call(f: &str, args: &[&str]) -> Stmt {
+    Stmt::Call(f.to_owned(), args.iter().map(|a| name(a)).collect())
+}
+
+/// A clocked module that declares `r0`, calls `H0` on it, and calls `H1`.
+fn handle_program(top: Vec<Stmt>) -> Program {
+    let mut body = ports_then(vec![Stmt::Reg("r0".to_owned(), u8(), dec(0))]);
+    body.extend(top);
+    body.push(connect("o0", name("r0")));
+    let mut items = handle_items();
+    items.push(Item::Module {
+        name: "M0".to_owned(),
+        params: vec![],
+        clocked: true,
+        body,
+    });
+    of(items)
+}
+
+/// A deleted call of a helper with a handle formal in the top frame leaves
+/// the register unbound. A deleted call of a helper that declares binds
+/// nothing from outside, so the program stays valid.
+#[test]
+fn delete_of_a_binding_call_predicts_s018_in_the_top_frame() {
+    let p = handle_program(vec![call("H0", &["r0", "i0"]), call("H1", &["i0"])]);
+    let deleted = |line: &str| {
+        all(&p, Kind::Delete)
+            .into_iter()
+            .find(|m| m.text == p.text().replacen(line, "", 1))
+            .unwrap()
+    };
+    assert_eq!(deleted("    H0(r0, i0);\n").expect, Some("S018"));
+    assert_eq!(deleted("    H1(i0);\n").expect, None);
+    // The `:=` in the body of a helper is no top frame.
+    assert_eq!(deleted("    a0 := x1;\n").expect, None);
+}
+
+#[test]
+fn delete_of_a_binding_call_in_a_loop_predicts_nothing() {
+    let looped = Stmt::For(
+        "j0".to_owned(),
+        dec(0),
+        dec(2),
+        vec![
+            Stmt::Reg("r1".to_owned(), u8(), dec(0)),
+            call("H0", &["r1", "i0"]),
+        ],
+    );
+    let p = handle_program(vec![looped]);
+    let m = all(&p, Kind::Delete)
+        .into_iter()
+        .find(|m| m.text == p.text().replacen("        H0(r1, i0);\n", "", 1))
+        .unwrap();
+    assert_eq!(m.expect, None);
+}
+
+/// `DuplicateBind` copies a `:=`, a `write_port`, or a call of a helper
+/// with a handle formal in the top frame, and it predicts `S018`. It has no
+/// site on the call of a helper that only declares, in a loop, or in a
+/// helper.
+#[test]
+fn duplicate_bind_predicts_s018_at_a_binding_of_the_top_frame() {
+    let looped = Stmt::For(
+        "j0".to_owned(),
+        dec(0),
+        dec(2),
+        vec![Stmt::Wire("w0".to_owned(), u8()), connect("w0", name("i0"))],
+    );
+    let write = Stmt::WritePort {
+        mem: "n0".to_owned(),
+        addr: Box::new(name("i0")),
+        data: Box::new(name("i0")),
+        en: Box::new(HExpr::Static(SExpr::Bool(true))),
+        receiver: false,
+    };
+    let top = vec![
+        call("H0", &["r0", "i0"]),
+        call("H1", &["i0"]),
+        Stmt::Mem("n0".to_owned(), u8(), dec(2)),
+        write,
+        looped,
+    ];
+    let p = handle_program(top);
+    let copies = all(&p, Kind::DuplicateBind);
+    // The call of `H0`, the write, and the `:=` of the output.
+    assert_eq!(
+        copies.len(),
+        3,
+        "{:?}",
+        copies.iter().map(|m| &m.what).collect::<Vec<_>>()
+    );
+    assert!(copies.iter().all(|m| m.expect == Some("S018")));
+    let texts: Vec<&str> = [
+        "    H0(r0, i0);\n",
+        "    write_port(n0, i0, i0, true);\n",
+        "    o0 := r0;\n",
+    ]
+    .to_vec();
+    for (m, line) in copies.iter().zip(texts) {
+        assert_eq!(m.text, p.text().replacen(line, &format!("{line}{line}"), 1));
+    }
 }
