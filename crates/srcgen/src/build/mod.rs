@@ -432,6 +432,9 @@ struct Stats {
     res_helpers: u32,
     bind_wire_calls: u32,
     bind_reg_calls: u32,
+    bind_input_calls: u32,
+    bind_mem_calls: u32,
+    direct_mems: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -593,9 +596,9 @@ impl Builder {
             name: h.name.clone(),
             params: h.params.clone(),
             mut_first: false,
-            ret: FTy::Unit,
+            ret: h.ret.clone(),
             body: h.body.clone(),
-            result: HExpr::Unit,
+            result: h.result.clone(),
         });
         let modules = self.sigs.iter().zip(&self.bodies).filter_map(|(s, b)| {
             b.as_ref().map(|body| Item::Module {

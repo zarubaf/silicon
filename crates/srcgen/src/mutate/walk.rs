@@ -327,6 +327,22 @@ impl<'a> Walk<'a> {
                     self.hexpr(a);
                 }
             }
+            Stmt::Mem(_, t, depth) => {
+                self.ty(t);
+                self.sexpr(depth);
+            }
+            Stmt::WritePort {
+                mem,
+                addr,
+                data,
+                en,
+                ..
+            } => {
+                self.rename(mem);
+                self.hexpr(addr);
+                self.hexpr(data);
+                self.hexpr(en);
+            }
         }
     }
 
@@ -830,7 +846,11 @@ impl<'a> Walk<'a> {
 
     fn fty(&mut self, t: &mut FTy) {
         match t {
-            FTy::Data(t) | FTy::Reg(t) | FTy::Wire(t) => self.ty(t),
+            FTy::Data(t) | FTy::Reg(t) | FTy::Wire(t) | FTy::Input(t) => self.ty(t),
+            FTy::Mem(t, depth) => {
+                self.ty(t);
+                self.sexpr(depth);
+            }
             FTy::Unit => {}
         }
     }
@@ -1058,6 +1078,11 @@ impl<'a> Walk<'a> {
                 }
             }
             HExpr::Unit => {}
+            HExpr::ReadPort { mem, addr, en, .. } => {
+                self.rename(mem);
+                self.hexpr(addr);
+                self.hexpr(en);
+            }
             HExpr::Receiver(recv, f, args) => {
                 self.hexpr(recv);
                 self.rename(f);
@@ -1192,6 +1217,7 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::Output(n, _)
         | Stmt::Reg(n, _, _)
         | Stmt::Wire(n, _)
+        | Stmt::Mem(n, _, _)
         | Stmt::Let { name: n, .. }
         | Stmt::StaticLet(n, _, _)
         | Stmt::MutLet(n, _, _)
