@@ -362,3 +362,9 @@ rust | S003 Receiver call of a non-function | 337
 pin | S003 Receiver call of a non-function | 337
 rust | S007 Arity of a struct constructor | 337
 pin | S007 Arity of a struct constructor | 337
+rust | S007 Arity of a struct type | 337
+pin | S007 Arity of a struct type | 337
+rust | S010 Zero of a non-data type | 337
+pin | S010 Zero of a non-data type | 337
+rust | S010 `data_bits` of a non-data type | 337
+pin | S010 `data_bits` of a non-data type | 337
