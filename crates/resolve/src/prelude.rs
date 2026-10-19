@@ -170,7 +170,7 @@ pub(crate) struct PreludeStruct {
 }
 
 /// The name of the prelude struct that a port call finds.
-pub(crate) const RESPONSE: &str = "ReadResponse";
+pub const RESPONSE: &str = "ReadResponse";
 
 /// The prelude structs, in the order of design section 5.6. They follow the user items. A field
 /// type refers to a prelude struct by its index here, never through the item scope.
@@ -236,6 +236,9 @@ pub(crate) const STRUCTS: [PreludeStruct; 6] = [
 /// A prelude struct item, built already resolved, with the target of each name node in it.
 pub(crate) struct Built {
     pub(crate) item: Item,
+    /// The name and the parameters of the struct, as in `item`.
+    pub(crate) name: Ident,
+    pub(crate) params: Vec<Ident>,
     pub(crate) uses: Vec<(NodeId, Leaf)>,
 }
 
@@ -304,7 +307,7 @@ impl Builder {
 
     fn item(&mut self, s: &PreludeStruct) -> Built {
         let name = self.ident(s.name);
-        let params = s
+        let params: Vec<Param> = s
             .params
             .iter()
             .map(|&(p, leaf)| Param {
@@ -323,6 +326,8 @@ impl Builder {
             })
             .collect();
         Built {
+            name: name.clone(),
+            params: params.iter().map(|p| p.name.clone()).collect(),
             item: Item::Struct {
                 pos: Self::POS,
                 name,
