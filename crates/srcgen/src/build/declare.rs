@@ -64,12 +64,24 @@ impl Builder {
             clocked: false,
             children: Vec::new(),
         };
-        let (ret, result, parts) = match self.tape.below(8) {
-            0 | 1 => self.unit_shape(&mut hb)?,
-            2..=4 => self.one_shape(&mut hb)?,
-            5 => self.tuple_shape(&mut hb)?,
-            6 => self.array_shape(&mut hb)?,
-            _ => self.record_shape(&mut hb)?,
+        // A register or wire that an earlier helper binds.
+        if self.tape.flag() {
+            self.nested_extra(&mut hb)?;
+        }
+        // Resources that the helper keeps and binds, before the result.
+        for _ in 0..self.tape.below(2) {
+            let kind = self.pick(&[Kind::Reg, Kind::Wire, Kind::Mem, Kind::Instance]);
+            self.declare_leaf(&mut hb, kind, None, true)?;
+        }
+        let (ret, result, parts) = match self.fresh_shape() {
+            0 => self.unit_shape(&mut hb)?,
+            1 => self.one_shape(&mut hb, &[Kind::Reg, Kind::Wire])?,
+            2 => self.one_shape(&mut hb, &[Kind::Mem])?,
+            3 => self.one_shape(&mut hb, &[Kind::Instance])?,
+            4 => self.tuple_shape(&mut hb)?,
+            5 => self.array_shape(&mut hb)?,
+            6 => self.record_shape(&mut hb)?,
+            _ => self.scratch_shape(&mut hb)?,
         };
         Ok(ResHelper {
             name,
@@ -82,6 +94,31 @@ impl Builder {
             clocked: hb.clocked,
             children: hb.children,
         })
+    }
+
+    /// The shape of the result of the next helper that declares: a shape
+    /// that no earlier helper has, if one is left, by the weights.
+    fn fresh_shape(&mut self) -> usize {
+        const WEIGHTS: [u32; 8] = [3, 1, 1, 5, 4, 1, 3, 4];
+        let open: Vec<usize> = (0..WEIGHTS.len())
+            .filter(|s| !self.shapes.contains(s))
+            .collect();
+        let pool: Vec<usize> = if open.is_empty() {
+            (0..WEIGHTS.len()).collect()
+        } else {
+            open
+        };
+        let total: u32 = pool.iter().filter_map(|&s| WEIGHTS.get(s)).sum();
+        let mut n = self.tape.below(total);
+        for &s in &pool {
+            let w = WEIGHTS.get(s).copied().unwrap_or(0);
+            if n < w {
+                self.shapes.insert(s);
+                return s;
+            }
+            n -= w;
+        }
+        0
     }
 
     /// `fn H<k>(x0: U) -> Reg[T] { reg r0: T = k; return r0; }`, or the
@@ -115,6 +152,28 @@ impl Builder {
         })
     }
 
+    /// A memory with both port calls, and the data of the response as the
+    /// result: the result holds no handle.
+    fn scratch_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
+        let (word, depth) = {
+            let (word, _) = self.data_ty();
+            (word, self.pick(&DEPTHS))
+        };
+        let name = hb.names.fresh("n");
+        hb.body
+            .push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
+        hb.clocked = true;
+        let via = self.mem_binder_for(&word, depth);
+        let data = self.mem_ports(
+            &mut hb.ctx,
+            &mut hb.names,
+            (&name, &word, depth),
+            via,
+            &mut hb.body,
+        )?;
+        Ok((FTy::Data(word), data, Vec::new()))
+    }
+
     /// One or two resources, all bound: `()`.
     fn unit_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
         for _ in 0..self.tape.between(1, 2) {
@@ -126,16 +185,16 @@ impl Builder {
 
     /// One resource, returned. A memory returns unbound, and an instance
     /// may return with its inputs bound.
-    fn one_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
-        let kind = self.pick(&[
-            Kind::Reg,
-            Kind::Reg,
-            Kind::Wire,
-            Kind::Wire,
-            Kind::Mem,
-            Kind::Instance,
-        ]);
-        let bound = kind != Kind::Mem && self.tape.flag();
+    fn one_shape(&mut self, hb: &mut Hb, kinds: &[Kind]) -> Built<Shaped> {
+        let kind = kinds
+            .get(self.tape.index(kinds.len()))
+            .copied()
+            .unwrap_or(Kind::Wire);
+        let bound = match kind {
+            Kind::Mem => false,
+            Kind::Instance => self.tape.below(8) == 0,
+            _ => self.tape.flag(),
+        };
         let (name, fty, leaf) = self.declare_leaf(hb, kind, None, bound)?;
         let part = Part {
             path: Vec::new(),
@@ -145,70 +204,90 @@ impl Builder {
         Ok((fty, HExpr::Name(name), vec![part]))
     }
 
-    /// Two registers or wires in a tuple.
+    /// A register or a wire at `path` in a container, or, in one draw in
+    /// three, an array of two or three of one type there. Gives the handle
+    /// type, the expression, and the resources.
+    fn member(&mut self, hb: &mut Hb, path: &[Step]) -> Built<Shaped> {
+        if self.tape.below(3) == 0 {
+            let (fty, items, parts) = self.array_of(hb, path)?;
+            let n = u32::try_from(items.len()).map_err(|_| Fault::Type)?;
+            return Ok((FTy::Array(Box::new(fty), n), HExpr::Array(items), parts));
+        }
+        let kind = self.pick(&[Kind::Reg, Kind::Wire]);
+        let bound = self.tape.flag();
+        let (name, fty, leaf) = self.declare_leaf(hb, kind, None, bound)?;
+        let part = Part {
+            path: path.to_vec(),
+            leaf,
+            bound,
+        };
+        Ok((fty, HExpr::Name(name), vec![part]))
+    }
+
+    /// Two registers or wires in a tuple, and in one draw in three an array
+    /// of them in place of one.
     fn tuple_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
         let mut types = Vec::new();
         let mut parts = Vec::new();
         let mut items = Vec::new();
         for k in 0..2 {
-            let kind = self.pick(&[Kind::Reg, Kind::Wire]);
-            let bound = self.tape.flag();
-            let (name, fty, leaf) = self.declare_leaf(hb, kind, None, bound)?;
+            let (fty, item, mut found) = self.member(hb, &[Step::Select(k)])?;
             types.push(fty);
-            items.push(HExpr::Name(name));
-            parts.push(Part {
-                path: vec![Step::Select(k)],
-                leaf,
-                bound,
-            });
+            items.push(item);
+            parts.append(&mut found);
         }
         Ok((FTy::Tuple(types), HExpr::Tuple(items), parts))
     }
 
     /// Two or three registers, or wires, of one type in an array.
     fn array_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
+        let (fty, items, parts) = self.array_of(hb, &[])?;
+        let n = u32::try_from(items.len()).map_err(|_| Fault::Type)?;
+        Ok((FTy::Array(Box::new(fty), n), HExpr::Array(items), parts))
+    }
+
+    /// Two or three registers or wires of one type, at `path`, then the
+    /// index.
+    fn array_of(&mut self, hb: &mut Hb, path: &[Step]) -> Built<(FTy, Vec<HExpr>, Vec<Part>)> {
         let kind = self.pick(&[Kind::Reg, Kind::Wire]);
         let n = self.tape.between(2, 3);
-        let mut elem = None;
+        let mut elem: Option<(FTy, Ty)> = None;
         let mut parts = Vec::new();
         let mut items = Vec::new();
         for i in 0..n {
             let bound = self.tape.flag();
-            let hint = elem.as_ref().map(|(_, ty): &(FTy, Ty)| ty);
+            let hint = elem.as_ref().map(|(_, ty)| ty);
             let (name, fty, leaf) = self.declare_leaf(hb, kind, hint, bound)?;
             let (Leaf::Reg(ty) | Leaf::Wire(ty)) = &leaf else {
                 return Err(Fault::Type);
             };
             elem.get_or_insert((fty, ty.clone()));
             items.push(HExpr::Name(name));
+            let mut steps = path.to_vec();
+            steps.push(Step::Index(i));
             parts.push(Part {
-                path: vec![Step::Index(i)],
+                path: steps,
                 leaf,
                 bound,
             });
         }
         let (fty, _) = elem.ok_or(Fault::Type)?;
-        Ok((FTy::Array(Box::new(fty), n), HExpr::Array(items), parts))
+        Ok((fty, items, parts))
     }
 
-    /// Two or three registers or wires in a struct `T<n>`.
+    /// Two or three registers or wires in a struct `T<n>`, and in one draw
+    /// in three an array of them in place of one.
     fn record_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
         let name = format!("T{}", self.hstructs.len());
         let mut fields = Vec::new();
         let mut parts = Vec::new();
         let mut items = Vec::new();
         for i in 0..self.tape.between(2, 3) {
-            let kind = self.pick(&[Kind::Reg, Kind::Wire]);
-            let bound = self.tape.flag();
-            let (var, fty, leaf) = self.declare_leaf(hb, kind, None, bound)?;
             let field = format!("m{i}");
-            fields.push((field.clone(), FieldTy::Handle(fty)));
-            items.push(HExpr::Name(var));
-            parts.push(Part {
-                path: vec![Step::Field(field)],
-                leaf,
-                bound,
-            });
+            let (fty, item, mut found) = self.member(hb, &[Step::Field(field.clone())])?;
+            fields.push((field, FieldTy::Handle(fty)));
+            items.push(item);
+            parts.append(&mut found);
         }
         self.hstructs.push(StructDef {
             name: name.clone(),
@@ -239,6 +318,26 @@ impl Builder {
         }
     }
 
+    /// A register or a wire of the type of an earlier binder, bound by a
+    /// call of that binder: a call frame of depth 2. Without a binder, none.
+    fn nested_extra(&mut self, hb: &mut Hb) -> Built {
+        let binders: Vec<(usize, bool, Ty)> = self
+            .res_helpers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, h)| match (&h.role, h.params.first()) {
+                (Role::Reg, Some((_, FTy::Reg(t)))) => Some((i, true, t.clone())),
+                (Role::Wire, Some((_, FTy::Wire(t)))) => Some((i, false, t.clone())),
+                _ => None,
+            })
+            .collect();
+        let Some((i, reg, ty)) = binders.get(self.tape.index(binders.len())).cloned() else {
+            return Ok(());
+        };
+        self.declare_resource(hb, reg, &ty, Some(i), true)?;
+        Ok(())
+    }
+
     /// `reg r: T = k;` or `wire w: T;`, and its binding if `bound`.
     fn register_or_wire(
         &mut self,
@@ -251,6 +350,20 @@ impl Builder {
             Some(t) => t.clone(),
             None => self.leaf_ty(reg),
         };
+        self.declare_resource(hb, reg, &ty, None, bound)
+    }
+
+    /// The declaration of a register or a wire of the type `ty`. `forced`
+    /// is the helper that binds it; else the draw picks.
+    fn declare_resource(
+        &mut self,
+        hb: &mut Hb,
+        reg: bool,
+        ty: &Ty,
+        forced: Option<usize>,
+        bound: bool,
+    ) -> Built<(String, FTy, Leaf)> {
+        let ty = ty.clone();
         let scalar = self.scalar(&ty)?;
         let name = hb.names.fresh(if reg { "r" } else { "w" });
         let first = HExpr::Name(name.clone());
@@ -269,7 +382,10 @@ impl Builder {
             hb.body.push(Stmt::Wire(name.clone(), ty.clone()));
         }
         if bound {
-            let via = self.binder_for(reg, &ty);
+            let via = match forced {
+                Some(i) => Some(i),
+                None => self.binder_for(reg, &ty),
+            };
             let stmt = self.bind_handle(&hb.ctx, &first, via, &ty)?;
             hb.body.push(stmt);
             if !reg {
@@ -296,7 +412,7 @@ impl Builder {
                 _ => None,
             })
             .collect();
-        if self.tape.flag()
+        if self.tape.below(4) != 0
             && let Some(t) = binders.get(self.tape.index(binders.len()))
         {
             return t.clone();
@@ -319,7 +435,7 @@ impl Builder {
             .map(|(i, _)| i)
             .collect();
         let pick = self.tape.index(found.len());
-        found.get(pick).copied().filter(|_| self.tape.flag())
+        found.get(pick).copied().filter(|_| self.tape.below(4) != 0)
     }
 
     /// An earlier helper that makes the port calls on a memory of this
@@ -463,6 +579,9 @@ impl Builder {
             return Ok(());
         };
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
+        called!(self, ctx, i);
+        #[cfg(test)]
+        self.note_declarations(&h);
         let (callee, args) = self.binder_args_of(ctx, i)?;
         for (j, tuple) in &h.children {
             let known = self.contexts.get_mut(*j).ok_or(Fault::Type)?;
@@ -482,10 +601,47 @@ impl Builder {
             ty: None,
             value: HExpr::Call(callee, args),
         });
+        if let FTy::Data(ty) = &h.ret {
+            self.push_read(ctx, HExpr::Name(root.clone()), ty)?;
+        }
         for part in &h.parts {
             self.take_part(ctx, m, out, &root, part)?;
         }
         Ok(())
+    }
+
+    /// Counts what an executed call of the helper `h` declares and returns.
+    #[cfg(test)]
+    fn note_declarations(&mut self, h: &ResHelper) {
+        for s in &h.body {
+            match s {
+                Stmt::Reg(..) => self.stats.decl_regs += 1,
+                Stmt::Wire(..) => self.stats.decl_wires += 1,
+                Stmt::Mem(..) => self.stats.decl_mems += 1,
+                Stmt::Instance(..) => self.stats.decl_instances += 1,
+                _ => {}
+            }
+        }
+        self.stats.array_results += u32::from(has_array(&h.ret, &self.hstructs));
+        match &h.ret {
+            FTy::Unit => self.stats.unit_results += 1,
+            FTy::Tuple(_) => self.stats.tuple_results += 1,
+            FTy::Struct(_) => self.stats.record_results += 1,
+            FTy::Data(_) => self.stats.scratch_calls += 1,
+            FTy::Array(..) => {}
+            _ => self.stats.handle_results += 1,
+        }
+        let nested = h.body.iter().any(|s| {
+            matches!(
+                s,
+                Stmt::Call(..)
+                    | Stmt::Let {
+                        value: HExpr::Call(..),
+                        ..
+                    }
+            )
+        });
+        self.stats.nested_calls += u32::from(nested);
     }
 
     /// The caller's side of one resource of a result `root`.
@@ -502,6 +658,7 @@ impl Builder {
             Leaf::Reg(ty) => {
                 self.read_handle(ctx, &first, ty)?;
                 if !part.bound {
+                    note!(self, container_binds, !part.path.is_empty());
                     let via = self.binder_for(true, ty);
                     ctx.pending.push(Pending {
                         first,
@@ -512,6 +669,7 @@ impl Builder {
             }
             Leaf::Wire(ty) => {
                 if !part.bound {
+                    note!(self, container_binds, !part.path.is_empty());
                     let via = self.binder_for(false, ty);
                     out.push(self.bind_handle(ctx, &first, via, ty)?);
                 }
@@ -532,6 +690,7 @@ impl Builder {
                     sig,
                 };
                 if !part.bound {
+                    note!(self, caller_child_inputs);
                     self.bind_child_inputs(ctx, &child, None, out)?;
                 }
                 self.expose_child_handles(ctx, &child)?;
@@ -543,15 +702,11 @@ impl Builder {
     /// Makes the register or wire `first` readable: in a `data` context it
     /// reads as data, or `read(first)` reads it.
     pub(super) fn read_handle(&mut self, ctx: &mut Ctx, first: &HExpr, ty: &Ty) -> Built {
-        let expr = if self.tape.below(3) == 0 {
-            note!(self, explicit_reads);
+        let expr = if self.tape.flag() {
             HExpr::Read(Box::new(first.clone()))
         } else {
             first.clone()
         };
-        if !matches!(first, HExpr::Name(_)) {
-            note!(self, container_reads);
-        }
         let types = self.types(ty, &ctx.envs)?;
         ctx.publish(Hw {
             expr,
@@ -578,5 +733,21 @@ fn element(h: &ResHelper) -> Option<Ty> {
             _ => None,
         },
         _ => None,
+    }
+}
+
+/// Whether the type holds an array: a result array, an element of a tuple,
+/// or a field of a struct.
+#[cfg(test)]
+fn has_array(t: &FTy, structs: &[StructDef]) -> bool {
+    match t {
+        FTy::Array(..) => true,
+        FTy::Tuple(ts) => ts.iter().any(|t| has_array(t, structs)),
+        FTy::Struct(name) => structs
+            .iter()
+            .filter(|d| d.name == *name)
+            .flat_map(|d| &d.fields)
+            .any(|(_, f)| matches!(f, FieldTy::Handle(t) if has_array(t, structs))),
+        _ => false,
     }
 }
