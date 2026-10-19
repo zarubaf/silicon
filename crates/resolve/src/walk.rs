@@ -167,21 +167,15 @@ impl Walker {
     /// item scope. Their names are not in the item scope, so a user item shadows them. All
     /// structs are declared first, because a field type can name a later struct.
     fn declare_prelude(&mut self, built: &[Built]) {
-        let structs: Vec<(&Built, &Ident, &[Param])> = built
+        let decls: Vec<DeclId> = built
             .iter()
-            .filter_map(|b| match &b.item {
-                Item::Struct { name, params, .. } => Some((b, name, params.as_slice())),
-                _ => None,
-            })
+            .map(|b| self.declare_hidden(&b.name, Kind::Struct))
             .collect();
-        let decls: Vec<DeclId> = structs
-            .iter()
-            .map(|(_, name, _)| self.declare_hidden(name, Kind::Struct))
-            .collect();
-        for (b, _, params) in &structs {
-            let params: Vec<DeclId> = params
+        for b in built {
+            let params: Vec<DeclId> = b
+                .params
                 .iter()
-                .map(|p| self.declare_hidden(&p.name, Kind::Param))
+                .map(|p| self.declare_hidden(p, Kind::Param))
                 .collect();
             for &(id, leaf) in &b.uses {
                 let target = match leaf {
