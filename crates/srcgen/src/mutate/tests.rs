@@ -1654,3 +1654,17 @@ fn the_fixed_set_of_mutants_reaches_s018_of_handles() {
     assert!(deleted >= 5, "{deleted} deleted binding calls");
     assert!(copied >= 5, "{copied} copied bindings");
 }
+
+/// A binding in a helper that takes resources is several sites of `Delete`,
+/// so that a program holds few of them among its other statements.
+#[test]
+fn a_binding_of_a_helper_is_several_sites_of_delete() {
+    let p = handle_program(vec![call("H0", &["r0", "i0"])]);
+    // The two helpers are two sites. `H0` holds one binding, and `H1` one
+    // declaration and one binding. The module holds two ports, a register,
+    // a call, and the output.
+    assert_eq!(sites(Kind::Delete, &p.items, &p.top), 2 + 8 + (1 + 8) + 5);
+    let m = mutate(&p, index(Kind::Delete), 3);
+    assert_eq!(m.text, p.text().replacen("    a0 := x1;\n", "", 1));
+    assert_eq!(m.expect, None);
+}
