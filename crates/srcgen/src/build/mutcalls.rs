@@ -14,6 +14,7 @@ use super::stat::{Kind, Reach, int};
 use super::{Builder, Built, Ctx, Helper, Hw, MUT_FNS, MUT_HELPERS, Module, NESTED_FNS, Names};
 use crate::eval::{Env, Value};
 use crate::program::{HExpr, Item, MutFn, SExpr, STy, Stmt};
+use std::collections::BTreeSet;
 
 /// The values of the root `a0` that the sample of a function takes.
 fn sample_roots(root: &STy) -> Vec<Value> {
@@ -368,6 +369,8 @@ impl Builder {
             pending: Vec::new(),
             hand: Vec::new(),
             local: false,
+            called: BTreeSet::new(),
+            looped: false,
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(2) {

@@ -140,6 +140,7 @@ impl Builder {
             return Ok(());
         }
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
+        called!(self, ctx, i);
         let Role::List(of) = h.role else {
             return Err(Fault::Type);
         };
@@ -173,6 +174,7 @@ impl Builder {
         let call = self.binder_call(ctx, i, HExpr::Name(list.clone()))?;
         out.push(call);
         note!(self, list_groups);
+        note!(self, list_input_groups, matches!(of, ListOf::Input { .. }));
         if let Some(ty) = readable {
             for k in 0..len {
                 let element = HExpr::Index(Box::new(HExpr::Name(list.clone())), literal(k));

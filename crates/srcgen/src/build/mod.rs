@@ -30,6 +30,25 @@ macro_rules! note {
             $builder.stats.$field += 1;
         }
     };
+    ($builder:expr, $field:ident, $when:expr) => {
+        #[cfg(test)]
+        {
+            $builder.stats.$field += u32::from($when);
+        }
+    };
+}
+
+/// Records a call of the helper `$i` in the frame of `$ctx`, and counts it
+/// as a repeat when the frame called it before or runs it twice.
+macro_rules! called {
+    ($builder:expr, $ctx:expr, $i:expr) => {
+        note!(
+            $builder,
+            repeat_calls,
+            $ctx.called.contains(&$i) || $ctx.looped
+        );
+        $ctx.called.insert($i);
+    };
 }
 
 mod body;
@@ -278,6 +297,10 @@ struct Ctx {
     hand: Vec<Hw>,
     /// Whether the scope is a helper body, which has no `hand`.
     local: bool,
+    /// The helpers that a call of this frame names.
+    called: BTreeSet<usize>,
+    /// Whether the frame is the body of a loop with a second iteration.
+    looped: bool,
 }
 
 impl Ctx {
@@ -333,6 +356,8 @@ impl Ctx {
                 })
                 .collect(),
             local: self.local,
+            called: BTreeSet::new(),
+            looped: self.looped,
         }
     }
 
@@ -474,11 +499,26 @@ struct Stats {
     bind_mem_calls: u32,
     direct_mems: u32,
     declare_calls: u32,
+    scratch_calls: u32,
     mixed_outputs: u32,
     list_groups: u32,
     list_declarer_elements: u32,
-    explicit_reads: u32,
-    container_reads: u32,
+    decl_regs: u32,
+    decl_wires: u32,
+    decl_mems: u32,
+    decl_instances: u32,
+    unit_results: u32,
+    handle_results: u32,
+    tuple_results: u32,
+    array_results: u32,
+    record_results: u32,
+    container_binds: u32,
+    caller_child_inputs: u32,
+    nested_calls: u32,
+    repeat_calls: u32,
+    mixed_container_reads: u32,
+    mixed_explicit_reads: u32,
+    list_input_groups: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -512,6 +552,8 @@ struct Builder {
     hstructs: Vec<StructDef>,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
+    /// The shapes of result that the helpers so far return.
+    shapes: BTreeSet<usize>,
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
@@ -540,7 +582,7 @@ impl Builder {
                 numbers: tape
                     .iter()
                     .rev()
-                    .map(|n| (n ^ (n >> 16)).wrapping_mul(0x85EB_CA6B))
+                    .map(|n| (n ^ (n >> 16)).wrapping_mul(0xC2B2_AE35))
                     .collect::<Vec<_>>()
                     .into_iter(),
             },
@@ -559,6 +601,7 @@ impl Builder {
             res_helpers: Vec::new(),
             hstructs: Vec::new(),
             called: BTreeSet::new(),
+            shapes: BTreeSet::new(),
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
             hw_values: Vec::new(),

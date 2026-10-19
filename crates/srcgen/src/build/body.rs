@@ -11,6 +11,7 @@ use super::{
 use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
 use crate::program::{HExpr, Place, SExpr, STy, Scalar, Stmt, Ty};
 use num_bigint::BigInt;
+use std::collections::BTreeSet;
 
 const STATIC_TYS: [STy; 3] = [STy::Nat, STy::Int, STy::Bool];
 
@@ -188,6 +189,8 @@ impl Builder {
             pending: Vec::new(),
             hand: Vec::new(),
             local: false,
+            called: BTreeSet::new(),
+            looped: false,
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -285,6 +288,7 @@ impl Builder {
         }
         let mut inner = ctx.derive(&parents, envs);
         inner.statics.push((binder.to_owned(), STy::Int));
+        inner.looped |= inner.envs.len() > ctx.envs.len();
         Ok(Some(inner))
     }
 
@@ -398,6 +402,8 @@ impl Builder {
             pending: Vec::new(),
             hand: Vec::new(),
             local: false,
+            called: BTreeSet::new(),
+            looped: false,
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
