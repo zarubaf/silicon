@@ -1,0 +1,10 @@
+// Selector reads at the depth N. A tuple nested N levels holds an input, and `.0` reads it N times in one expression.
+// Each step reads one stored part, so the work is `O(N)`.
+// SCALE record_nest 32 64 128 256 512
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let t = NEST{(|x|,)};
+    o := NEST{|t|.0};
+}

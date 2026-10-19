@@ -1,0 +1,14 @@
+// A call depth of N through a recursive helper that declares a register (issue #279). Each level declares one register in
+// its own call frame and calls the next level, so the work is `O(N)` and the call depth is N.
+// SCALE helper_nest_calls 8 16 32 64 128
+// TOP M()
+fn deep(x: UInt[8], n: Nat) -> UInt[8] {
+    reg r: UInt[8] = 0;
+    r := x;
+    return if (n == 0) { read(r) } else { deep(read(r), n - 1) };
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := deep(x, {N});
+}
