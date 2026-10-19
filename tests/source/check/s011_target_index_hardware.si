@@ -9,6 +9,6 @@ module M() {
     let j = i;
     let rs = [r, s];
     // expected-error S011 @+2
-    // expected-message: a static position needs a static value, not hardware UInt[1]
+    // expected-message: a static position needs a static value, not a value of `UInt[1]`; compute the value from static values, for example from constants and `comptime` parameters
     rs[j] := x;
 }

@@ -4,6 +4,7 @@ module M() {
     input c: Bool;
     output o: UInt[8];
     let mut xs = list(UInt[8]);
-    // expected-error S016 @+1
+    // expected-error S016 @+2
+    // expected-message: a hardware arm cannot change `xs`, a binding from before the arm; change `xs` before the `if` or `match`, and use the result in the arm
     o := if (c) { push(xs, 1) } else { 2 };
 }

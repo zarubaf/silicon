@@ -5,6 +5,7 @@
 // OBSERVE-NOT: (string "c")
 module C(comptime x: UInt[8]) domains() {
     diagnostic("c", x);
-    // expected-error S019 @+1
+    // expected-error S019 @+2
+    // expected-message: the instantiation of `C` depends on itself, with the same arguments; change an argument at each level, and end the recursion with a `comptime if`
     instance c = C(UInt[8](1));
 }

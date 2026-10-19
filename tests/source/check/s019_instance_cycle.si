@@ -1,6 +1,7 @@
 // S019: an instantiation that depends on itself.
 // TOP M(3)
 module M(comptime d: Nat) {
-    // expected-error S019 @+1
+    // expected-error S019 @+2
+    // expected-message: the instantiation of `M` depends on itself, with the same arguments; change an argument at each level, and end the recursion with a `comptime if`
     instance a = M(d);
 }

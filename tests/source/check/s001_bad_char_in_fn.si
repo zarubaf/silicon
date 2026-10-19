@@ -1,7 +1,8 @@
 // S001: a character that is no token, in the body of a comptime fn.
 // TOP M()
 comptime fn f() -> Nat {
-    // expected-error S001 @+1
+    // expected-error S001 @+2
+    // expected-message: invalid character; outside a string or a comment, the source has only names, numbers, and symbols, and a name has only ASCII letters, digits, and `_`; remove the character
     return 1 $ 2;
 }
 module M() {

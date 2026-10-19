@@ -7,6 +7,7 @@ module M() {
     input x: Bool;
     output y: Bool;
     let a = x;
-    // expected-error S011 @+1
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `Bool`; compute the value from static values, for example from constants and `comptime` parameters
     y := f(a);
 }
