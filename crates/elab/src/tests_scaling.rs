@@ -12,8 +12,12 @@
 //! A template is a file of `tests/source/scaling/`. Its header has a line
 //! `// SCALE <name> <n0> <n1> <n2> <n3> <n4>` and a line `// TOP <top>`. The placeholder `{N}`
 //! stands for the size of the run. A block between `// REPEAT <i> <count>` and `// END` repeats
-//! `count` times, and `{i}` stands for the number of the copy. Each budget fix adds a template
-//! that makes the extreme shape of the fix and grows it.
+//! `count` times, and `{i}` stands for the number of the copy. The text `NEST{open|core|close}`
+//! nests one construct to the depth `{N}` inside one line: it writes `open` N times, then
+//! `core`, then `close` N times. `open` and `close` can be empty. The three parts hold no `{`,
+//! `}`, or `|`. For example `NEST{[|r|]}` at N = 2 is `[[r]]`, and `NEST{|a|[z()]}` is
+//! `a[z()][z()]`. A line can hold more than one `NEST`. Each budget fix adds a template that
+//! makes the extreme shape of the fix and grows it.
 
 use crate::counters::of;
 use crate::tests_flatten::lowered;
@@ -168,13 +172,34 @@ fn parse(text: &str) -> Result<Template, String> {
     })
 }
 
+/// The line `line` with each `NEST{open|core|close}` written out at the depth `n`.
+fn nest(line: &str, n: u64) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = line;
+    while let Some((before, tail)) = rest.split_once("NEST{") {
+        let (body, after) = tail.split_once('}').ok_or("a `NEST{` with no `}`")?;
+        let depth = usize::try_from(n).map_err(|e| format!("depth {n}: {e}"))?;
+        let parts: Vec<&str> = body.split('|').collect();
+        let [open, core, close] = parts[..] else {
+            return Err(format!("`NEST{{{body}}}` has not 3 parts"));
+        };
+        out.push_str(before);
+        out.push_str(&open.repeat(depth));
+        out.push_str(core);
+        out.push_str(&close.repeat(depth));
+        rest = after;
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
 /// The source of the template at the size `n`.
 fn expand(t: &Template, n: u64) -> Result<String, String> {
     let mut out = String::new();
     let mut lines = t.lines.iter();
     while let Some(line) = lines.next() {
         let Some(rest) = line.strip_prefix("// REPEAT ") else {
-            out.push_str(&line.replace("{N}", &n.to_string()));
+            out.push_str(&nest(&line.replace("{N}", &n.to_string()), n)?);
             out.push('\n');
             continue;
         };
@@ -193,10 +218,11 @@ fn expand(t: &Template, n: u64) -> Result<String, String> {
         }
         for i in 0..count {
             for l in &block {
-                out.push_str(
+                out.push_str(&nest(
                     &l.replace("{N}", &n.to_string())
                         .replace(&format!("{{{var}}}"), &i.to_string()),
-                );
+                    n,
+                )?);
                 out.push('\n');
             }
         }
@@ -299,6 +325,14 @@ fn a_template_expands_its_placeholders_and_repeats() {
     assert_eq!(t.sizes, [1, 2, 3, 4, 5]);
     assert!(expand(&t, 3).unwrap().ends_with("x3\na0\na1\na2\n"));
     assert!(parse("// TOP M()\n").is_err());
+}
+
+#[test]
+fn a_nest_writes_its_open_and_close_parts_n_times() {
+    let t = parse("// SCALE s 1 2 3 4 5\n// TOP M()\nNEST{[|r|]} NEST{|a|[z()]}\n").unwrap();
+    assert!(expand(&t, 2).unwrap().ends_with("[[r]] a[z()][z()]\n"));
+    assert!(nest("NEST{a|b}", 2).is_err());
+    assert!(nest("NEST{a|b|c", 2).is_err());
 }
 
 fn linear(a: u64, b: u64) -> Vec<Point> {
