@@ -23,6 +23,15 @@
 //!   each module of a program has a context, so its top frame runs, and
 //!   nothing else fails.
 //!
+//! - A deleted call of a helper with a handle formal in the top frame of a
+//!   module body leaves the resources of its actuals unbound: `S018`. A
+//!   deleted `write_port` there leaves its memory without a write: `S018`.
+//! - A binding that is copied right after itself in the top frame of a
+//!   module body (`DuplicateBind`) is a second binding of one resource,
+//!   or a second `write_port`: `S018` (pass 5), and nothing else fails
+//!   before it. A binding is a `:=`, a `write_port`, or a call of a helper
+//!   with a handle formal.
+//!
 //! - A `mut` actual whose root is no longer mutable is `S008` (pass 4) if
 //!   a named function, `push`, or `pop` has the root as its `mut` actual.
 //!   An assignment to the root gives no prediction, even with such a use.
@@ -150,9 +159,11 @@ enum Kind {
     PatternFit,
     /// A variant with a payload of 65537 bits joins an enum.
     PayloadOverflow,
+    /// A binding statement or a binding call is copied right after itself.
+    DuplicateBind,
 }
 
-const KINDS: [Kind; 28] = [
+const KINDS: [Kind; 29] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -181,6 +192,7 @@ const KINDS: [Kind; 28] = [
     Kind::TagFit,
     Kind::PatternFit,
     Kind::PayloadOverflow,
+    Kind::DuplicateBind,
 ];
 
 /// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that

@@ -31,6 +31,8 @@ pub(super) struct Walk<'a> {
     list_values: Vec<String>,
     /// The helpers with a `mut` first formal.
     mut_helpers: Vec<String>,
+    /// The helpers with a handle formal: a call of one binds its actuals.
+    binders: Vec<String>,
     /// The static `let mut` roots in scope, with their types.
     scope: Vec<(String, STy)>,
     /// The ports and registers of the current module.
@@ -68,6 +70,7 @@ impl<'a> Walk<'a> {
             values: Vec::new(),
             list_values: Vec::new(),
             mut_helpers: Vec::new(),
+            binders: Vec::new(),
             scope: Vec::new(),
             hardware: Vec::new(),
             arm: false,
@@ -114,6 +117,7 @@ impl<'a> Walk<'a> {
         self.values = function_values(items);
         self.list_values = list_values(items);
         self.mut_helpers = mut_helpers(items);
+        self.binders = binders(items);
         let mut i = 0;
         while let Some(item) = items.get(i) {
             let name = item_name(item).to_owned();
@@ -209,11 +213,17 @@ impl<'a> Walk<'a> {
             if self.site(Kind::Delete) {
                 let effect = match (declared(s), s) {
                     (Some(name), _) => Effect::Gone(name.to_owned(), Some(self.index)),
-                    (None, Stmt::Connect(..)) if top => Effect::Code(Some("S018")),
+                    (None, s) if top && self.is_binding(s) => Effect::Code(Some("S018")),
                     _ => Effect::Code(None),
                 };
                 body.remove(i);
                 self.hit(format!("delete statement {n} of {}", self.item), effect);
+                return;
+            }
+            if top && self.is_binding(s) && self.site(Kind::DuplicateBind) {
+                body.insert(i + 1, s.clone());
+                let what = format!("copy binding statement {n} of {}", self.item);
+                self.hit(what, Effect::Code(Some("S018")));
                 return;
             }
             if declared(s).is_some() && self.site(Kind::Duplicate) {
@@ -251,6 +261,18 @@ impl<'a> Walk<'a> {
         self.scope.truncate(mark);
         self.hardware.truncate(hardware);
         self.typed.truncate(typed);
+    }
+
+    /// Whether `s` binds a resource of the module: a `:=`, a `write_port`,
+    /// or a call of a helper that takes a handle. A call of a helper that
+    /// only declares binds nothing from outside, and a copy of it declares
+    /// a second set of resources.
+    fn is_binding(&self, s: &Stmt) -> bool {
+        match s {
+            Stmt::Connect(..) | Stmt::WritePort { .. } => true,
+            Stmt::Call(f, _) => self.binders.contains(f),
+            _ => false,
+        }
     }
 
     fn stmt_parts(&mut self, s: &mut Stmt) {
@@ -1218,6 +1240,24 @@ fn mut_helpers(items: &[Item]) -> Vec<String> {
                 mut_first: true,
                 ..
             } => Some(name.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The helpers with a formal of a handle type, but not a list: the `Call` of
+/// one binds its actuals.
+fn binders(items: &[Item]) -> Vec<String> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Helper { name, params, .. }
+                if params
+                    .iter()
+                    .any(|(_, t)| !matches!(t, FTy::Data(_) | FTy::Unit)) =>
+            {
+                Some(name.clone())
+            }
             _ => None,
         })
         .collect()
