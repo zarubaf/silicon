@@ -1,9 +1,15 @@
-// A type term nested N levels: `[[[UInt[8]; 1]; 1]...; 1]`. Each level has one element, so the size stays 8 bits and
-// only the depth grows. The depth and the equality of the type must come from its metadata, not from a walk.
-// SCALE type_nest 16 32 64 128 256
+// Pins a walk of the data type of a handle type at each use of its name. The type `[[[UInt[8]; 1]; 1]...; 1]` nests N
+// levels, and the handle type `Wire[T]` holds it. The term costs fuel in N^2 once, and the handle type has the size 1.
+// N^2 aliases then use the name of the handle type, so a use must cost constant work: a walk of the data type at each
+// use gives `O(N^3)` in all. A walk of the term itself cannot show here: the fuel of a type pays for its size.
+// SCALE type_nest 8 16 32 64 128
 // TOP M()
 module M() {
-    input x: NEST{[|UInt[8]|; 1]};
+    type T = NEST{[|UInt[8]|; 1]};
+    type H = Wire[T];
+// REPEAT i {N2}
+    type U{i} = H;
+// END
     output o: Bool;
     o := true;
 }

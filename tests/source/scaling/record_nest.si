@@ -1,10 +1,14 @@
-// Selector reads at the depth N. A tuple nested N levels holds an input, and `.0` reads it N times in one expression.
-// Each step reads one stored part, so the work is `O(N)`.
-// SCALE record_nest 32 64 128 256 512
+// Pins a selector walk that restarts from the root at each step. A tuple nested N levels holds an input. The build pays
+// its fuel in N^2 once, so N reads `.0...0` of depth N share it. A walk along the path gives work in `O(N)` for a read;
+// a walk from the root at each step gives `O(N^2)` for a read.
+// SCALE record_nest 16 32 64 128 256
 // TOP M()
 module M() {
     input x: UInt[8];
     output o: UInt[8];
     let t = NEST{(|x|,)};
-    o := NEST{|t|.0};
+// REPEAT i {N}
+    let v{i} = NEST{|t|.0};
+// END
+    o := v0;
 }
