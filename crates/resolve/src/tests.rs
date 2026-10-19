@@ -1567,6 +1567,23 @@ fn response_targets(r: &Resolved) -> [Option<Target>; 4] {
 }
 
 #[test]
+fn every_name_node_of_a_prelude_struct_has_a_target() {
+    let r = ok("");
+    for b in crate::prelude::build() {
+        for (id, leaf) in &b.uses {
+            if let crate::prelude::Leaf::Prim(name) = leaf {
+                assert!(Prelude::of(name).is_some(), "`{name}` is no prelude name");
+            }
+            assert!(r.target(*id).is_some(), "a name node of `{}`", b.name.name);
+        }
+        assert!(r.target(b.name.id).is_some());
+        for p in &b.params {
+            assert!(r.target(p.id).is_some());
+        }
+    }
+}
+
+#[test]
 fn the_field_types_of_the_prelude_structs_never_go_through_the_item_scope() {
     // A user `String` and a user `FieldInfo` shadow the names in the file, not in `TypeInfo`.
     let r = ok("struct String { a: Bool }\nstruct FieldInfo { a: Bool }\n");
