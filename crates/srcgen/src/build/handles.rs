@@ -43,6 +43,13 @@ const HANDLE_STMTS: u32 = 1;
 /// The depth of the hardware expressions that the helpers and their calls
 /// hold: small, so that the mean text of a program stays near its bound.
 pub(super) const HANDLE_DEPTH: u32 = 1;
+/// The most resources that handle forms declare in a program, counted once
+/// for each env that runs the declaration, and the most that one statement
+/// of a frame declares. A statement waits when the rest of the budget does
+/// not cover it.
+const MAX_DECLS: usize = 24;
+const UNIT_DECLS: usize = 6;
+
 /// The roles of the draw of a helper, the first role that declares, and the
 /// first role of a list.
 const ROLES: u32 = 24;
@@ -410,7 +417,7 @@ impl Builder {
     /// with `write_port(a0, x1, x2, x3)`, `let l0 = a0.read_port(x1, x4)`,
     /// and `return l0.data`.
     fn mem_helper(&mut self, name: String) -> ResHelper {
-        let (word, _) = self.data_ty();
+        let (word, _) = self.word_ty();
         let depth = self.pick(&DEPTHS);
         let addr = Ty::UInt(literal(address_bits(depth)));
         let formal = |n: &str, t: &Ty| (n.to_owned(), FTy::Data(t.clone()));
@@ -450,6 +457,16 @@ impl Builder {
         )
     }
 
+    /// The type of a memory word: a data type of at most 16 bits.
+    pub(super) fn word_ty(&mut self) -> (Ty, Scalar) {
+        let (t, s) = self.data_ty();
+        if s.bits() > 16 {
+            (Ty::UInt(literal(8)), Scalar::UInt(8))
+        } else {
+            (t, s)
+        }
+    }
+
     /// The concrete type of a type that reads only consts.
     pub(super) fn scalar(&self, t: &Ty) -> Built<Scalar> {
         match self.types(t, &[Env::default()])?[..] {
@@ -474,6 +491,9 @@ impl Builder {
         out: &mut Vec<Stmt>,
     ) -> Built {
         self.on_hand(|b| {
+            if !b.within_budget(ctx) {
+                return Ok(());
+            }
             let mut classes: Vec<Class> = Vec::new();
             if m.clocked {
                 classes.push(Class::Direct);
@@ -528,28 +548,39 @@ impl Builder {
     ) -> Built {
         self.on_hand(|b| {
             for i in 0..b.res_helpers.len() {
-                if b.called.contains(&i) {
+                if b.called.contains(&i) || !b.within_budget(ctx) {
                     continue;
                 }
-                let Some(h) = b.res_helpers.get(i) else {
+                let Some(role) = b.res_helpers.get(i).map(|h| h.role.clone()) else {
                     continue;
                 };
-                match &h.role {
+                match role {
                     Role::Declare => {
                         if b.usable_declarers(m).contains(&i) {
                             b.declare_call(ctx, m, &[i], out)?;
                         }
                     }
                     Role::List(_) => b.list_group_of(ctx, m, i, out)?,
-                    _ => {
+                    role => {
                         if b.usable(m).contains(&i) {
                             b.bind_call(ctx, m, i, out)?;
+                            // A second call of a helper that binds a wire
+                            // makes a second wire under another path.
+                            if matches!(role, Role::Wire) && b.tape.flag() && b.within_budget(ctx) {
+                                b.bind_call(ctx, m, i, out)?;
+                            }
                         }
                     }
                 }
             }
             Ok(())
         })
+    }
+
+    /// Whether the budget of declarations covers one more statement in the
+    /// frame of `ctx`.
+    fn within_budget(&self, ctx: &Ctx) -> bool {
+        self.decls + UNIT_DECLS * ctx.envs.len() <= MAX_DECLS
     }
 
     /// The helpers that a module can call: a register and a memory need a
@@ -583,6 +614,7 @@ impl Builder {
                 };
                 let types = self.types(ty, &ctx.envs)?;
                 let name = m.names.fresh(if wire { "w" } else { "r" });
+                self.decls += ctx.envs.len();
                 if wire {
                     out.push(Stmt::Wire(name.clone(), ty.clone()));
                     let call = self.binder_call(ctx, i, HExpr::Name(name.clone()))?;
@@ -605,6 +637,7 @@ impl Builder {
                 });
             }
             Role::Input { module, port } => {
+                self.decls += ctx.envs.len();
                 let child = self.declare_child(ctx, m, module, out)?;
                 self.bind_child_inputs(ctx, &child, Some(&port), out)?;
                 let first = HExpr::Field(child.name.clone(), port);
@@ -614,6 +647,7 @@ impl Builder {
                 self.expose_child_handles(ctx, &child)?;
             }
             Role::Mem { word, depth } => {
+                self.decls += ctx.envs.len();
                 let name = m.names.fresh("n");
                 out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
                 self.mem_ports(ctx, &mut m.names, (&name, &word, depth), Some(i), out)?;
@@ -679,9 +713,10 @@ impl Builder {
     /// `mem n: [T; N];`, `write_port`, and `let l = read_port`, in the
     /// module. The data of the response is readable.
     fn direct_mem(&mut self, ctx: &mut Ctx, m: &mut Module, out: &mut Vec<Stmt>) -> Built {
-        let (word, _) = self.data_ty();
+        let (word, _) = self.word_ty();
         let depth = self.pick(&DEPTHS);
         let name = m.names.fresh("n");
+        self.decls += ctx.envs.len();
         out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
         self.mem_ports(ctx, &mut m.names, (&name, &word, depth), None, out)?;
         Ok(())
@@ -853,8 +888,10 @@ fn closed(sig: &Sig, t: &Ty) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::handle_lists::HANDLE_LEN;
     use super::super::tests::tapes;
     use super::super::*;
+    use super::{MAX_DECLS, RES_HELPERS};
     use std::collections::BTreeMap;
 
     /// The forms of handles that a program holds, by name, from the counts
@@ -922,33 +959,93 @@ mod tests {
 
     /// A call of a helper that takes resources is a statement of a module
     /// frame (`S016`) or the root of a `let`, or a statement of a helper.
+    /// It is never inside an expression, so no hardware arm and no static
+    /// position holds one (`S016`, `S011`).
     #[test]
-    fn a_resource_call_stands_in_a_module_frame_only() {
-        fn calls(body: &[Stmt], out: &mut Vec<String>) {
-            for s in body {
-                match s {
-                    Stmt::Call(f, _) => out.push(f.clone()),
-                    Stmt::If(_, t, e) => {
-                        calls(t, out);
-                        calls(e.as_deref().unwrap_or_default(), out);
-                    }
-                    Stmt::For(_, _, _, b) | Stmt::Block(b) => calls(b, out),
-                    _ => {}
+    fn no_resource_call_in_an_arm_or_a_static_position() {
+        fn nested(e: &HExpr, root: bool) -> bool {
+            let any = |xs: &[HExpr]| xs.iter().any(|x| nested(x, false));
+            match e {
+                HExpr::Call(f, xs) => (!root && f.starts_with('H')) || any(xs),
+                HExpr::Unary(_, a)
+                | HExpr::Resize(_, a)
+                | HExpr::Reinterpret(_, a)
+                | HExpr::Index(a, _)
+                | HExpr::Select(a, _)
+                | HExpr::Read(a) => nested(a, false),
+                HExpr::Binary(_, a, b) => nested(a, false) || nested(b, false),
+                HExpr::If(c, a, b) => [c, a, b].iter().any(|x| nested(x, false)),
+                HExpr::Match(m) => {
+                    nested(&m.scrutinee, false) || m.arms.iter().any(|(_, a)| nested(a, false))
                 }
+                HExpr::Ctor(_, _, xs)
+                | HExpr::Tuple(xs)
+                | HExpr::Array(xs)
+                | HExpr::Record(_, xs) => any(xs),
+                HExpr::Receiver(r, _, xs) => nested(r, false) || any(xs),
+                HExpr::ReadPort { addr, en, .. } => nested(addr, false) || nested(en, false),
+                _ => false,
             }
+        }
+        fn walk(body: &[Stmt]) -> bool {
+            body.iter().any(|s| match s {
+                Stmt::Call(f, xs) => f.starts_with('H') && xs.iter().any(|x| nested(x, false)),
+                Stmt::Let { value, .. } => nested(value, true),
+                Stmt::Connect(_, v) | Stmt::Assign(_, v) | Stmt::HPush(_, v) => nested(v, false),
+                Stmt::WritePort { addr, data, en, .. } => {
+                    [addr, data, en].iter().any(|x| nested(x, false))
+                }
+                Stmt::If(_, t, e) => walk(t) || walk(e.as_deref().unwrap_or_default()),
+                Stmt::For(_, _, _, b) | Stmt::Block(b) => walk(b),
+                _ => false,
+            })
         }
         for tape in tapes(256) {
             let Ok(p) = build(tape) else { continue };
             for item in &p.items {
-                let mut found = Vec::new();
-                match item {
-                    Item::Module { body, .. } | Item::Helper { body, .. } => {
-                        calls(body, &mut found);
+                let bad = match item {
+                    Item::Module { body, .. } => walk(body),
+                    Item::Helper { body, result, .. } => walk(body) || nested(result, true),
+                    _ => false,
+                };
+                assert!(!bad, "a call of a helper in an expression\n{}", p.text());
+            }
+        }
+    }
+
+    /// The caps of the forms of handles hold on 256 programs: the
+    /// declarations that they make, the helpers, the length of a list, the
+    /// depth of a memory, and its word.
+    #[test]
+    fn handle_forms_stay_in_caps() {
+        let mut most = 0;
+        for tape in tapes(256) {
+            let mut b = Builder::new(tape);
+            let Ok(p) = b.program() else { continue };
+            most = most.max(b.decls);
+            assert!(b.res_helpers.len() <= 2 * RES_HELPERS as usize);
+            let mut stmts = Vec::new();
+            for item in &p.items {
+                if let Item::Module { body, .. } | Item::Helper { body, .. } = item {
+                    stmts.extend(super::super::tests::stmts_of_body(body));
+                }
+            }
+            for s in stmts {
+                match s {
+                    Stmt::Mem(_, word, SExpr::Int(depth, _)) => {
+                        assert!(*depth == 2.into() || *depth == 4.into(), "{depth}");
+                        let bits = b.scalar(word).map(Scalar::bits);
+                        assert!(bits.is_ok_and(|w| w <= 16), "{word:?}");
+                    }
+                    Stmt::For(_, _, SExpr::Int(len, _), body)
+                        if body.iter().any(|s| matches!(s, Stmt::HPush(..))) =>
+                    {
+                        assert!(*len <= HANDLE_LEN.into(), "{len}");
                     }
                     _ => {}
                 }
-                assert!(found.iter().all(|f| f.starts_with('H')), "{found:?}");
             }
         }
+        assert!(most <= MAX_DECLS, "{most} declarations in one program");
     }
 }

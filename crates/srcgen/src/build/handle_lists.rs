@@ -26,7 +26,7 @@ use crate::program::{FTy, HBin, HExpr, Place, Radix, SExpr, Stmt, Ty};
 use num_bigint::BigInt;
 
 /// The most elements of a list.
-const HANDLE_LEN: u32 = 4;
+pub(super) const HANDLE_LEN: u32 = 4;
 
 impl Builder {
     /// A helper that binds the elements of a list: `kind` 0 for registers,
@@ -151,6 +151,7 @@ impl Builder {
         let Some(mut inner) = self.iterations(ctx, &binder, &lo, &hi)? else {
             return Ok(());
         };
+        self.decls += inner.envs.len();
         let mut body = Vec::new();
         let (elem, readable) = match &of {
             ListOf::Reg(ty) => {
@@ -200,6 +201,7 @@ impl Builder {
             .collect();
         let name = if self.tape.flag() && !declarers.is_empty() {
             let d = declarers[self.tape.index(declarers.len())];
+            called!(self, inner, d);
             let (callee, args) = self.binder_args_of(inner, d)?;
             let name = m.names.fresh("t");
             body.push(Stmt::Let {

@@ -58,7 +58,7 @@ proptest! {
 }
 
 /// The statements of a body, with those of nested frames.
-fn stmts_of_body(body: &[Stmt]) -> Vec<&Stmt> {
+pub(super) fn stmts_of_body(body: &[Stmt]) -> Vec<&Stmt> {
     let mut out = Vec::new();
     for s in body {
         out.push(s);
