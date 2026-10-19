@@ -68,24 +68,31 @@ pub fn lean_sites(path: &str, src: &str) -> Result<Vec<Site>> {
     let token = Regex::new(r#"⟨[^⟨⟩]*,\s*\.error\s+""#)?;
     let type_error = Regex::new(r"\btypeError\b")?;
     let lines: Vec<&str> = src.lines().collect();
+    let mut starts: Vec<(usize, String, bool)> = Vec::new();
+    for m in fail.captures_iter(src) {
+        starts.push((m.get(0).map_or(0, |x| x.start()), m[1].to_owned(), true));
+    }
+    for m in pair.captures_iter(src) {
+        starts.push((m.get(0).map_or(0, |x| x.start()), m[1].to_owned(), false));
+    }
+    for m in token.find_iter(src) {
+        starts.push((m.start(), "S001".to_owned(), false));
+    }
+    for m in type_error.find_iter(src) {
+        starts.push((m.start(), "S010".to_owned(), true));
+    }
+    starts.sort();
     let mut out = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
+    let mut done = std::collections::HashSet::new();
+    for (at, code, bare) in starts {
+        let i = src[..at].matches('\n').count();
+        let line = lines[i];
         let trimmed = line.trim_start();
-        if trimmed.starts_with("--") || trimmed.starts_with("def typeError") {
+        if trimmed.starts_with("--") || trimmed.starts_with("def typeError") || !done.insert(i) {
             continue;
         }
-        let (at, code, bare) = if let Some(m) = fail.captures(line) {
-            (m.get(0).map(|x| x.start()), m[1].to_owned(), true)
-        } else if let Some(m) = pair.captures(line) {
-            (m.get(0).map(|x| x.start()), m[1].to_owned(), false)
-        } else if let Some(m) = token.find(line) {
-            (Some(m.start()), "S001".to_owned(), false)
-        } else if let Some(m) = type_error.find(line) {
-            (Some(m.start()), "S010".to_owned(), true)
-        } else {
-            continue;
-        };
-        let mut span = line[at.unwrap_or(0)..].to_owned();
+        let from = src[..at].rfind('\n').map_or(0, |n| n + 1);
+        let mut span = line[at - from..].to_owned();
         let floor = indent(line);
         for next in &lines[i + 1..] {
             if next.trim().is_empty() || indent(next) <= floor {
@@ -132,6 +139,32 @@ fn starts(c: &[char], i: usize, s: &str) -> bool {
         .all(|(k, ch)| c.get(i + k) == Some(&ch))
 }
 
+/// The index of the `(` of a call to `name` at `i`, with any whitespace before the `(`.
+fn call_open(c: &[char], i: usize, name: &str) -> Option<usize> {
+    if (i > 0 && ident_char(c[i - 1])) || !starts(c, i, name) {
+        return None;
+    }
+    let after = i + name.chars().count();
+    let skip = c[after..].iter().take_while(|x| x.is_whitespace()).count();
+    (c.get(after + skip) == Some(&'(')).then_some(after + skip)
+}
+
+/// True when `SyntaxKind::Error,` at `i` has a message expression after it, which is `None`
+/// for a token that needs no message.
+fn lexer_error_message(c: &[char], i: usize) -> bool {
+    let name = "SyntaxKind::Error";
+    if (i > 0 && ident_char(c[i - 1])) || !starts(c, i, name) {
+        return false;
+    }
+    let j = i + name.len();
+    let mut rest = c[j..].iter().skip_while(|x| x.is_whitespace());
+    if rest.next() != Some(&',') {
+        return false;
+    }
+    let tail: String = rest.skip_while(|x| x.is_whitespace()).take(4).collect();
+    !tail.is_empty() && tail != "None"
+}
+
 /// The triggers of a Rust file, and the end of each bracket that is open at a trigger.
 fn rust_triggers(c: &[char]) -> (Vec<Trigger>, std::collections::HashMap<usize, usize>) {
     let mut triggers = Vec::new();
@@ -170,30 +203,31 @@ fn rust_triggers(c: &[char]) -> (Vec<Trigger>, std::collections::HashMap<usize, 
                 ends.insert(open, i);
             }
             i += 1;
-        } else if (i == 0 || !ident_char(c[i - 1])) && starts(c, i, "type_error(") {
+        } else if let Some(open) = call_open(c, i, "type_error") {
             triggers.push(Trigger {
                 at: i,
-                open: i + "type_error".len(),
+                open,
                 code: "S010".to_owned(),
             });
-            i += "type_error".len();
-        } else if let Some(name) = ["syntax_error_at(", "syntax_error("]
-            .into_iter()
-            .find(|n| (i == 0 || !ident_char(c[i - 1])) && starts(c, i, n))
+            i = open;
+        } else if let Some(open) =
+            call_open(c, i, "syntax_error_at").or_else(|| call_open(c, i, "syntax_error"))
         {
             triggers.push(Trigger {
                 at: i,
-                open: i + name.len() - 1,
+                open,
                 code: "S001".to_owned(),
             });
-            i += name.len() - 1;
-        } else if starts(c, i, "SyntaxKind::Error, Some(") {
+            i = open;
+        } else if lexer_error_message(c, i)
+            && let Some(&open) = stack.last()
+        {
             triggers.push(Trigger {
                 at: i,
-                open: i + "SyntaxKind::Error, Some".len(),
+                open,
                 code: "S001".to_owned(),
             });
-            i += "SyntaxKind::Error,".len();
+            i += "SyntaxKind::Error".len();
         } else if (i == 0 || !ident_char(c[i - 1])) && starts(c, i, "Code::S") {
             let digits: String = c[i + 7..].iter().take(3).collect();
             let after = i + 7 + 3;
@@ -263,6 +297,32 @@ mod tests {
             ]
         );
         assert_eq!((got[0].line, got[1].line), (2, 4));
+    }
+
+    #[test]
+    fn a_trigger_split_over_lines_is_a_site() {
+        let rs = "fn f() {\n    (\n        SyntaxKind::Error,\n        Some(\"invalid character in string\".into()),\n    )\n}\n";
+        let got = rust_sites("lexer.rs", rs);
+        assert_eq!(
+            texts(&got),
+            [(
+                "S001".to_owned(),
+                Some("invalid character in string".to_owned())
+            )]
+        );
+        let rs = "x(\n  SyntaxKind::Error,\n  first.then(|| Some(\"two words\".into())),\n)\n";
+        assert_eq!(
+            texts(&rust_sites("l.rs", rs)),
+            [("S001".to_owned(), Some("two words".to_owned()))]
+        );
+        assert!(rust_sites("l.rs", "x(SyntaxKind::Error, None)").is_empty());
+        let rs = "syntax_error\n(\"expected a type\")";
+        assert_eq!(rust_sites("p.rs", rs).len(), 1);
+        let lean = "def f :=\n  fail\n    .S010 p \"two words here\"\n";
+        assert_eq!(
+            texts(&lean_sites("a.lean", lean).unwrap()),
+            [("S010".to_owned(), Some("two words here".to_owned()))]
+        );
     }
 
     #[test]
