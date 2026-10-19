@@ -2,6 +2,7 @@
 //! The pre-order walk over the sites of a mutation kind.
 
 use super::super::program::hexpr as hexpr_text;
+use super::super::program::is_resource_helper;
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
     EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy,
@@ -218,7 +219,7 @@ impl<'a> Walk<'a> {
             // `Delete`: the other statements of a program far outnumber
             // those, and a deleted binding there leaves a resource of its
             // caller unbound.
-            let copies = if self.item.starts_with('H') && self.is_binding(s) {
+            let copies = if is_resource_helper(&self.item) && self.is_binding(s) {
                 DELETE_BINDING_SITES
             } else {
                 1
@@ -1258,8 +1259,8 @@ fn mut_helpers(items: &[Item]) -> Vec<String> {
         .collect()
 }
 
-/// The helpers with a formal of a handle type, but not a list: the `Call` of
-/// one binds its actuals.
+/// The helpers with a formal of a handle type or a list of handles: the
+/// `Call` of one binds its actuals.
 fn binders(items: &[Item]) -> Vec<String> {
     items
         .iter()

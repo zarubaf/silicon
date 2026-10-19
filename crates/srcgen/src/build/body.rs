@@ -580,17 +580,10 @@ impl Builder {
         } else {
             self.hw(ctx, &want, DEPTH)
         };
-        // An untyped `let mut` of a wire or a register, or of a selection
-        // from a container of handles, names that wire or register, and
-        // `=` on it is no assignment; a typed one copies.
-        let alias = |v: &HExpr| {
-            matches!(
-                v,
-                HExpr::Name(_) | HExpr::Field(..) | HExpr::Index(..) | HExpr::Select(..)
-            )
-        };
+        // An untyped `let mut` of a wire or a register names that wire or
+        // register, and `=` on it is no assignment; a typed one copies.
         let (ty, value) = match value {
-            Some(v) if !(mutable && alias(&v)) => (None, v),
+            Some(v) if !(mutable && matches!(v, HExpr::Name(_) | HExpr::Field(..))) => (None, v),
             Some(v) => (Some(t), v),
             None => (Some(t), self.value(ctx, &want, DEPTH)),
         };

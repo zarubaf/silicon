@@ -202,7 +202,7 @@ impl Builder {
         let name = if self.tape.flag() && !declarers.is_empty() {
             let d = declarers[self.tape.index(declarers.len())];
             called!(self, inner, d);
-            let (callee, args) = self.binder_args_of(inner, d)?;
+            let (callee, args) = self.data_args(inner, d, 0)?;
             let name = m.names.fresh("t");
             body.push(Stmt::Let {
                 name: name.clone(),
@@ -210,7 +210,6 @@ impl Builder {
                 ty: None,
                 value: HExpr::Call(callee, args),
             });
-            note!(self, list_declarer_elements);
             name
         } else {
             let scalar = self.scalar(ty)?;

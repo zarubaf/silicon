@@ -8,9 +8,9 @@
 //! makes the two port calls on the memory and returns the data of the
 //! response. Its name starts with `H`, which the twin inlines.
 //!
-//! Every draw comes from the hand tape (`on_hand`), so a program without a
-//! resource helper is the program of the main tape alone, and choice 0 is no
-//! helper.
+//! Every draw comes from the hand tape (`on_hand`), which no other form
+//! reads, and choice 0 is no helper. The main tape still sees the contexts
+//! that a call adds to a child module, because the child body draws from it.
 //!
 //! Rules by construction:
 //!
@@ -181,18 +181,20 @@ pub(super) fn place_of(e: &HExpr) -> Place {
     }
 }
 
-/// The handle at the end of `steps` from the name `root`.
-pub(super) fn at(root: &str, steps: &[Step]) -> HExpr {
-    steps
-        .iter()
-        .fold(HExpr::Name(root.to_owned()), |base, step| {
-            match (step, base) {
-                (Step::Field(f), HExpr::Name(n)) => HExpr::Field(n, f.clone()),
-                (Step::Field(_), base) => base,
-                (Step::Index(i), base) => HExpr::Index(Box::new(base), literal(*i)),
-                (Step::Select(k), base) => HExpr::Select(Box::new(base), *k),
-            }
-        })
+/// The handle at the end of `steps` from the name `root`. A field step is
+/// valid only on the name itself, because `HExpr::Field` holds the name of its base.
+/// A path with a field step after another step is a fault of the builder.
+pub(super) fn at(root: &str, steps: &[Step]) -> Built<HExpr> {
+    let mut path = HExpr::Name(root.to_owned());
+    for (k, step) in steps.iter().enumerate() {
+        path = match (step, path) {
+            (Step::Field(f), HExpr::Name(n)) if k == 0 => HExpr::Field(n, f.clone()),
+            (Step::Field(_), _) => return Err(Fault::Type),
+            (Step::Index(i), base) => HExpr::Index(Box::new(base), literal(*i)),
+            (Step::Select(k), base) => HExpr::Select(Box::new(base), *k),
+        };
+    }
+    Ok(path)
 }
 
 /// A kind of handle statement of a frame.
@@ -262,7 +264,6 @@ impl Builder {
                     _ => None,
                 };
                 b.res_helpers.push(h);
-                note!(b, res_helpers);
                 // A group can push the result of a helper that declares one
                 // element, so a list helper often comes with such a helper.
                 if let Some((reg, ty)) = of
@@ -778,7 +779,6 @@ impl Builder {
             let Some(read) = adapt(h.expr.clone(), &Want::of(h), want) else {
                 return e;
             };
-            note!(b, mixed_outputs);
             #[cfg(test)]
             match &h.expr {
                 HExpr::Read(_) => b.stats.mixed_explicit_reads += 1,
@@ -811,15 +811,14 @@ impl Builder {
         Ok((name, std::iter::once(first).chain(rest).collect()))
     }
 
-    /// The name of helper `i` and a value for each formal of a helper that
-    /// declares resources: all its formals are data.
-    pub(super) fn binder_args_of(&mut self, ctx: &Ctx, i: usize) -> Built<(String, Vec<HExpr>)> {
-        self.data_args(ctx, i, 0)
-    }
-
     /// The name of helper `i` and a value for each formal after the first
     /// `skip`, which must be data formals.
-    fn data_args(&mut self, ctx: &Ctx, i: usize, skip: usize) -> Built<(String, Vec<HExpr>)> {
+    pub(super) fn data_args(
+        &mut self,
+        ctx: &Ctx,
+        i: usize,
+        skip: usize,
+    ) -> Built<(String, Vec<HExpr>)> {
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
         self.called.insert(i);
         let mut args = Vec::new();
@@ -892,6 +891,7 @@ mod tests {
     use super::super::tests::tapes;
     use super::super::*;
     use super::{MAX_DECLS, RES_HELPERS};
+    use crate::program::is_resource_helper;
     use std::collections::BTreeMap;
 
     /// The forms of handles that a program holds, by name, from the counts
@@ -966,7 +966,7 @@ mod tests {
         fn nested(e: &HExpr, root: bool) -> bool {
             let any = |xs: &[HExpr]| xs.iter().any(|x| nested(x, false));
             match e {
-                HExpr::Call(f, xs) => (!root && f.starts_with('H')) || any(xs),
+                HExpr::Call(f, xs) => (!root && is_resource_helper(f)) || any(xs),
                 HExpr::Unary(_, a)
                 | HExpr::Resize(_, a)
                 | HExpr::Reinterpret(_, a)
@@ -989,7 +989,7 @@ mod tests {
         }
         fn walk(body: &[Stmt]) -> bool {
             body.iter().any(|s| match s {
-                Stmt::Call(f, xs) => f.starts_with('H') && xs.iter().any(|x| nested(x, false)),
+                Stmt::Call(f, xs) => is_resource_helper(f) && xs.iter().any(|x| nested(x, false)),
                 Stmt::Let { value, .. } => nested(value, true),
                 Stmt::Connect(_, v) | Stmt::Assign(_, v) | Stmt::HPush(_, v) => nested(v, false),
                 Stmt::WritePort { addr, data, en, .. } => {

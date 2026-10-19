@@ -29,7 +29,7 @@ use super::inst::Child;
 use super::stat::Reach;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module, Names};
 use crate::eval::{Env, Fault, Value, convert};
-use crate::program::{FTy, FieldTy, HExpr, Item, SExpr, Stmt, StructDef, Ty};
+use crate::program::{FTy, FieldTy, HExpr, SExpr, Stmt, StructDef, Ty};
 
 /// The body of a helper under construction.
 struct Hb {
@@ -133,7 +133,7 @@ impl Builder {
             clocked: false,
             children: Vec::new(),
         };
-        let (var, fty, leaf) = self.register_or_wire(&mut hb, reg, Some(ty), false)?;
+        let (var, fty, leaf) = self.declare_resource(&mut hb, reg, ty, None, false)?;
         let part = Part {
             path: Vec::new(),
             leaf,
@@ -308,14 +308,17 @@ impl Builder {
         hint: Option<&Ty>,
         bound: bool,
     ) -> Built<(String, FTy, Leaf)> {
-        match kind {
-            Kind::Reg | Kind::Wire => self.register_or_wire(hb, kind == Kind::Reg, hint, bound),
-            Kind::Mem => self.helper_mem(hb, bound),
-            Kind::Instance => match self.helper_child(hb, bound)? {
-                Some(leaf) => Ok(leaf),
-                None => self.register_or_wire(hb, false, hint, bound),
-            },
+        if kind == Kind::Mem {
+            return self.helper_mem(hb, bound);
         }
+        if kind == Kind::Instance
+            && let Some(leaf) = self.helper_child(hb, bound)?
+        {
+            return Ok(leaf);
+        }
+        let reg = kind == Kind::Reg;
+        let ty = hint.cloned().unwrap_or_else(|| self.leaf_ty(reg));
+        self.declare_resource(hb, reg, &ty, None, bound)
     }
 
     /// A register or a wire of the type of an earlier binder, bound by a
@@ -336,21 +339,6 @@ impl Builder {
         };
         self.declare_resource(hb, reg, &ty, Some(i), true)?;
         Ok(())
-    }
-
-    /// `reg r: T = k;` or `wire w: T;`, and its binding if `bound`.
-    fn register_or_wire(
-        &mut self,
-        hb: &mut Hb,
-        reg: bool,
-        hint: Option<&Ty>,
-        bound: bool,
-    ) -> Built<(String, FTy, Leaf)> {
-        let ty = match hint {
-            Some(t) => t.clone(),
-            None => self.leaf_ty(reg),
-        };
-        self.declare_resource(hb, reg, &ty, None, bound)
     }
 
     /// The declaration of a register or a wire of the type `ty`. `forced`
@@ -593,7 +581,7 @@ impl Builder {
             })
             .count();
         self.decls += declared * ctx.envs.len();
-        let (callee, args) = self.binder_args_of(ctx, i)?;
+        let (callee, args) = self.data_args(ctx, i, 0)?;
         for (j, tuple) in &h.children {
             let known = self.contexts.get_mut(*j).ok_or(Fault::Type)?;
             if !known.contains(tuple) {
@@ -664,7 +652,7 @@ impl Builder {
         root: &str,
         part: &Part,
     ) -> Built {
-        let first = at(root, &part.path);
+        let first = at(root, &part.path)?;
         match &part.leaf {
             Leaf::Reg(ty) => {
                 self.read_handle(ctx, &first, ty)?;
@@ -726,11 +714,6 @@ impl Builder {
             mutable: false,
         });
         Ok(())
-    }
-
-    /// The structs of handles, as items.
-    pub(super) fn handle_struct_items(&self) -> impl Iterator<Item = Item> + '_ {
-        self.hstructs.iter().cloned().map(Item::Struct)
     }
 }
 
