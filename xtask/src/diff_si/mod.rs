@@ -11,18 +11,19 @@ mod lift;
 mod mutation;
 mod typed;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
 use proptest::strategy::{Strategy, ValueTree};
-use testkit::Outcome;
 use testkit::source::agree;
 use testkit::spawn::spawn;
+use testkit::{Outcome, parse_report};
 
 use crate::diff::{ToolFailure, Trace, output, runner};
 use crate::repo::Repo;
-use crate::{lean_check, silicon};
+use crate::{lean_check, silicon, spec_texts};
 
 /// The most test runs of one shrink. Each run starts four processes in the
 /// lift mode, fourteen in the typed mode, two in the mutation mode, and at
@@ -80,6 +81,8 @@ fn repeat(mode: Mode, seed: u64) -> String {
 pub(super) struct Tools {
     lean: PathBuf,
     silicon: PathBuf,
+    /// The codes whose message text both front ends print alike.
+    texts: BTreeSet<String>,
 }
 
 /// Builds `silicon` and `silicon-check`, then runs the cases of `mode`,
@@ -94,7 +97,11 @@ pub fn run(repo: &Repo, mode: Mode, seed: u64, count: u64) -> Result<bool> {
     let Some(lean) = lean_check::build(repo)? else {
         return Ok(false);
     };
-    let tools = Tools { lean, silicon };
+    let tools = Tools {
+        lean,
+        silicon,
+        texts: spec_texts::normative_codes(repo)?,
+    };
     let dir = tempfile::tempdir().context("cannot make a temporary directory")?;
     let last = seed.wrapping_add(
         count
@@ -223,7 +230,28 @@ fn outcome(
     };
     let rust = run(&tools.silicon)?;
     let lean = run(&tools.lean)?;
-    Ok(agree(command, &rust, &lean))
+    Ok(agree(command, &rust, &lean).and_then(|agreed| {
+        same_text(&tools.texts, &rust, &lean)?;
+        Ok(agreed)
+    }))
+}
+
+/// `Ok` unless both front ends reject with a code of `texts` and print
+/// different reports. They agree on the code, line, and column already.
+fn same_text(texts: &BTreeSet<String>, rust: &Output, lean: &Output) -> Result<(), String> {
+    let (rust, lean) = (
+        String::from_utf8_lossy(&rust.stdout),
+        String::from_utf8_lossy(&lean.stdout),
+    );
+    match parse_report(&rust) {
+        Some(report) if texts.contains(&report.code) && rust != lean => Err(format!(
+            "the front ends print different texts for {}\nRust: {}\nLean: {}",
+            report.code,
+            rust.trim_end(),
+            lean.trim_end()
+        )),
+        _ => Ok(()),
+    }
 }
 
 /// Writes `text` to the file `name` in `dir` and returns its path.
@@ -366,6 +394,26 @@ mod tests {
             assert_eq!(text, mutated.unwrap().text());
             assert_eq!(text, budgeted.unwrap().text());
         }
+    }
+
+    #[test]
+    fn a_normative_code_needs_the_same_text() {
+        use std::os::unix::process::ExitStatusExt;
+        let output = |stdout: &str| Output {
+            status: std::process::ExitStatus::from_raw(1 << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        };
+        let texts: BTreeSet<String> = ["S018".to_owned()].into();
+        let rust = output("error[S018]: 3:4: `w` has a second binding; remove one\n");
+        let lean = output("error[S018]: 3:4: `w` is bound twice; remove one\n");
+        let error = same_text(&texts, &rust, &lean).unwrap_err();
+        assert!(error.contains("S018") && error.contains("second binding"));
+        assert!(error.contains("bound twice"));
+        assert_eq!(same_text(&texts, &rust, &rust), Ok(()));
+        let other = output("error[S015]: 3:4: out of fuel\n");
+        let more = output("error[S015]: 3:4: no fuel\n");
+        assert_eq!(same_text(&texts, &other, &more), Ok(()));
     }
 
     #[test]
