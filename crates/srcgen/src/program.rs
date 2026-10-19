@@ -213,6 +213,10 @@ pub(crate) enum FTy {
     Reg(Ty),
     /// `Wire[T]`.
     Wire(Ty),
+    /// `Input[T]`.
+    Input(Ty),
+    /// `Mem[T, N]`.
+    Mem(Ty, SExpr),
 }
 
 impl From<Ty> for FTy {
@@ -367,6 +371,14 @@ pub(crate) enum HExpr {
     Match(Match<HExpr, HExpr>),
     /// `()`, the result of a helper without a value.
     Unit,
+    /// `m.read_port(addr, en)`, or `read_port(m, addr, en)` without the
+    /// receiver form: the response record of a memory.
+    ReadPort {
+        mem: String,
+        addr: Box<HExpr>,
+        en: Box<HExpr>,
+        receiver: bool,
+    },
 }
 
 /// The target of `:=`.
@@ -423,6 +435,17 @@ pub(crate) enum Stmt {
     Diagnostic(String, SExpr),
     /// `h(args);`: a call of a helper that returns `()`.
     Call(String, Vec<HExpr>),
+    /// `mem name: [T; N];`
+    Mem(String, Ty, SExpr),
+    /// `m.write_port(addr, data, en);`, or `write_port(m, addr, data, en);`
+    /// without the receiver form.
+    WritePort {
+        mem: String,
+        addr: Box<HExpr>,
+        data: Box<HExpr>,
+        en: Box<HExpr>,
+        receiver: bool,
+    },
 }
 
 /// A `comptime fn` that builds a list:
@@ -878,8 +901,26 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             "}".to_owned()
         }
         Stmt::Call(f, args) => format!("{f}({});", list(args, hexpr)),
+        Stmt::Mem(n, t, depth) => format!("mem {n}: [{}; {}];", ty(t), sexpr(depth)),
+        Stmt::WritePort {
+            mem,
+            addr,
+            data,
+            en,
+            receiver,
+        } => write_port(mem, [addr, data, en], *receiver),
     };
     line(out, depth, &text);
+}
+
+/// `m.write_port(addr, data, en);`, or `write_port(m, addr, data, en);`.
+fn write_port(mem: &str, args: [&HExpr; 3], receiver: bool) -> String {
+    let args = args.map(hexpr).join(", ");
+    if receiver {
+        format!("{mem}.write_port({args});")
+    } else {
+        format!("write_port({mem}, {args});")
+    }
 }
 
 fn fty(t: &FTy) -> String {
@@ -888,6 +929,8 @@ fn fty(t: &FTy) -> String {
         FTy::Unit => "()".to_owned(),
         FTy::Reg(t) => format!("Reg[{}]", ty(t)),
         FTy::Wire(t) => format!("Wire[{}]", ty(t)),
+        FTy::Input(t) => format!("Input[{}]", ty(t)),
+        FTy::Mem(t, depth) => format!("Mem[{}, {}]", ty(t), sexpr(depth)),
     }
 }
 
@@ -1114,6 +1157,18 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
         HExpr::Ctor(e, v, args) if args.is_empty() => format!("{e}::{v}"),
         HExpr::Ctor(e, v, args) => format!("{e}::{v}({})", list(args, hexpr)),
         HExpr::Unit => "()".to_owned(),
+        HExpr::ReadPort {
+            mem,
+            addr,
+            en,
+            receiver: true,
+        } => format!("{mem}.read_port({}, {})", hexpr(addr), hexpr(en)),
+        HExpr::ReadPort {
+            mem,
+            addr,
+            en,
+            receiver: false,
+        } => format!("read_port({mem}, {}, {})", hexpr(addr), hexpr(en)),
     }
 }
 
@@ -1562,6 +1617,74 @@ module M1(comptime P0: Nat) domains() {
         let mut out = String::new();
         stmts(&mut out, 0, &[call]);
         assert_eq!(out, "H0(r0, w0, i0);\n");
+    }
+
+    #[test]
+    fn memories_and_their_port_calls_print() {
+        let word = u8();
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![
+                (
+                    "a0".to_owned(),
+                    FTy::Mem(word.clone(), SExpr::Int(BigInt::from(4), Radix::Dec)),
+                ),
+                ("a1".to_owned(), FTy::Input(Ty::Bool)),
+                ("x2".to_owned(), Ty::UInt(dec(2)).into()),
+            ],
+            mut_first: false,
+            ret: word.clone().into(),
+            body: vec![Stmt::Let {
+                name: "l0".to_owned(),
+                mutable: false,
+                ty: None,
+                value: HExpr::ReadPort {
+                    mem: "a0".to_owned(),
+                    addr: Box::new(hname("x2")),
+                    en: Box::new(HExpr::Static(SExpr::Bool(true))),
+                    receiver: true,
+                },
+            }],
+            result: HExpr::Field("l0".to_owned(), "data".to_owned()),
+        };
+        assert_eq!(
+            render_items(&[helper]),
+            "fn H0(a0: Mem[UInt[8], 4], a1: Input[Bool], x2: UInt[2]) -> UInt[8] {\n    let l0 = a0.read_port(x2, true);\n    return l0.data;\n}\n"
+        );
+        let body = vec![
+            Stmt::Mem("n0".to_owned(), word, dec(4)),
+            Stmt::WritePort {
+                mem: "n0".to_owned(),
+                addr: Box::new(hname("i0")),
+                data: Box::new(hname("i1")),
+                en: Box::new(hname("i2")),
+                receiver: false,
+            },
+            Stmt::WritePort {
+                mem: "n0".to_owned(),
+                addr: Box::new(hname("i0")),
+                data: Box::new(hname("i1")),
+                en: Box::new(hname("i2")),
+                receiver: true,
+            },
+            Stmt::Let {
+                name: "l1".to_owned(),
+                mutable: false,
+                ty: None,
+                value: HExpr::ReadPort {
+                    mem: "n0".to_owned(),
+                    addr: Box::new(hname("i0")),
+                    en: Box::new(hname("i2")),
+                    receiver: false,
+                },
+            },
+        ];
+        let mut out = String::new();
+        stmts(&mut out, 0, &body);
+        assert_eq!(
+            out,
+            "mem n0: [UInt[8]; 4];\nwrite_port(n0, i0, i1, i2);\nn0.write_port(i0, i1, i2);\nlet l1 = read_port(n0, i0, i2);\n"
+        );
     }
 
     #[test]

@@ -202,8 +202,17 @@ struct Frame {
     env: Env,
     names: BTreeMap<String, String>,
     /// The resource that each handle formal of an inlined helper names.
-    handles: BTreeMap<String, String>,
+    handles: BTreeMap<String, HVal>,
     suffix: String,
+}
+
+/// What a handle formal names in the twin: a resource, or the input of a
+/// child.
+#[derive(Clone)]
+enum HVal {
+    Res(String),
+    /// The instance and the port.
+    Port(String, String),
 }
 
 impl Frame {
@@ -214,11 +223,35 @@ impl Frame {
     }
 
     fn name(&self, name: &str) -> String {
-        self.handles
-            .get(name)
-            .or_else(|| self.names.get(name))
-            .cloned()
-            .unwrap_or_else(|| name.to_owned())
+        match self.handles.get(name) {
+            Some(HVal::Res(twin)) => twin.clone(),
+            _ => self
+                .names
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.to_owned()),
+        }
+    }
+
+    /// The target of `name :=`.
+    fn target(&self, name: &str) -> Place {
+        match self.handles.get(name) {
+            Some(HVal::Port(u, p)) => Place::Field(u.clone(), p.clone()),
+            _ => Place::Name(self.name(name)),
+        }
+    }
+
+    /// The handle that the actual `e` of a handle formal names.
+    fn handle(&self, e: &HExpr) -> HVal {
+        match e {
+            HExpr::Name(n) => self
+                .handles
+                .get(n)
+                .cloned()
+                .unwrap_or_else(|| HVal::Res(self.name(n))),
+            HExpr::Field(u, p) => HVal::Port(self.name(u), p.clone()),
+            _ => panic!("a handle actual of the builder is no name: {e:?}"),
+        }
     }
 }
 
@@ -305,6 +338,8 @@ impl Writer<'_> {
             FTy::Unit => FTy::Unit,
             FTy::Reg(t) => FTy::Reg(self.ty(t, fr)),
             FTy::Wire(t) => FTy::Wire(self.ty(t, fr)),
+            FTy::Input(t) => FTy::Input(self.ty(t, fr)),
+            FTy::Mem(t, depth) => FTy::Mem(self.ty(t, fr), self.fold(depth, fr)),
         }
     }
 
@@ -448,6 +483,17 @@ impl Writer<'_> {
                 args.iter().map(|a| self.hexpr(a, fr)).collect(),
             ),
             HExpr::Unit => HExpr::Unit,
+            HExpr::ReadPort {
+                mem,
+                addr,
+                en,
+                receiver,
+            } => HExpr::ReadPort {
+                mem: fr.name(mem),
+                addr: sub(addr),
+                en: sub(en),
+                receiver: *receiver,
+            },
         }
     }
 
@@ -489,6 +535,12 @@ impl Writer<'_> {
                 value,
             } => {
                 let ty = ty.as_ref().map(|t| self.ty(t, fr));
+                if let HExpr::Call(f, args) = value
+                    && is_resource(f)
+                {
+                    self.inline_let(name, *mutable, (f, args), fr, out);
+                    return;
+                }
                 let value = self.hexpr(value, fr);
                 out.push(Stmt::Let {
                     name: fr.declare(name),
@@ -509,26 +561,12 @@ impl Writer<'_> {
             Stmt::Assign(n, v) => out.push(Stmt::Assign(fr.name(n), self.hexpr(v, fr))),
             Stmt::Connect(place, v) => {
                 let place = match place {
-                    Place::Name(n) => Place::Name(fr.name(n)),
+                    Place::Name(n) => fr.target(n),
                     Place::Field(u, p) => Place::Field(fr.name(u), p.clone()),
                 };
                 out.push(Stmt::Connect(place, self.hexpr(v, fr)));
             }
-            Stmt::Instance(u, m, args) => {
-                let Some(values) = args
-                    .iter()
-                    .map(|a| self.value(a, fr))
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    out.push(s.clone());
-                    return;
-                };
-                let Some(child) = self.specialize(m, &values) else {
-                    out.push(s.clone());
-                    return;
-                };
-                out.push(Stmt::Instance(fr.declare(u), child, Vec::new()));
-            }
+            Stmt::Instance(u, m, args) => self.instance(s, (u, m, args), fr, out),
             Stmt::If(c, then, els) => match self.value(c, fr) {
                 Some(Value::Bool(true)) => {
                     out.push(self.block(then, fr, fr.env.clone(), fr.suffix.clone()));
@@ -540,24 +578,7 @@ impl Writer<'_> {
                 }
                 _ => out.push(s.clone()),
             },
-            Stmt::For(binder, lo, hi, body) => {
-                let (Some(Value::Int(lo)), Some(Value::Int(hi))) =
-                    (self.value(lo, fr), self.value(hi, fr))
-                else {
-                    out.push(s.clone());
-                    return;
-                };
-                for value in loop_values(&lo, &hi) {
-                    let suffix = format!(
-                        "_{binder}_{}{}",
-                        token(&value).unwrap_or_default(),
-                        fr.suffix
-                    );
-                    let mut env = fr.env.clone();
-                    env.statics.insert(binder.clone(), value);
-                    out.push(self.block(body, fr, env, suffix));
-                }
-            }
+            Stmt::For(binder, lo, hi, body) => self.unroll(s, (binder, lo, hi, body), fr, out),
             Stmt::Assert(c, _) => {
                 if self.value(c, fr) != Some(Value::Bool(true)) {
                     out.push(s.clone());
@@ -567,21 +588,132 @@ impl Writer<'_> {
             // The twin compares outputs only; a record is no output.
             Stmt::Diagnostic(..) => {}
             Stmt::Block(body) => out.push(self.block(body, fr, fr.env.clone(), fr.suffix.clone())),
-            Stmt::Call(f, args) => self.inline(f, args, fr, out),
+            Stmt::Call(f, args) => {
+                self.inline(f, args, fr, out);
+            }
+            Stmt::Mem(n, t, depth) => {
+                let (t, depth) = (self.ty(t, fr), self.fold(depth, fr));
+                out.push(Stmt::Mem(fr.declare(n), t, depth));
+            }
+            Stmt::WritePort {
+                mem,
+                addr,
+                data,
+                en,
+                receiver,
+            } => {
+                let [addr, data, en] = [addr, data, en].map(|e| Box::new(self.hexpr(e, fr)));
+                let mem = fr.name(mem);
+                let receiver = *receiver;
+                out.push(Stmt::WritePort {
+                    mem,
+                    addr,
+                    data,
+                    en,
+                    receiver,
+                });
+            }
         }
     }
 
-    /// The body of the helper `f` at a call with `args`. A data formal
-    /// becomes a typed `let` of its actual, so the actual converts as the
-    /// formal does. A handle formal names the resource of its actual.
-    fn inline(&mut self, f: &str, args: &[HExpr], fr: &Frame, out: &mut Vec<Stmt>) {
+    /// `instance u = m(args);` as an instance of the specialized module.
+    /// A fault of the builder keeps the statement `s`.
+    fn instance(
+        &mut self,
+        s: &Stmt,
+        (u, m, args): (&str, &str, &[SExpr]),
+        fr: &mut Frame,
+        out: &mut Vec<Stmt>,
+    ) {
+        let Some(values) = args
+            .iter()
+            .map(|a| self.value(a, fr))
+            .collect::<Option<Vec<_>>>()
+        else {
+            out.push(s.clone());
+            return;
+        };
+        let Some(child) = self.specialize(m, &values) else {
+            out.push(s.clone());
+            return;
+        };
+        out.push(Stmt::Instance(fr.declare(u), child, Vec::new()));
+    }
+
+    /// One block for each iteration of a `comptime for`. A fault of the
+    /// builder keeps the statement `s`.
+    fn unroll(
+        &mut self,
+        s: &Stmt,
+        (binder, lo, hi, body): (&str, &SExpr, &SExpr, &[Stmt]),
+        fr: &Frame,
+        out: &mut Vec<Stmt>,
+    ) {
+        let (Some(Value::Int(lo)), Some(Value::Int(hi))) = (self.value(lo, fr), self.value(hi, fr))
+        else {
+            out.push(s.clone());
+            return;
+        };
+        for value in loop_values(&lo, &hi) {
+            let suffix = format!(
+                "_{binder}_{}{}",
+                token(&value).unwrap_or_default(),
+                fr.suffix
+            );
+            let mut env = fr.env.clone();
+            env.statics.insert(binder.to_owned(), value);
+            out.push(self.block(body, fr, env, suffix));
+        }
+    }
+
+    /// `let name = f(args);` of a helper that takes resources: the body, then
+    /// a `let` of the result, which has the type of the result of `f`.
+    fn inline_let(
+        &mut self,
+        name: &str,
+        mutable: bool,
+        call: (&str, &[HExpr]),
+        fr: &mut Frame,
+        out: &mut Vec<Stmt>,
+    ) {
+        let (callee, ret, result) = self.inline(call.0, call.1, fr, out);
+        let ty = match &ret {
+            FTy::Data(t) => Some(self.ty(t, &callee)),
+            _ => None,
+        };
+        let value = self.hexpr(&result, &callee);
+        out.push(Stmt::Let {
+            name: fr.declare(name),
+            mutable,
+            ty,
+            value,
+        });
+    }
+
+    /// The body of the helper `f` at a call with `args`, appended to `out`.
+    /// A data formal becomes a typed `let` of its actual, so the actual
+    /// converts as the formal does. A handle formal names the resource of
+    /// its actual. Gives the frame of the call, the type of the result, and
+    /// the result.
+    fn inline(
+        &mut self,
+        f: &str,
+        args: &[HExpr],
+        fr: &Frame,
+        out: &mut Vec<Stmt>,
+    ) -> (Frame, FTy, HExpr) {
         let found = self.items.iter().find_map(|item| match item {
             Item::Helper {
-                name, params, body, ..
-            } if name == f => Some((params, body)),
+                name,
+                params,
+                ret,
+                body,
+                result,
+                ..
+            } if name == f => Some((params, ret, body, result)),
             _ => None,
         });
-        let Some((params, body)) = found else {
+        let Some((params, ret, body, result)) = found else {
             panic!("a call of the builder names no helper: {f}");
         };
         self.calls += 1;
@@ -599,14 +731,13 @@ impl Writer<'_> {
                     ty: Some(ty),
                     value,
                 });
-            } else if let HExpr::Name(n) = arg {
-                callee.handles.insert(name.clone(), fr.name(n));
             } else {
-                panic!("a handle actual of the builder is no name: {arg:?}");
+                callee.handles.insert(name.clone(), fr.handle(arg));
             }
         }
         let body = self.stmts(body, &mut callee);
         out.extend(body);
+        (callee, ret.clone(), result.clone())
     }
 }
 
@@ -641,6 +772,17 @@ fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
     match e {
         HExpr::Name(n) => map.get(n).cloned().unwrap_or_else(|| e.clone()),
         HExpr::Field(..) | HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => e.clone(),
+        HExpr::ReadPort {
+            mem,
+            addr,
+            en,
+            receiver,
+        } => HExpr::ReadPort {
+            mem: mem.clone(),
+            addr: sub(addr),
+            en: sub(en),
+            receiver: *receiver,
+        },
         HExpr::Unary(op, a) => HExpr::Unary(*op, sub(a)),
         HExpr::Binary(op, a, b) => HExpr::Binary(*op, sub(a), sub(b)),
         HExpr::If(c, a, b) => HExpr::If(sub(c), sub(a), sub(b)),
@@ -1008,6 +1150,87 @@ mod tests {
             "module M0() {\n    input i0: UInt[8];\n    output o0: UInt[8];\n    reg r0: UInt[8] = 0;\n    let x1_c1: UInt[8] = i0;\n    let l0_c1 = (r0 +% x1_c1);\n    r0 := l0_c1;\n    o0 := r0;\n}\n"
         );
         assert!(t.static_names().is_empty(), "{:?}", t.static_names());
+    }
+
+    /// A helper with a `Mem` formal and a data result inlines at the root
+    /// of a `let`: the `let` gets the type of the result. A helper with an
+    /// `Input` formal binds the port of the child.
+    #[test]
+    fn the_twin_inlines_a_memory_helper_and_an_input_binder() {
+        let word = uint(8);
+        let mem_helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![
+                (
+                    "a0".to_owned(),
+                    FTy::Mem(word.clone(), SExpr::Int(BigInt::from(4), Radix::Dec)),
+                ),
+                ("x1".to_owned(), uint(2).into()),
+            ],
+            mut_first: false,
+            ret: word.clone().into(),
+            body: vec![
+                Stmt::WritePort {
+                    mem: "a0".to_owned(),
+                    addr: Box::new(hname("x1")),
+                    data: Box::new(HExpr::Make(word.clone(), int(7))),
+                    en: Box::new(HExpr::Static(SExpr::Bool(true))),
+                    receiver: false,
+                },
+                Stmt::Let {
+                    name: "l0".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: HExpr::ReadPort {
+                        mem: "a0".to_owned(),
+                        addr: Box::new(hname("x1")),
+                        en: Box::new(HExpr::Static(SExpr::Bool(true))),
+                        receiver: true,
+                    },
+                },
+            ],
+            result: HExpr::Field("l0".to_owned(), "data".to_owned()),
+        };
+        let input_helper = Item::Helper {
+            name: "H1".to_owned(),
+            params: vec![
+                ("a0".to_owned(), FTy::Input(uint(4))),
+                ("x1".to_owned(), uint(4).into()),
+            ],
+            mut_first: false,
+            ret: FTy::Unit,
+            body: vec![connect("a0", hname("x1"))],
+            result: HExpr::Unit,
+        };
+        let body = vec![
+            Stmt::Input("i0".to_owned(), uint(2)),
+            Stmt::Output("o0".to_owned(), uint(8)),
+            Stmt::Mem("n0".to_owned(), word.clone(), int(4)),
+            Stmt::Let {
+                name: "l0".to_owned(),
+                mutable: false,
+                ty: None,
+                value: HExpr::Call("H0".to_owned(), vec![hname("n0"), hname("i0")]),
+            },
+            Stmt::Instance("u0".to_owned(), "M1".to_owned(), Vec::new()),
+            Stmt::Call(
+                "H1".to_owned(),
+                vec![
+                    HExpr::Field("u0".to_owned(), "i0".to_owned()),
+                    HExpr::Make(uint(4), int(3)),
+                ],
+            ),
+            connect("o0", hname("l0")),
+        ];
+        let m0 = module("M0", &[], true, body);
+        let t = twin(&program(
+            vec![mem_helper, input_helper, m0, m1()],
+            Vec::new(),
+        ));
+        assert_eq!(
+            t.text,
+            "module M0() {\n    input i0: UInt[2];\n    output o0: UInt[8];\n    mem n0: [UInt[8]; 4];\n    let x1_c1: UInt[2] = i0;\n    write_port(n0, x1_c1, UInt[8](7), true);\n    let l0_c1 = n0.read_port(x1_c1, true);\n    let l0: UInt[8] = l0_c1.data;\n    instance u0 = M1();\n    let x1_c2: UInt[4] = UInt[4](3);\n    u0.i0 := x1_c2;\n    o0 := l0;\n}\nmodule M1() domains() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    o0 := i0;\n}\n"
+        );
     }
 
     #[test]

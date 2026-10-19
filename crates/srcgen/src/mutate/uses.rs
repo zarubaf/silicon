@@ -76,6 +76,10 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
             hexpr(root, a, callees, uses);
             hexpr(root, b, callees, uses);
         }
+        HExpr::ReadPort { addr, en, .. } => {
+            hexpr(root, addr, callees, uses);
+            hexpr(root, en, callees, uses);
+        }
         HExpr::If(c, t, f) => {
             for x in [c, t, f] {
                 hexpr(root, x, callees, uses);
