@@ -1,0 +1,19 @@
+// A loop of N steps makes the struct type `t` deeper by one level at each step. Then N times N uses of
+// `data_bits(t)` follow. Each use reads the metadata of the type in constant work, so the work follows the fuel.
+// A use that walks the type term makes N more work for each use, and the work escapes the bound.
+// SCALE struct_type_depth_uses 4 8 16 32 64
+// TOP M()
+struct W(comptime T: Type) {
+    v: T,
+}
+module M() domains() {
+    let mut t = UInt[8];
+    comptime for i in 0..{N} {
+        t = W[t];
+    }
+    comptime for i in 0..{N} {
+        comptime for j in 0..{N} {
+            let b = data_bits(t);
+        }
+    }
+}
