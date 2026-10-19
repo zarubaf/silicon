@@ -1,0 +1,9 @@
+// A type term nested N levels: `[[[UInt[8]; 1]; 1]...; 1]`. Each level has one element, so the size stays 8 bits and
+// only the depth grows. The depth and the equality of the type must come from its metadata, not from a walk.
+// SCALE type_nest 16 32 64 128 256
+// TOP M()
+module M() {
+    input x: NEST{[|UInt[8]|; 1]};
+    output o: Bool;
+    o := true;
+}
