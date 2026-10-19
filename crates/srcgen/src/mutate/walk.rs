@@ -4,8 +4,8 @@
 use super::super::program::hexpr as hexpr_text;
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    EnumDef, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy, Scalar,
-    Stmt, Ty, Un, Variant,
+    EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy,
+    Scalar, Stmt, Ty, Un, Variant,
 };
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
@@ -178,9 +178,9 @@ impl<'a> Walk<'a> {
                 ..
             } => {
                 for (_, t) in params {
-                    self.ty(t);
+                    self.fty(t);
                 }
-                self.ty(ret);
+                self.fty(ret);
                 self.stmts(body, false);
                 self.hexpr(result);
             }
@@ -818,6 +818,12 @@ impl<'a> Walk<'a> {
             args.push(zero);
             let what = format!("add argument {} to {callee} in {}", args.len(), self.item);
             self.hit(what, Effect::Code(code));
+        }
+    }
+
+    fn fty(&mut self, t: &mut FTy) {
+        match t {
+            FTy::Data(t) => self.ty(t),
         }
     }
 

@@ -202,6 +202,19 @@ pub(crate) enum Ty {
     Enum(String),
 }
 
+/// The type of a formal or a result of a helper.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FTy {
+    /// A hardware data type.
+    Data(Ty),
+}
+
+impl From<Ty> for FTy {
+    fn from(t: Ty) -> FTy {
+        FTy::Data(t)
+    }
+}
+
 /// The unary operators, static and hardware: `-`, `~`, `!`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Un {
@@ -493,10 +506,10 @@ pub(crate) enum Item {
     Enum(EnumDef),
     Helper {
         name: String,
-        params: Vec<(String, Ty)>,
+        params: Vec<(String, FTy)>,
         /// Whether the first formal has the mark `mut`.
         mut_first: bool,
-        ret: Ty,
+        ret: FTy,
         body: Vec<Stmt>,
         result: HExpr,
     },
@@ -649,11 +662,11 @@ fn render_item(out: &mut String, item: &Item) {
                 .enumerate()
                 .map(|(i, (n, t))| {
                     let mark = if i == 0 && *mut_first { "mut " } else { "" };
-                    format!("{mark}{n}: {}", ty(t))
+                    format!("{mark}{n}: {}", fty(t))
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            line(out, 0, &format!("fn {name}({params}) -> {} {{", ty(ret)));
+            line(out, 0, &format!("fn {name}({params}) -> {} {{", fty(ret)));
             stmts(out, 1, body);
             line(out, 1, &format!("return {};", hexpr(result)));
             line(out, 0, "}");
@@ -856,6 +869,12 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
         }
     };
     line(out, depth, &text);
+}
+
+fn fty(t: &FTy) -> String {
+    match t {
+        FTy::Data(t) => ty(t),
+    }
 }
 
 fn ty(t: &Ty) -> String {
@@ -1203,8 +1222,8 @@ pub(crate) mod tests {
         let helper = Item::Helper {
             mut_first: false,
             name: "h0".to_owned(),
-            params: vec![("x0".to_owned(), u8())],
-            ret: Ty::UInt(dec(4)),
+            params: vec![("x0".to_owned(), u8().into())],
+            ret: Ty::UInt(dec(4)).into(),
             body: vec![Stmt::Let {
                 name: "l0".to_owned(),
                 mutable: false,
@@ -1451,9 +1470,12 @@ module M1(comptime P0: Nat) domains() {
         });
         let helper = Item::Helper {
             name: "g0".to_owned(),
-            params: vec![("a0".to_owned(), u8()), ("x1".to_owned(), Ty::Bool)],
+            params: vec![
+                ("a0".to_owned(), u8().into()),
+                ("x1".to_owned(), Ty::Bool.into()),
+            ],
             mut_first: true,
-            ret: Ty::Bool,
+            ret: Ty::Bool.into(),
             body: vec![Stmt::Assign("a0".to_owned(), hname("a0"))],
             result: hname("x1"),
         };

@@ -26,8 +26,8 @@
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Scope, Value, eval, exec_static, leaf_bits, loop_values};
 use super::program::{
-    EnumDef, HBin, HExpr, Item, Match, Pattern, Place, Program, Radix, SExpr, STy, Scalar, Stmt,
-    Ty, render_items,
+    EnumDef, FTy, HBin, HExpr, Item, Match, Pattern, Place, Program, Radix, SExpr, STy, Scalar,
+    Stmt, Ty, render_items,
 };
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -116,10 +116,10 @@ pub fn twin(program: &Program) -> Twin {
                     name: name.clone(),
                     params: params
                         .iter()
-                        .map(|(n, t)| (n.clone(), w.ty(t, &f)))
+                        .map(|(n, t)| (n.clone(), w.fty(t, &f)))
                         .collect(),
                     mut_first: *mut_first,
-                    ret: w.ty(ret, &f),
+                    ret: w.fty(ret, &f),
                     body: w.stmts(body, &mut f),
                     result: w.hexpr(result, &f),
                 })
@@ -281,6 +281,12 @@ impl Writer<'_> {
         self.value(e, fr)
             .and_then(literal)
             .unwrap_or_else(|| e.clone())
+    }
+
+    fn fty(&self, t: &FTy, fr: &Frame) -> FTy {
+        match t {
+            FTy::Data(t) => FTy::Data(self.ty(t, fr)),
+        }
     }
 
     fn ty(&self, t: &Ty, fr: &Frame) -> Ty {
@@ -846,9 +852,9 @@ mod tests {
         use super::super::program::FnTy;
         let helper = Item::Helper {
             name: "h0".to_owned(),
-            params: vec![("x0".to_owned(), uint(8))],
+            params: vec![("x0".to_owned(), uint(8).into())],
             mut_first: false,
-            ret: uint(8),
+            ret: uint(8).into(),
             body: vec![],
             result: hname("x0"),
         };

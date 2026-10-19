@@ -152,8 +152,8 @@ fn delete_of_a_used_item_predicts_s003() {
     let helper = Item::Helper {
         mut_first: false,
         name: "h0".to_owned(),
-        params: vec![("x0".to_owned(), u8())],
-        ret: u8(),
+        params: vec![("x0".to_owned(), u8().into())],
+        ret: u8().into(),
         body: vec![],
         result: name("x0"),
     };
@@ -757,9 +757,12 @@ fn immutable_predicts_nothing_where_pass_four_cannot_see_the_mutation() {
 fn hardware_root(body: Vec<Stmt>) -> Program {
     let helper = Item::Helper {
         name: "g0".to_owned(),
-        params: vec![("a0".to_owned(), u8()), ("x1".to_owned(), u8())],
+        params: vec![
+            ("a0".to_owned(), u8().into()),
+            ("x1".to_owned(), u8().into()),
+        ],
         mut_first: true,
-        ret: u8(),
+        ret: u8().into(),
         body: vec![Stmt::Assign("a0".to_owned(), name("x1"))],
         result: name("a0"),
     };
@@ -1017,9 +1020,9 @@ fn arm_effect_predicts_nothing_where_the_if_may_take_one_arm() {
     }
     let helper = Item::Helper {
         name: "h0".to_owned(),
-        params: vec![("c0".to_owned(), Ty::Bool)],
+        params: vec![("c0".to_owned(), Ty::Bool.into())],
         mut_first: false,
-        ret: u8(),
+        ret: u8().into(),
         body: vec![],
         result: bool_name_if(make(1), make(2)),
     };
@@ -1094,9 +1097,9 @@ fn type_effect_predicts_nothing_off_the_top_frame() {
     assert_eq!(m.expect, None);
     let helper = Item::Helper {
         name: "h0".to_owned(),
-        params: vec![("x0".to_owned(), u8())],
+        params: vec![("x0".to_owned(), u8().into())],
         mut_first: false,
-        ret: u8(),
+        ret: u8().into(),
         body: vec![],
         result: name("x0"),
     };
