@@ -57,9 +57,11 @@ theorem Runs.typeAnnotation (ty : TypeExpr) (hp : ty.printable = true) (ctx : Ct
 The kinds that start the text of an expression. A function type starts with `fn`, and a
 `match` with its keyword.
 -/
-def EHead (k : Kind) : Prop :=
-  PStart k ∨ k = .keyword "if" ∨ (∃ op : UnOp, k = .symbol op.text) ∨ k = .keyword "fn" ∨
-    k = .keyword "match"
+def EHead (k : Kind) : Bool :=
+  PStart k || match k with
+    | .keyword w => w == "if" || w == "fn" || w == "match"
+    | .symbol s => s == "!" || s == "~" || s == "-"
+    | _ => false
 
 theorem Expr.headKind (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ EHead k := by
   have post : ∀ e : Expr, e.level = 11 → ∀ c, ∃ k, (e.toks c).head? = some k ∧ EHead k := by
@@ -67,59 +69,54 @@ theorem Expr.headKind (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ E
     obtain ⟨k, h, hk⟩ := Expr.toks_head11 e
     rw [Expr.toks_paren] at h ⊢
     split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
     · simp only [hl, Nat.lt_irrefl, ite_false] at h
-      exact ⟨k, h, Or.inl hk⟩
+      exact ⟨k, h, by simp [EHead, hk]⟩
   induction e using Expr.ind with
   | case5 p op a _ =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
-    · exact ⟨.symbol op.text, by simp [Expr.toks], Or.inr (Or.inr (Or.inl ⟨op, rfl⟩))⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
+    · exact ⟨.symbol op.text, by simp [Expr.toks], by cases op <;> rfl⟩
   | case6 p op l r ihl _ =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
     · obtain ⟨k, h, hk⟩ := ihl (if op.associative then op.level else op.level + 1)
       exact ⟨k, by simp [Expr.toks, List.head?_append, h], hk⟩
   | case7 =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
-    · exact ⟨.keyword "if", by simp [Expr.toks], Or.inr (Or.inl rfl)⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
+    · exact ⟨.keyword "if", by simp [Expr.toks], rfl⟩
   | case17 =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
-    · exact ⟨.keyword "fn", by simp [Expr.toks], Or.inr (Or.inr (Or.inr (Or.inl rfl)))⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
+    · exact ⟨.keyword "fn", by simp [Expr.toks], rfl⟩
   | case19 =>
     intro c; rw [Expr.toks_paren]; split
-    · exact ⟨_, rfl, Or.inl (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl))))))⟩
-    · exact ⟨.keyword "match", by simp [Expr.toks], Or.inr (Or.inr (Or.inr (Or.inr rfl)))⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
+    · exact ⟨.keyword "match", by simp [Expr.toks], rfl⟩
   | _ => exact post _ (by simp [Expr.level, postfixLevel])
 
 theorem EHead.ne_kw {k : Kind} (h : EHead k) {w : String}
     (hw : w ≠ "if" ∧ w ≠ "true" ∧ w ≠ "false" ∧ w ≠ "fn" ∧ w ≠ "match") :
     k ≠ .keyword w := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h | h <;>
-    simp_all
+  simp_all [EHead, PStart]
 
 theorem EHead.ne_sym {k : Kind} (h : EHead k) {s : String}
     (hs : s ≠ "(" ∧ s ≠ "[" ∧ s ≠ "!" ∧ s ≠ "~" ∧ s ≠ "-") : k ≠ .symbol s := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h | h
-  all_goals simp only [Kind.symbol.injEq, reduceCtorEq] at h
-  · exact hs.1 h
-  · exact hs.2.1 h
-  · cases op <;> simp [UnOp.text] at h <;> simp_all
+  simp_all [EHead, PStart]
 
 theorem EHead.ne_eof {k : Kind} (h : EHead k) : k ≠ .eof := by
   rintro rfl
-  rcases h with (⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h) | h | ⟨op, h⟩ | h | h <;> simp at h
+  simp [EHead, PStart] at h
 
 theorem EHead.ne_ident {k : Kind} (h : EHead k) (_hn : ∀ n, k ≠ .ident n) :
     ∀ w, k ≠ .keyword w ∨ w = "if" ∨ w = "true" ∨ w = "false" ∨ w = "fn" ∨ w = "match" := by
   intro w
   by_cases hw : w = "if" ∨ w = "true" ∨ w = "false" ∨ w = "fn" ∨ w = "match"
   · exact Or.inr hw
-  · exact Or.inl (h.ne_kw (by simp_all))
+  · exact Or.inl (EHead.ne_kw h (by simp_all))
 
 theorem Expr.toks_noparen {e : Expr} {c : Nat} (h : ¬ e.level < c) : e.toks c = e.toks 0 := by
   rw [Expr.toks_paren, ite_eq_right_iff.2 (fun h' => absurd h' h)]
@@ -495,7 +492,7 @@ theorem Runs.stmt_ret_none (p : Pos) : SGoal (.ret p none) := by
   reduce_checks
   exact Runs.idx (by simp [Stmt.toks]) (Runs.pure (by simp [Stmt.erase]))
 
-theorem EHead.ne_semi {k : Kind} (h : EHead k) : k ≠ .symbol ";" := h.ne_sym (by decide)
+theorem EHead.ne_semi {k : Kind} (h : EHead k) : k ≠ .symbol ";" := EHead.ne_sym h (by decide)
 
 theorem Runs.stmt_ret_some (p : Pos) (v : Expr) : SGoal (.ret p (some v)) := by
   intro ctx i f t R hp hw ht hf hd
@@ -513,7 +510,7 @@ theorem Runs.stmt_ret_some (p : Pos) (v : Expr) : SGoal (.ret p (some v)) := by
   simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
   refine Runs.bump_bind ?_
   obtain ⟨k, hk, hek⟩ := Expr.headKind v 0
-  refine Runs.bind (Runs.acceptSym_false (by rw [hw.tail.head' hk]; exact hek.ne_semi))
+  refine Runs.bind (Runs.acceptSym_false (by rw [hw.tail.head' hk]; exact EHead.ne_semi hek))
     fun b hb => ?_
   subst b
   reduce_checks
@@ -670,7 +667,7 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
       false := by
     refine stmt_res (Or.inr fun w hw => ?_)
     rw [hk]
-    refine hE.ne_kw ?_
+    refine EHead.ne_kw hE ?_
     simp only [portKeywords, List.mem_cons, List.not_mem_nil, or_false] at hw
     rcases hw with rfl | rfl <;> decide
   simp only [hres, Bool.false_eq_true, ite_false]
@@ -679,8 +676,8 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
   split
   all_goals first
     | exact h
-    | exact absurd rfl (hE.ne_kw (by decide))
-    | exact absurd rfl (hE.ne_sym (by decide))
+    | exact absurd rfl (EHead.ne_kw hE (by decide))
+    | exact absurd rfl (EHead.ne_sym hE (by decide))
     | exact absurd rfl (hn _)
 
 /-! A statement that starts with a name. -/
@@ -880,7 +877,8 @@ theorem Stmt.headKind (s : Stmt) : ∃ k, s.toks.head? = some k ∧ k ≠ .keywo
       k ≠ .keyword "else" ∧ k ≠ .symbol "}" ∧ k ≠ .eof := by
     intro e rest
     obtain ⟨k, hk, he⟩ := Expr.headKind e 0
-    exact ⟨k, head?_append_of hk, he.ne_kw (by decide), he.ne_sym (by decide), he.ne_eof⟩
+    exact ⟨k, head?_append_of hk, EHead.ne_kw he (by decide), EHead.ne_sym he (by decide),
+      EHead.ne_eof he⟩
   cases s with
   | assign p t v => simpa [Stmt.toks] using hE t (.symbol "=" :: (v.toks 0 ++ [.symbol ";"]))
   | connect p t v => simpa [Stmt.toks] using hE t (.symbol ":=" :: (v.toks 0 ++ [.symbol ";"]))

@@ -152,18 +152,28 @@ theorem opAt_text {op : BinOp} {t : Token} (h : t.kind = .symbol op.text) :
   rw [h]
   cases op <;> decide
 
-/-! The kinds that start the text of a primary form. -/
-def PStart (k : Kind) : Prop :=
-  (∃ n, k = .ident n) ∨ (∃ v, k = .number v) ∨ (∃ s, k = .string s) ∨ k = .keyword "true" ∨
-    k = .keyword "false" ∨ k = .symbol "(" ∨ k = .symbol "["
+/-! The kinds that start the text of a primary form. A new kind is one new case here. -/
+def PStart : Kind → Bool
+  | .ident _ | .number _ | .string _ => true
+  | .keyword w => w == "true" || w == "false"
+  | .symbol s => s == "(" || s == "["
+  | .eof | .error _ => false
 
 theorem unOp_pstart {t : Token} (h : PStart t.kind) : unOp t = none := by
-  unfold unOp
-  rcases h with ⟨n, h⟩ | ⟨v, h⟩ | ⟨s, h⟩ | h | h | h | h <;>
-    simp [isSym, h, UnOp.text]
+  obtain ⟨_, k⟩ := t
+  cases k <;> simp only [PStart, Bool.or_eq_true, beq_iff_eq] at h
+  all_goals first
+    | rfl
+    | (rcases h with rfl | rfl <;> rfl)
+    | simp at h
 
 theorem isKw_pstart {t : Token} (h : PStart t.kind) : isKw "fn" t = false := by
-  rcases h with ⟨n, h⟩ | ⟨v, h⟩ | ⟨s, h⟩ | h | h | h | h <;> simp [isKw, h]
+  obtain ⟨_, k⟩ := t
+  cases k <;> simp only [PStart, Bool.or_eq_true, beq_iff_eq] at h
+  all_goals first
+    | rfl
+    | (rcases h with rfl | rfl <;> rfl)
+    | simp at h
 
 theorem unOp_text {t : Token} {op : UnOp} (h : t.kind = .symbol op.text) : unOp t = some op := by
   unfold unOp isSym
@@ -174,7 +184,7 @@ theorem unOp_text {t : Token} {op : UnOp} (h : t.kind = .symbol op.text) : unOp 
 /-! ## The first token of an expression -/
 
 theorem PStart.ne {k : Kind} (h : PStart k) : k ≠ .symbol ")" ∧ k ≠ .symbol "]" := by
-  rcases h with ⟨n, h⟩ | ⟨v, h⟩ | ⟨s, h⟩ | h | h | h | h <;> simp [h]
+  constructor <;> rintro rfl <;> simp [PStart] at h
 
 theorem BinOp.level_pos (op : BinOp) : 1 ≤ op.level := by cases op <;> decide
 
@@ -182,26 +192,21 @@ theorem BinOp.level_lt (op : BinOp) : op.level < 10 := by cases op <;> decide
 
 theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PStart k := by
   induction e using Expr.ind with
-  | case1 p v => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inr (Or.inl ⟨v, rfl⟩)⟩
+  | case1 p v => exact ⟨.number v, by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
   | case2 p v => exact ⟨.keyword (boolean v), by simp [Expr.toks, Expr.level, postfixLevel], by
-      cases v <;> simp [boolean, PStart]⟩
-  | case3 p v => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
-      Or.inr (Or.inr (Or.inl ⟨v, rfl⟩))⟩
-  | case4 p n => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inl ⟨n, rfl⟩⟩
-  | case18 p t v =>
-    exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel], Or.inl ⟨t.name, rfl⟩⟩
-  | case5 | case17 => exact ⟨_, by simp [Expr.toks, Expr.level, unaryLevel],
-      Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
-  | case6 p op => exact ⟨_, by
-      simp [Expr.toks, Expr.level, (by have := BinOp.level_lt op; omega : op.level < 11)],
-      Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
-  | case7 | case19 => exact ⟨_, by simp [Expr.toks, Expr.level],
-      Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
+      cases v <;> rfl⟩
+  | case3 p v => exact ⟨.string v, by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
+  | case4 p n => exact ⟨.ident n, by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
+  | case18 p t v => exact ⟨.ident t.name, by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
+  | case5 | case17 => exact ⟨.symbol "(", by simp [Expr.toks, Expr.level, unaryLevel], rfl⟩
+  | case6 p op => exact ⟨.symbol "(", by
+      simp [Expr.toks, Expr.level, (by have := BinOp.level_lt op; omega : op.level < 11)], rfl⟩
+  | case7 | case19 => exact ⟨.symbol "(", by simp [Expr.toks, Expr.level], rfl⟩
   | case8 p f xs ihf _ =>
     rw [Expr.toks.eq_def]
     simp only [Expr.level, postfixLevel, Nat.lt_irrefl, ite_false]
     split
-    · exact ⟨_, rfl, Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
+    · exact ⟨.symbol "(", rfl, rfl⟩
     · obtain ⟨k, h, hk⟩ := ihf
       exact ⟨k, by simp [List.head?_append, h], hk⟩
   | case9 p b xs ihb _ =>
@@ -210,10 +215,8 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
   | case10 p b f ihb =>
     obtain ⟨k, h, hk⟩ := ihb
     exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
-  | case11 | case12 => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
-      Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl rfl)))))⟩
-  | case13 | case15 => exact ⟨_, by simp [Expr.toks, Expr.level, postfixLevel],
-      Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr rfl)))))⟩
+  | case11 | case12 => exact ⟨.symbol "(", by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
+  | case13 | case15 => exact ⟨.symbol "[", by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
   | case14 p b q i ihb =>
     obtain ⟨k, h, hk⟩ := ihb
     exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
@@ -231,7 +234,7 @@ theorem Expr.toks_head_post (e : Expr) (hl : e.level = 11) (c : Nat) :
   split
   · exact ⟨_, rfl, by simp [NotClose]⟩
   · simp only [hl, Nat.lt_irrefl, ite_false] at h
-    exact ⟨k, h, hk.ne⟩
+    exact ⟨k, h, PStart.ne hk⟩
 
 theorem Expr.toks_head (e : Expr) : ∀ c, ∃ k, (e.toks c).head? = some k ∧ NotClose k := by
   induction e using Expr.ind with

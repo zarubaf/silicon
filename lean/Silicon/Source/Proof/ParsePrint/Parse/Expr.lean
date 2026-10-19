@@ -2610,7 +2610,7 @@ theorem Expr.head_post_ne_kw (e : Expr) (hl : e.level = 11) (c : Nat) {w : Strin
     intro he
     simp only [Option.some.injEq] at he
     subst he
-    rcases hpk with ⟨_, h⟩ | ⟨_, h⟩ | ⟨_, h⟩ | h | h | h | h <;> simp_all
+    simp_all [PStart]
 
 theorem Expr.toks_head_ne_kw (e : Expr) {w : String} (hw : w ∉ ["true", "false", "fn"]) :
     ∀ c, 1 ≤ c → (e.toks c).head? ≠ some (.keyword w) := by
