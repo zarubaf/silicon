@@ -37,7 +37,7 @@ pub(super) struct Whole;
 /// (section 9.2).
 pub(super) struct Field(pub(super) Pos);
 
-/// A `push` element at the node `0`. A list holds only static values.
+/// A `push` element at the node `0`. A list holds static values and handles, and no hardware leaf.
 pub(super) struct Element(pub(super) Pos);
 
 impl Site for Whole {
