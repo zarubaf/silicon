@@ -359,3 +359,6 @@ mod tests_work_records;
 
 #[cfg(test)]
 mod tests_work_words;
+
+#[cfg(test)]
+mod tests_work_types;
