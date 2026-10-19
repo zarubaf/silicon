@@ -1655,16 +1655,89 @@ fn the_fixed_set_of_mutants_reaches_s018_of_handles() {
     assert!(copied >= 5, "{copied} copied bindings");
 }
 
-/// A binding in a helper that takes resources is several sites of `Delete`,
-/// so that a program holds few of them among its other statements.
+/// The lines of a program text that declare the name `n` (`reg n`, `wire n`,
+/// `mem n`, `instance n`) in the helper that the line `at` belongs to.
+fn declared_in_helper(text: &str, at: usize, n: &str) -> bool {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines[..at]
+        .iter()
+        .rposition(|l| l.starts_with("fn H"))
+        .unwrap_or(0);
+    lines[start..at].iter().any(|l| {
+        let t = l.trim_start();
+        ["reg ", "wire ", "mem ", "instance "].iter().any(|k| {
+            t.strip_prefix(k).is_some_and(|r| {
+                r.starts_with(&format!("{n}:"))
+                    || r.starts_with(&format!("{n} ="))
+                    || r.starts_with(&format!("{n};"))
+            })
+        })
+    })
+}
+
+/// The name that the binding line `l` binds: the target of a `:=` (before a
+/// port), the memory of a `write_port`, or the first actual of a call.
+fn bound_name(l: &str) -> Option<String> {
+    let t = l.trim();
+    let name = |s: &str| {
+        let end = s.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')?;
+        Some(s[..end].to_owned())
+    };
+    if t.contains(" := ") {
+        return name(t);
+    }
+    let args = t.strip_prefix("write_port(").or_else(|| {
+        t.strip_prefix('H')
+            .and_then(|r| r.split_once('('))
+            .map(|(_, r)| r)
+    })?;
+    name(args)
+}
+
+/// The cases of the seeds 1 to 100 of `diff-si --mode mutation`: a program,
+/// and the draws of the kind and the site.
+fn mutation_cases() -> Vec<(Program, u32, u32)> {
+    use proptest::prelude::any;
+    use proptest::strategy::Just;
+    use proptest::test_runner::{Config, RngAlgorithm, RngSeed, TestRng};
+    (1u64..=100)
+        .map(|seed| {
+            let mut bytes = [0; 32];
+            bytes[..8].copy_from_slice(&seed.to_le_bytes());
+            let config = Config {
+                rng_algorithm: RngAlgorithm::ChaCha,
+                rng_seed: RngSeed::Fixed(seed),
+                ..Config::default()
+            };
+            let mut runner =
+                TestRunner::new_with_rng(config, TestRng::from_seed(RngAlgorithm::ChaCha, &bytes));
+            let strategy = typed().prop_flat_map(|p| (Just(p), any::<u32>(), any::<u32>()));
+            let (p, kind, site) = strategy.new_tree(&mut runner).unwrap().current();
+            (p.unwrap(), kind, site)
+        })
+        .collect()
+}
+
+/// A deleted binding of a resource that its own helper declares leaves the
+/// resource unbound at the declaration, where a front end can report it at
+/// the wrong place. The mutants of the seeds 1 to 100 of the CI hold at
+/// least three of them, so a fault in that position is in reach.
 #[test]
-fn a_binding_of_a_helper_is_several_sites_of_delete() {
-    let p = handle_program(vec![call("H0", &["r0", "i0"])]);
-    // The two helpers are two sites. `H0` holds one binding, and `H1` one
-    // declaration and one binding. The module holds two ports, a register,
-    // a call, and the output.
-    assert_eq!(sites(Kind::Delete, &p.items, &p.top), 2 + 8 + (1 + 8) + 5);
-    let m = mutate(&p, index(Kind::Delete), 3);
-    assert_eq!(m.text, p.text().replacen("    a0 := x1;\n", "", 1));
-    assert_eq!(m.expect, None);
+fn the_ci_seeds_delete_bindings_of_helper_declared_resources() {
+    let mut found = 0;
+    for (p, kind, site) in mutation_cases() {
+        let m = mutate(&p, kind, site);
+        if !m.what.starts_with("delete statement") || !m.what.contains(" of H") {
+            continue;
+        }
+        let text = p.text();
+        let Some(line) = removed(&text, &m) else {
+            continue;
+        };
+        let at = text.lines().position(|l| l == line).unwrap_or(0);
+        if bound_name(&line).is_some_and(|n| declared_in_helper(&text, at, &n)) {
+            found += 1;
+        }
+    }
+    assert!(found >= 3, "{found} deleted bindings of declared resources");
 }

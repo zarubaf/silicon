@@ -13,9 +13,9 @@ use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
 use num_bigint::BigInt;
 use std::mem;
 
-/// The sites of `Kind::Delete` that one binding of a helper that takes
-/// resources makes.
-const DELETE_BINDING_SITES: usize = 8;
+/// The sites of `Kind::Delete` that one binding makes, when the helper that
+/// holds it also declares the resource.
+const DELETE_BINDING_SITES: usize = 32;
 
 /// A pre-order walk over the sites of one kind: items in order, then
 /// statements in order, then expressions left to right. Without a target
@@ -38,6 +38,8 @@ pub(super) struct Walk<'a> {
     mut_helpers: Vec<String>,
     /// The helpers with a handle formal: a call of one binds its actuals.
     binders: Vec<String>,
+    /// The resources that the helper under the walk declares in its body.
+    declared_here: Vec<String>,
     /// The static `let mut` roots in scope, with their types.
     scope: Vec<(String, STy)>,
     /// The ports and registers of the current module.
@@ -76,6 +78,7 @@ impl<'a> Walk<'a> {
             list_values: Vec::new(),
             mut_helpers: Vec::new(),
             binders: Vec::new(),
+            declared_here: Vec::new(),
             scope: Vec::new(),
             hardware: Vec::new(),
             arm: false,
@@ -150,6 +153,19 @@ impl<'a> Walk<'a> {
     }
 
     fn item_body(&mut self, item: &mut Item) {
+        self.declared_here = match item {
+            Item::Helper { body, .. } if is_resource_helper(&self.item) => body
+                .iter()
+                .filter_map(|s| match s {
+                    Stmt::Reg(n, ..)
+                    | Stmt::Wire(n, ..)
+                    | Stmt::Mem(n, ..)
+                    | Stmt::Instance(n, ..) => Some(n.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         self.always = false;
         self.reach = false;
         self.arm = false;
@@ -215,11 +231,11 @@ impl<'a> Walk<'a> {
         while let Some(s) = body.get(i) {
             self.stmt += 1;
             let n = self.stmt;
-            // A binding in a helper that takes resources is four sites of
-            // `Delete`: the other statements of a program far outnumber
-            // those, and a deleted binding there leaves a resource of its
-            // caller unbound.
-            let copies = if is_resource_helper(&self.item) && self.is_binding(s) {
+            // The binding of a resource that a helper declares is several
+            // sites of `Delete`: the other statements of a program far
+            // outnumber those, and a deleted one leaves a resource of the
+            // helper unbound at its declaration.
+            let copies = if self.binds_declared(s) {
                 DELETE_BINDING_SITES
             } else {
                 1
@@ -275,6 +291,21 @@ impl<'a> Walk<'a> {
         self.scope.truncate(mark);
         self.hardware.truncate(hardware);
         self.typed.truncate(typed);
+    }
+
+    /// Whether `s` binds a resource that the helper under the walk declares
+    /// itself: the target of a `:=`, the memory of a `write_port`, or the
+    /// first actual of a binding call.
+    fn binds_declared(&self, s: &Stmt) -> bool {
+        let named = |n: &str| self.declared_here.iter().any(|d| d == n);
+        match s {
+            Stmt::Connect(Place::Name(n) | Place::Field(n, _), _) => named(n),
+            Stmt::WritePort { mem, .. } => named(mem),
+            Stmt::Call(f, args) if self.binders.contains(f) => {
+                matches!(args.first(), Some(HExpr::Name(n)) if named(n))
+            }
+            _ => false,
+        }
     }
 
     /// Whether `s` binds a resource of the module: a `:=`, a `write_port`,
