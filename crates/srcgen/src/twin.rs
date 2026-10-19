@@ -70,6 +70,15 @@ impl Twin {
 /// The twin of `program`.
 #[must_use]
 pub fn twin(program: &Program) -> Twin {
+    let (items, top) = twin_items(program);
+    Twin {
+        text: render_items(&items),
+        top,
+    }
+}
+
+/// The items of the twin of `program` and its top selection.
+pub(crate) fn twin_items(program: &Program) -> (Vec<Item>, String) {
     let mut w = Writer {
         items: &program.items,
         // A const that faults leaves an empty scope. Each fold that reads a
@@ -100,10 +109,7 @@ pub fn twin(program: &Program) -> Twin {
     let Some(top) = w.specialize(&program.top, &program.args) else {
         // A container argument is a fault of the builder; the static names
         // of the program stay, where the tests find them.
-        return Twin {
-            text: program.text(),
-            top: program.top(),
-        };
+        return (program.items.clone(), program.top());
     };
     let helpers: Vec<Item> = program
         .items
@@ -143,10 +149,7 @@ pub fn twin(program: &Program) -> Twin {
         .filter(|item| matches!(item, Item::Enum(_)))
         .cloned();
     let items: Vec<Item> = enums.chain(helpers).chain(modules).collect();
-    Twin {
-        text: render_items(&items),
-        top: format!("{top}()"),
-    }
+    (items, format!("{top}()"))
 }
 
 /// The suffix of a twin module name for a static argument: decimal, `5n` for
@@ -947,6 +950,8 @@ mod tests {
     use super::*;
     use num_bigint::BigInt;
     use proptest::prelude::*;
+    use proptest::strategy::{Strategy, ValueTree};
+    use proptest::test_runner::TestRunner;
 
     fn int(n: i64) -> SExpr {
         SExpr::Int(BigInt::from(n), Radix::Dec)
@@ -1515,6 +1520,181 @@ mod tests {
             ..clean
         };
         assert!(twin(&clean).static_names().is_empty());
+    }
+
+    /// The bindings of one twin module.
+    #[derive(Default)]
+    struct Bindings {
+        /// Registers, wires, and outputs by name, with whether a wire.
+        targets: BTreeMap<String, bool>,
+        assigned: BTreeMap<String, u32>,
+        /// The instances, with their modules.
+        children: BTreeMap<String, String>,
+        ports: BTreeMap<(String, String), u32>,
+        /// The memories, with their write and read ports.
+        mems: BTreeMap<String, (u32, u32)>,
+        declared: Vec<String>,
+        /// The wires that read themselves.
+        loops: Vec<String>,
+    }
+
+    fn read_names(e: &HExpr, out: &mut BTreeSet<String>) {
+        match e {
+            HExpr::Name(n) | HExpr::Field(n, _) => {
+                out.insert(n.clone());
+            }
+            HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => {}
+            HExpr::Unary(_, a)
+            | HExpr::Resize(_, a)
+            | HExpr::Reinterpret(_, a)
+            | HExpr::Index(a, _)
+            | HExpr::Select(a, _)
+            | HExpr::Read(a) => read_names(a, out),
+            HExpr::Binary(_, a, b) => {
+                read_names(a, out);
+                read_names(b, out);
+            }
+            HExpr::If(c, a, b) => {
+                for x in [c, a, b] {
+                    read_names(x, out);
+                }
+            }
+            HExpr::Call(_, xs)
+            | HExpr::Ctor(_, _, xs)
+            | HExpr::Tuple(xs)
+            | HExpr::Array(xs)
+            | HExpr::Record(_, xs) => {
+                for x in xs {
+                    read_names(x, out);
+                }
+            }
+            HExpr::Receiver(r, _, xs) => {
+                read_names(r, out);
+                for x in xs {
+                    read_names(x, out);
+                }
+            }
+            HExpr::Match(m) => {
+                read_names(&m.scrutinee, out);
+                for (_, a) in &m.arms {
+                    read_names(a, out);
+                }
+            }
+            HExpr::ReadPort { mem, addr, en, .. } => {
+                out.insert(mem.clone());
+                read_names(addr, out);
+                read_names(en, out);
+            }
+        }
+    }
+
+    fn collect(body: &[Stmt], b: &mut Bindings) {
+        for s in body {
+            match s {
+                Stmt::Output(n, _) | Stmt::Reg(n, ..) => {
+                    b.targets.insert(n.clone(), false);
+                    b.declared.push(n.clone());
+                }
+                Stmt::Wire(n, _) => {
+                    b.targets.insert(n.clone(), true);
+                    b.declared.push(n.clone());
+                }
+                Stmt::Instance(u, m, _) => {
+                    b.children.insert(u.clone(), m.clone());
+                    b.declared.push(u.clone());
+                }
+                Stmt::Mem(n, ..) => {
+                    b.mems.insert(n.clone(), (0, 0));
+                    b.declared.push(n.clone());
+                }
+                Stmt::WritePort { mem, .. } => {
+                    b.mems.entry(mem.clone()).or_default().0 += 1;
+                }
+                Stmt::Let { name, value, .. } => {
+                    b.declared.push(name.clone());
+                    if let HExpr::ReadPort { mem, .. } = value {
+                        b.mems.entry(mem.clone()).or_default().1 += 1;
+                    }
+                }
+                Stmt::Connect(place, value) => match place {
+                    Place::Name(n) => {
+                        *b.assigned.entry(n.clone()).or_default() += 1;
+                        let mut read = BTreeSet::new();
+                        read_names(value, &mut read);
+                        if b.targets.get(n) == Some(&true) && read.contains(n) {
+                            b.loops.push(n.clone());
+                        }
+                    }
+                    Place::Field(u, p) => {
+                        *b.ports.entry((u.clone(), p.clone())).or_default() += 1;
+                    }
+                    Place::Path(_) => panic!("a twin has a container of handles"),
+                },
+                Stmt::Block(inner) => collect(inner, b),
+                _ => {}
+            }
+        }
+    }
+
+    /// Each resource of a twin has one binding: a register, a wire, and an
+    /// output one `:=`; a child input one `:=`; a memory one `write_port` and
+    /// one `read_port`. No name has two declarations, and no wire reads
+    /// itself. The twin has no list and no handle formal, so a count here
+    /// tests the inlining of the helpers on its own.
+    #[test]
+    fn the_twin_binds_each_resource_once() {
+        let mut runner = TestRunner::deterministic();
+        let mut resources = 0;
+        for _ in 0..256 {
+            let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
+            let (items, _) = twin_items(&p);
+            let inputs: BTreeMap<&str, Vec<&str>> = items
+                .iter()
+                .filter_map(|item| match item {
+                    Item::Module { name, body, .. } => Some((
+                        name.as_str(),
+                        body.iter()
+                            .filter_map(|s| match s {
+                                Stmt::Input(n, _) => Some(n.as_str()),
+                                _ => None,
+                            })
+                            .collect(),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            for item in &items {
+                let Item::Module { name, body, .. } = item else {
+                    continue;
+                };
+                let mut b = Bindings::default();
+                collect(body, &mut b);
+                let text = render_items(&items);
+                let unique: BTreeSet<&String> = b.declared.iter().collect();
+                assert_eq!(
+                    unique.len(),
+                    b.declared.len(),
+                    "{name}: a name twice\n{text}"
+                );
+                for t in b.targets.keys() {
+                    resources += 1;
+                    assert_eq!(b.assigned.get(t), Some(&1), "{name}: {t}\n{text}");
+                }
+                for (u, m) in &b.children {
+                    for port in inputs.get(m.as_str()).into_iter().flatten() {
+                        resources += 1;
+                        let key = (u.clone(), (*port).to_owned());
+                        assert_eq!(b.ports.get(&key), Some(&1), "{name}: {u}.{port}\n{text}");
+                    }
+                }
+                for (n, ports) in &b.mems {
+                    resources += 1;
+                    assert_eq!(*ports, (1, 1), "{name}: {n}\n{text}");
+                }
+                assert!(b.loops.is_empty(), "{name}: {:?}\n{text}", b.loops);
+            }
+        }
+        assert!(resources > 1000, "{resources}");
     }
 
     proptest! {

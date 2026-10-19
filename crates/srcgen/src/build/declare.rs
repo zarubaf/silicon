@@ -156,7 +156,7 @@ impl Builder {
     /// result: the result holds no handle.
     fn scratch_shape(&mut self, hb: &mut Hb) -> Built<Shaped> {
         let (word, depth) = {
-            let (word, _) = self.data_ty();
+            let (word, _) = self.word_ty();
             (word, self.pick(&DEPTHS))
         };
         let name = hb.names.fresh("n");
@@ -456,7 +456,7 @@ impl Builder {
 
     /// `mem n: [T; N];`, and the two port calls if `bound`.
     fn helper_mem(&mut self, hb: &mut Hb, bound: bool) -> Built<(String, FTy, Leaf)> {
-        let (word, _) = self.data_ty();
+        let (word, _) = self.word_ty();
         let depth = self.pick(&DEPTHS);
         let name = hb.names.fresh("n");
         hb.body
@@ -582,6 +582,17 @@ impl Builder {
         called!(self, ctx, i);
         #[cfg(test)]
         self.note_declarations(&h);
+        let declared = h
+            .body
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    Stmt::Reg(..) | Stmt::Wire(..) | Stmt::Mem(..) | Stmt::Instance(..)
+                )
+            })
+            .count();
+        self.decls += declared * ctx.envs.len();
         let (callee, args) = self.binder_args_of(ctx, i)?;
         for (j, tuple) in &h.children {
             let known = self.contexts.get_mut(*j).ok_or(Fault::Type)?;

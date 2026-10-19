@@ -550,6 +550,9 @@ struct Builder {
     res_helpers: Vec<handles::ResHelper>,
     /// The structs of handles that those helpers return.
     hstructs: Vec<StructDef>,
+    /// The resources that handle forms declare so far, once for each env
+    /// that runs the declaration.
+    decls: usize,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
@@ -600,6 +603,7 @@ impl Builder {
             helpers: Vec::new(),
             res_helpers: Vec::new(),
             hstructs: Vec::new(),
+            decls: 0,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
             mut_helpers: Vec::new(),

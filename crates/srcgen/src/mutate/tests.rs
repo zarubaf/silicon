@@ -1617,3 +1617,40 @@ fn duplicate_bind_predicts_s018_at_a_binding_of_the_top_frame() {
         assert_eq!(m.text, p.text().replacen(line, &format!("{line}{line}"), 1));
     }
 }
+
+/// The line that the mutant `m` of the program text `text` removed.
+fn removed(text: &str, m: &Mutant) -> Option<String> {
+    let kept: Vec<&str> = m.text.lines().collect();
+    let mut lines = text.lines();
+    let mut at = 0;
+    for line in lines.by_ref() {
+        if kept.get(at) == Some(&line) {
+            at += 1;
+        } else {
+            return Some(line.to_owned());
+        }
+    }
+    None
+}
+
+/// Across 120 typed programs, the mutants that delete a call of a helper
+/// with a handle formal, and the mutants that copy a binding, predict
+/// `S018`. The kinds that the programs of slice 3 add keep `S018` rare
+/// otherwise, so a count shows that the handle forms reach it.
+#[test]
+fn the_fixed_set_of_mutants_reaches_s018_of_handles() {
+    let (mut deleted, mut copied) = (0, 0);
+    for p in programs().into_iter().take(120) {
+        let text = p.text();
+        for m in all(&p, Kind::Delete) {
+            let call = removed(&text, &m).is_some_and(|l| l.starts_with("    H"));
+            deleted += usize::from(call && m.expect == Some("S018"));
+        }
+        for m in all(&p, Kind::DuplicateBind) {
+            assert_eq!(m.expect, Some("S018"), "{}", m.what);
+            copied += 1;
+        }
+    }
+    assert!(deleted >= 5, "{deleted} deleted binding calls");
+    assert!(copied >= 5, "{copied} copied bindings");
+}
