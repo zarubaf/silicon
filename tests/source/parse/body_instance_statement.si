@@ -1,4 +1,4 @@
-// A plain fn parses a instance statement, as a comptime fn and a module do. A plain fn rejects only a port (S004).
+// A plain fn parses an instance statement, as a comptime fn and a module do. A plain fn rejects only a port (S004).
 fn f() -> Nat {
     instance u = M();
     return 1;
