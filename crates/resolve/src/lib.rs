@@ -12,7 +12,7 @@ use parse::{Parse, ParsedExpr, StackError};
 use std::collections::BTreeMap;
 use std::fmt;
 
-pub use prelude::Prelude;
+pub use prelude::{Prelude, RESPONSE};
 
 /// The codes of passes 2 and 3 of the front end (design section 6).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

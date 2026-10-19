@@ -1,3 +1,4 @@
+const resolve::RESPONSE
 enum resolve::Code
 enum resolve::Failed
 enum resolve::Kind

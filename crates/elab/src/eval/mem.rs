@@ -115,7 +115,7 @@ impl Evaluator<'_> {
     /// checked, and the zero size of the type charges before the response exists.
     fn response(&mut self, pos: Pos, path: crate::names::PathId, word: TyId) -> Res<Out> {
         let file = self.file;
-        let i = file.prelude_struct("ReadResponse");
+        let i = file.prelude_struct(resolve::RESPONSE);
         let Some((
             i,
             Item::Struct {
