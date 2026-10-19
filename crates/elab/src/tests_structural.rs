@@ -233,7 +233,8 @@ fn each_text_of_s016_is_pinned_in_full() {
     );
     assert_eq!(
         said(&module("  let z = if (c) { pop(xs) } else { 0 };\n")),
-        "a hardware arm changes a binding from before the arm"
+        "a hardware arm cannot change `xs`, a binding from before the arm; change `xs` before \
+         the `if` or `match`, and use the result in the arm"
     );
     assert_eq!(
         said(&with_memory(
