@@ -1,0 +1,23 @@
+// A prelude struct of slice 4 is a struct of the prelude, so `observe` prints its type with the token
+// `prelude` in the place of `root`. The records show the five structs and their field types.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 17 5 M () (string "f") (record (struct prelude FieldInfo ()) ((string "a") (type (uint 8)))))
+// OBSERVE-NEXT: (record 18 5 M () (string "v") (record (struct prelude VariantInfo ()) ((string "V") (int 1) (list type ()))))
+// OBSERVE-NEXT: (record 19 5 M () (string "t") (record (struct prelude TypeInfo ()) ((string "struct") (list (struct prelude FieldInfo ()) ()) (type bool) (int 0) (int 0) (list (struct prelude VariantInfo ()) ()))))
+// OBSERVE-NEXT: (record 20 5 M () (string "k") (record (struct prelude PortKey ()) ((string "req") (bool true) (int 3))))
+// OBSERVE-NEXT: (record 21 5 M () (string "p") (record (struct prelude PortInfo ()) ((record (struct prelude PortKey ()) ((string "req") (bool true) (int 3))) (type (uint 8)) (bool true) (string "clock"))))
+module M() domains() {
+    output o: Bool;
+    let f = FieldInfo("a", UInt[8]);
+    let v = VariantInfo("V", 1, list(Type));
+    let t = TypeInfo("struct", list(FieldInfo), Bool, 0, 0, list(VariantInfo));
+    let k = PortKey("req", true, 3);
+    let p = PortInfo(k, UInt[8], true, "clock");
+    diagnostic("f", f);
+    diagnostic("v", v);
+    diagnostic("t", t);
+    diagnostic("k", k);
+    diagnostic("p", p);
+    o := true;
+}
