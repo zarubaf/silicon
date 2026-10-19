@@ -52,6 +52,8 @@ The `corpus` suites keep their smoke checks: `silicon check` accepts each file, 
 
 `commit-check` treats each file of a suite as a test expectation. See [the commits guide](commits.md).
 
+A scaling template has the placeholder `{N}` for the size of the run. A block between `// REPEAT i COUNT` and `// END` repeats COUNT times, and `{i}` is the number of the copy. The text `NEST{open|core|close}` nests a construct to the depth N in one line. It writes `open` N times, then `core`, then `close` N times. For example, `NEST{[|r|]}` at N = 2 is `[[r]]`, and `NEST{|a|[z()]}` is `a[z()][z()]`. The three parts hold no `{`, `}`, or `|`. The build of a nested value costs fuel in its depth. Thus a template that tests a walk along a nest repeats the walk N times in a `REPEAT` block. Then the fuel of the build cannot hide a walk from the root at each step.
+
 ## Directives
 
 A directive is a comment line that gives the expectation of a test file. Both languages use the same names. Only the comment marker differs: `;` in a `.sil` file, `//` in a `.si` file.
