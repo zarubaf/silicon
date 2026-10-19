@@ -54,7 +54,7 @@ pub use lines::lines;
 
 use super::eval::{Env, Fault, Scope, Value, leaves};
 use super::program::{
-    ComptimeFn, EnumDef, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt,
+    ComptimeFn, EnumDef, FTy, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt,
     StructDef, Ty, render_items,
 };
 use super::records::records;
@@ -570,10 +570,10 @@ impl Builder {
                 params: h
                     .params
                     .iter()
-                    .map(|(n, t, _)| (n.clone(), t.clone()))
+                    .map(|(n, t, _)| (n.clone(), FTy::Data(t.clone())))
                     .collect(),
                 mut_first: h.mut_first,
-                ret: h.ret.0.clone(),
+                ret: FTy::Data(h.ret.0.clone()),
                 body: h.body.clone(),
                 result: h.result.clone(),
             });
