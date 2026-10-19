@@ -358,9 +358,7 @@ unlisted | S001 invalid character in string | 354
 lean | S010 Data type of a port | 337
 rust | S010 Data type of a port | 337
 pin | S010 Data type of a port | 337
-lean | S003 Receiver call of a non-function | 337
 rust | S003 Receiver call of a non-function | 337
 pin | S003 Receiver call of a non-function | 337
-lean | S007 Arity of a struct constructor | 337
 rust | S007 Arity of a struct constructor | 337
 pin | S007 Arity of a struct constructor | 337
