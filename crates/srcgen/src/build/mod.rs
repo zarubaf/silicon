@@ -584,7 +584,7 @@ impl Builder {
                 numbers: tape
                     .iter()
                     .rev()
-                    .map(|n| (n ^ (n >> 16)).wrapping_mul(0xC2B2_AE35))
+                    .map(|n| (n ^ (n >> 16)).wrapping_mul(0xE9B5_DBA5))
                     .collect::<Vec<_>>()
                     .into_iter(),
             },

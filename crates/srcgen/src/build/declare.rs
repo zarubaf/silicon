@@ -24,7 +24,9 @@
 //!   no call reaches stays dropped. The `instance` statement and the type
 //!   `Instance[M, args]` share their arguments (`S019`).
 
-use super::handles::{DEPTHS, Leaf, ListOf, Part, Pending, ResHelper, Role, Step, at, literal};
+use super::handles::{
+    DEPTHS, HANDLE_DEPTH, Leaf, ListOf, Part, Pending, ResHelper, Role, Step, at, literal,
+};
 use super::inst::Child;
 use super::stat::Reach;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module, Names};
@@ -67,11 +69,6 @@ impl Builder {
         // A register or wire that an earlier helper binds.
         if self.tape.flag() {
             self.nested_extra(&mut hb)?;
-        }
-        // Resources that the helper keeps and binds, before the result.
-        for _ in 0..self.tape.below(2) {
-            let kind = self.pick(&[Kind::Reg, Kind::Wire, Kind::Mem, Kind::Instance]);
-            self.declare_leaf(&mut hb, kind, None, true)?;
         }
         let (ret, result, parts) = match self.fresh_shape() {
             0 => self.unit_shape(&mut hb)?,
@@ -498,7 +495,7 @@ impl Builder {
                 envs: vec![Env::of(&sig.params, &tuple)],
                 sig: sig.clone(),
             };
-            self.bind_child_inputs(&mut hb.ctx, &child, None, &mut hb.body)?;
+            self.bind_child_inputs(&mut hb.ctx, &child, None, HANDLE_DEPTH, &mut hb.body)?;
         }
         let fty = FTy::Instance(sig.name, args);
         Ok(Some((name, fty, Leaf::Instance { module: j, tuple })))
@@ -690,7 +687,7 @@ impl Builder {
                 };
                 if !part.bound {
                     note!(self, caller_child_inputs);
-                    self.bind_child_inputs(ctx, &child, None, out)?;
+                    self.bind_child_inputs(ctx, &child, None, HANDLE_DEPTH, out)?;
                 }
                 self.expose_child_handles(ctx, &child)?;
             }

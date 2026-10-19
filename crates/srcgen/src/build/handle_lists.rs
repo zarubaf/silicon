@@ -19,7 +19,7 @@
 //! module context builds a list of one length (`S011`). The elements read
 //! as data after the call.
 
-use super::handles::{ListOf, ResHelper, Role, literal};
+use super::handles::{HANDLE_DEPTH, ListOf, ResHelper, Role, literal};
 use super::{Builder, Built, Ctx, Module};
 use crate::eval::Fault;
 use crate::program::{FTy, HBin, HExpr, Place, Radix, SExpr, Stmt, Ty};
@@ -176,7 +176,7 @@ impl Builder {
             }
             ListOf::Input { module, port, ty } => {
                 let child = self.declare_child(&mut inner, m, *module, &mut body)?;
-                self.bind_child_inputs(&mut inner, &child, Some(port), &mut body)?;
+                self.bind_child_inputs(&mut inner, &child, Some(port), HANDLE_DEPTH, &mut body)?;
                 let first = HExpr::Field(child.name, port.clone());
                 body.push(Stmt::HPush(list.clone(), first));
                 (FTy::Input(ty.clone()), None)
