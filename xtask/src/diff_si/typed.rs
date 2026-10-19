@@ -222,6 +222,7 @@ mod tests {
         let tools = Tools {
             lean: missing.clone(),
             silicon: missing,
+            texts: std::collections::BTreeSet::new(),
         };
         let error = report(&tools, dir.path(), 7, &case(7), "x").unwrap_err();
         assert!(format!("{error:#}").contains("no-such-tool"), "{error:#}");

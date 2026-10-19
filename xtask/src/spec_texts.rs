@@ -11,6 +11,7 @@
 //! `++` or `\` at the end of a line. A pin is an `expected-message` line that matches the text with
 //! each placeholder as a wildcard. A text that the code builds in pieces needs an entry in `ALLOW_FILE`.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -466,6 +467,13 @@ fn pin_file(path: &str) -> bool {
 fn pin_of(text: &str) -> Option<(String, String)> {
     let expected = expected_error(text, Marker::Si).ok()??;
     Some((expected.code, expected.message?))
+}
+
+/// The codes with a row in the message tables of section 6.2. A front end prints the same text
+/// for each of them (front-end spec 11.4).
+pub fn normative_codes(repo: &Repo) -> Result<BTreeSet<String>> {
+    let rows = spec_rows(&repo.read(Path::new(SPEC))?)?;
+    Ok(rows.into_iter().map(|row| row.code).collect())
 }
 
 /// The rule in `cargo xtask check`: every finding is a warning.
