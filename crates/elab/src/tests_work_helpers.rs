@@ -177,3 +177,55 @@ fn r4_registers_of_a_deep_helper_cost_the_registers_and_the_depth() {
     assert!(both <= deep + wide, "the work {both} follows n * l");
     assert!(both <= 120 * (256 + 256), "the work {both}");
 }
+
+/// The name of a child input of 2000 characters.
+fn long_port() -> String {
+    "p".repeat(2000)
+}
+
+/// W8. `n` bindings of one child input with a port name of 2000 characters in a `comptime for`.
+/// The second binding makes `S018` at the end of the body, before the lowering. The binding
+/// stores no copy of the name, so the work does not follow the length of the name.
+#[test]
+fn w8_bindings_of_a_child_input_with_a_long_name_copy_no_name() {
+    let at = |n: usize, key: u64| {
+        let port = long_port();
+        let src = format!(
+            "module C() domains() {{\n    input {port}: UInt[8];\n    output q: UInt[8];\n    \
+             q := {port};\n}}\n\
+             module M() domains() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    \
+             instance u = C();\n    comptime for i in 0..{n} {{\n        u.{port} := x;\n    }}\n    \
+             o := u.q;\n}}\n"
+        );
+        run(KEY + key, 1000, &src)
+    };
+    let (n, twice) = (at(100, 40), at(200, 41));
+    for r in [&n, &twice] {
+        assert_eq!(r.error.as_ref().map(|e| e.0.as_str()), Some("S018"));
+    }
+    assert_eq!(twice.counts.text_bytes, n.counts.text_bytes);
+    // Each added binding costs a few steps, not the 2000 bytes of the name.
+    assert!(twice.counts.total() - n.counts.total() <= 10 * 100);
+}
+
+/// W9. `n` children, each with one input of a port name of 2000 characters, bound once each in a
+/// `comptime for`. The work is linear in `n`.
+#[test]
+fn w9_one_binding_of_each_of_n_children_with_a_long_name_is_linear() {
+    let at = |n: usize, key: u64| {
+        let port = long_port();
+        let src = format!(
+            "module C() domains() {{\n    input {port}: UInt[8];\n    output q: UInt[8];\n    \
+             q := {port};\n}}\n\
+             module M() domains() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    \
+             comptime for i in 0..{n} {{\n        instance u = C();\n        u.{port} := x;\n    }}\n    \
+             o := x;\n}}\n"
+        );
+        run(KEY + key, 1000, &src)
+    };
+    let (n, twice) = (at(100, 42), at(200, 43));
+    for r in [&n, &twice] {
+        assert_eq!(r.error, None);
+    }
+    doubles(&n, &twice);
+}
