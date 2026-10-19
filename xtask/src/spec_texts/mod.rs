@@ -10,8 +10,14 @@
 //! text is in a front end when it is a substring of the string literals that the code joins with
 //! `++` or `\` at the end of a line. A pin is an `expected-message` line that matches the text with
 //! each placeholder as a wildcard. A text that the code builds in pieces needs an entry in `ALLOW_FILE`.
+//! A string literal of `CLI_PINS` that is a whole `error[Sxxx]: LINE:COL: MESSAGE` line is a pin too.
+//!
+//! The rule also reads the other direction. Each message literal at an error site of a front end
+//! (see `sites`) must be in a row, or `ALLOW_FILE` lists it as `unlisted`. A site that builds its
+//! message in a helper is unscannable, and `ALLOW_FILE` lists it by its file.
 
 mod scan;
+mod sites;
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -24,6 +30,7 @@ use testkit::{Marker, expected_error};
 use crate::repo::Repo;
 use crate::violation::{Severity, Violation};
 use scan::{Lang, lean_non_test, runs, rust_non_test};
+use sites::{Site, lean_sites, rust_sites};
 
 const ALLOW_FILE: &str = "tests/inventory/spec-texts.txt";
 const SPEC: &str = "doc/design/2026-10-09-frontend.md";
@@ -31,7 +38,11 @@ const SECTION: &str = "### 6.2 ";
 const RULE: &str = "spec-texts";
 const LEAN_DIR: &str = "lean/Silicon/Source/";
 const RUST_DIR: &str = "crates/";
+/// The crates of the Rust front end, whose error sites the rule reads.
+const FRONT_END_CRATES: [&str; 5] = ["parse", "syntax", "resolve", "typeck", "elab"];
 const PIN_DIR: &str = "tests/source/";
+/// The test of the driver that asserts the full text of a message.
+const CLI_PINS: &str = "crates/driver/tests/cli.rs";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
@@ -39,6 +50,8 @@ enum Part {
     Lean,
     Rust,
     Pin,
+    /// An error text of a front end that has no row. The gap names it, not a row.
+    Unlisted,
 }
 
 impl Part {
@@ -48,6 +61,7 @@ impl Part {
             Self::Lean => "Lean literal",
             Self::Rust => "Rust literal",
             Self::Pin => "`expected-message` pin",
+            Self::Unlisted => "row in section 6.2",
         }
     }
 }
@@ -82,9 +96,10 @@ fn parse_allow(text: &str) -> (Vec<Gap>, Vec<String>) {
             "lean" => Part::Lean,
             "rust" => Part::Rust,
             "pin" => Part::Pin,
+            "unlisted" => Part::Unlisted,
             other => {
                 problems.push(format!(
-                    "{ALLOW_FILE}:{at}: the part `{other}` is not fix, lean, rust, or pin"
+                    "{ALLOW_FILE}:{at}: the part `{other}` is not fix, lean, rust, pin, or unlisted"
                 ));
                 continue;
             }
@@ -217,8 +232,12 @@ fn finding(strict: bool, path: &str, line: Option<usize>, message: String) -> Vi
 struct Sources {
     lean: Vec<String>,
     rust: Vec<String>,
-    /// The code and the message of each `expected-error` and `expected-message` pair.
+    /// The code and the message of each `expected-error` and `expected-message` pair, and of
+    /// each full message in `CLI_PINS`.
     pins: Vec<(String, String)>,
+    /// The error sites of the Lean and of the Rust front end.
+    lean_sites: Vec<Site>,
+    rust_sites: Vec<Site>,
 }
 
 fn violations(
@@ -267,7 +286,8 @@ fn violations(
             }
         }
     }
-    for g in allow {
+    unlisted(rows, src, allow, strict, &mut out);
+    for g in allow.iter().filter(|g| g.part != Part::Unlisted) {
         if !rows.iter().any(|r| r.id() == g.row) {
             out.push(finding(
                 strict,
@@ -283,12 +303,81 @@ fn violations(
     Ok(out)
 }
 
+/// The first characters of a text, which name it in the inventory.
+const KEY_CHARS: usize = 48;
+
+/// The inventory name of a finding: the code and the start of the text, or the file of a site
+/// that has no literal.
+fn unlisted_key(site: &Site) -> String {
+    match &site.text {
+        Some(t) => format!(
+            "{} {}",
+            site.code,
+            t.chars().take(KEY_CHARS).collect::<String>().trim_end()
+        ),
+        None => format!("{} unscannable {}", site.code, site.path),
+    }
+}
+
+/// The findings for the error sites with a text that no row of section 6.2 holds, and for the
+/// lines of `unlisted` that no site needs any more.
+fn unlisted(rows: &[Row], src: &Sources, allow: &[Gap], strict: bool, out: &mut Vec<Violation>) {
+    let normals: Vec<String> = rows.iter().map(|r| normalize(&r.text)).collect();
+    let listed = |t: &str| {
+        normals
+            .iter()
+            .any(|r| t.contains(r.as_str()) || r.contains(t))
+    };
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let sides = [("Lean", &src.lean_sites), ("Rust", &src.rust_sites)];
+    for (side, sites) in sides {
+        for site in sites {
+            if site.text.as_deref().is_some_and(listed) {
+                continue;
+            }
+            let key = unlisted_key(site);
+            seen.insert(key.clone());
+            let gap = allow
+                .iter()
+                .any(|g| g.part == Part::Unlisted && g.row == key);
+            if !gap {
+                let what = match site.text {
+                    Some(_) => "has no row in section 6.2; add a row, or list it".to_owned(),
+                    None => "builds its message in a helper that the scanner cannot see; \
+                             write the text as a literal at the site, or list it"
+                        .to_owned(),
+                };
+                out.push(finding(
+                    strict,
+                    &site.path,
+                    Some(site.line),
+                    format!("the {side} error text `{key}` {what} in `{ALLOW_FILE}` as `unlisted | {key} | <issue>`"),
+                ));
+            }
+        }
+    }
+    for g in allow.iter().filter(|g| g.part == Part::Unlisted) {
+        if !seen.contains(&g.row) {
+            out.push(finding(
+                strict,
+                ALLOW_FILE,
+                None,
+                format!(
+                    "`{ALLOW_FILE}` lists `{}` (#{}), which no error site has now: remove its line",
+                    g.row, g.issue
+                ),
+            ));
+        }
+    }
+}
+
 fn missing(id: &str, part: Part) -> String {
     let how = match part {
         Part::Fix => "end the text with a clause after `; ` that tells the user what to do",
         Part::Lean => "print the text exactly in `lean/Silicon/Source`",
         Part::Rust => "print the text exactly in `crates/`",
         Part::Pin => "add a file under `tests/source` with `// expected-message:` for the text",
+        Part::Unlisted => "add a row to the table of section 6.2",
     };
     format!(
         "the text `{id}` has no {}; {how}",
@@ -312,6 +401,14 @@ fn pin_of(text: &str) -> Option<(String, String)> {
     Some((expected.code, expected.message?))
 }
 
+/// The code and the message of a string literal of `CLI_PINS` that is a whole diagnostic line,
+/// `error[Sxxx]: LINE:COL: MESSAGE`. The position may be holes or digits.
+fn cli_pin(run: &str) -> Option<(String, String)> {
+    let re = Regex::new(r"^error\[(S\d{3})\]: (?:\{\}|\d+):(?:\{\}|\d+): (.*?)\n?$").ok()?;
+    let m = re.captures(run)?;
+    Some((m[1].to_owned(), m[2].to_owned()))
+}
+
 /// The codes with a row in the message tables of section 6.2. A front end prints the same text
 /// for each of them (front-end spec 11.4).
 pub fn normative_codes(repo: &Repo) -> Result<BTreeSet<String>> {
@@ -331,16 +428,33 @@ pub fn run(repo: &Repo, strict: bool) -> Result<Vec<Violation>> {
         lean: Vec::new(),
         rust: Vec::new(),
         pins: Vec::new(),
+        lean_sites: Vec::new(),
+        rust_sites: Vec::new(),
     };
     for f in &repo.files {
         let Some(path) = f.path.to_str() else {
             continue;
         };
         if path.starts_with(LEAN_DIR) && lean_non_test(path) {
-            src.lean.extend(runs(&repo.read(&f.path)?, Lang::Lean));
+            let text = repo.read(&f.path)?;
+            src.lean.extend(runs(&text, Lang::Lean));
+            src.lean_sites.extend(lean_sites(path, &text)?);
         } else if path.starts_with(RUST_DIR) {
             if let Some(text) = rust_non_test(path, &repo.read(&f.path).unwrap_or_default()) {
                 src.rust.extend(runs(&text, Lang::Rust));
+                if FRONT_END_CRATES
+                    .iter()
+                    .any(|c| path.starts_with(&format!("{RUST_DIR}{c}/")))
+                {
+                    src.rust_sites.extend(rust_sites(path, &text));
+                }
+            }
+            if path == CLI_PINS {
+                src.pins.extend(
+                    runs(&repo.read(&f.path)?, Lang::Rust)
+                        .iter()
+                        .filter_map(|r| cli_pin(r)),
+                );
             }
         } else if let Some(text) = pin_file(path).then(|| repo.read(&f.path)) {
             src.pins.extend(pin_of(&text?));
@@ -365,6 +479,8 @@ mod tests {
                 .iter()
                 .map(|(c, m)| ((*c).to_owned(), (*m).to_owned()))
                 .collect(),
+            lean_sites: Vec::new(),
+            rust_sites: Vec::new(),
         }
     }
 
@@ -581,6 +697,87 @@ mod tests {
         assert_eq!(rust_non_test("crates/a/src/lib.rs", src).unwrap(), "a");
         assert!(lean_non_test("lean/Silicon/Source/Eval.lean"));
         assert!(!lean_non_test("lean/Silicon/Source/Test/Eval.lean"));
+    }
+
+    fn site(path: &str, code: &str, text: Option<&str>) -> Site {
+        Site {
+            path: path.to_owned(),
+            line: 7,
+            code: code.to_owned(),
+            text: text.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn an_error_text_with_no_row_is_unlisted_and_a_listed_one_is_not() {
+        let rows = spec_rows(TABLE).unwrap();
+        let mut s = complete();
+        s.lean_sites = vec![
+            site("a.lean", "S021", Some(UNCOVERED)),
+            site("a.lean", "S010", Some("the `{}` has no part")),
+        ];
+        s.rust_sites = vec![site("a.rs", "S021", Some(UNCOVERED))];
+        let got = messages(&rows, &s, &[]);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(
+            got[0].starts_with("the Lean error text `S010 the `{}` has no part` has no row"),
+            "{got:?}"
+        );
+        assert!(got[0].contains("unlisted | S010 the `{}` has no part | <issue>"));
+    }
+
+    #[test]
+    fn a_site_with_no_literal_is_unscannable() {
+        let rows = spec_rows(TABLE).unwrap();
+        let mut s = complete();
+        s.rust_sites = vec![site("crates/elab/src/a.rs", "S017", None)];
+        let got = messages(&rows, &s, &[]);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("`S017 unscannable crates/elab/src/a.rs`"));
+        assert!(got[0].contains("scanner cannot see"));
+    }
+
+    #[test]
+    fn the_inventory_excuses_an_unlisted_text_and_goes_stale() {
+        let rows = spec_rows(TABLE).unwrap();
+        let mut s = complete();
+        s.rust_sites = vec![site("a.rs", "S010", Some("the part does not exist"))];
+        let gap = |row: &str| Gap {
+            row: row.to_owned(),
+            part: Part::Unlisted,
+            issue: 9,
+        };
+        assert!(messages(&rows, &s, &[gap("S010 the part does not exist")]).is_empty());
+        let stale = messages(&rows, &complete(), &[gap("S010 the part does not exist")]);
+        assert_eq!(stale.len(), 1, "{stale:?}");
+        assert!(stale[0].contains("which no error site has now"));
+        let (gaps, problems) = parse_allow("unlisted | S010 the part | 9\n");
+        assert!(problems.is_empty() && gaps[0].part == Part::Unlisted);
+    }
+
+    #[test]
+    fn a_full_message_in_the_driver_test_is_a_pin() {
+        let run = "error[S011]: {line}:5: the `eval` command makes no hardware, but its expression reaches this {hw} in `mk`; fix\n";
+        let literal = runs(
+            &format!("let t = format!(\"{}\");", run.replace('\n', "\\n")),
+            Lang::Rust,
+        );
+        let pin = cli_pin(&literal[0]).unwrap();
+        assert_eq!(pin.0, "S011");
+        assert_eq!(
+            pin.1,
+            "the `eval` command makes no hardware, but its expression reaches this {} in `mk`; fix"
+        );
+        let rows = vec![Row {
+            line: 1,
+            code: "S011".to_owned(),
+            case: "Hardware".to_owned(),
+            text: "the `eval` command makes no hardware, but its expression reaches this {s} in `{h}`; fix".to_owned(),
+        }];
+        let mut s = src(&[], &[], &[]);
+        s.pins.push(pin);
+        assert!(messages(&rows, &s, &[]).iter().all(|m| !m.contains("pin")),);
+        assert_eq!(cli_pin("error[S011]: text"), None);
     }
 
     #[test]
