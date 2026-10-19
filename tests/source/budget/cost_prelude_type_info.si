@@ -1,0 +1,13 @@
+// The first use of `TypeInfo` pays for its struct use, and it completes `FieldInfo` and `VariantInfo`
+// inside that work. The second use only reads the done entry. The exact fuel succeeds, and one unit less
+// gives `S015`.
+// FUEL 490
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = PortKey("a", false, 0);
+    let t = TypeInfo("struct", list(FieldInfo), Bool, 0, 0, list(VariantInfo));
+    let u = TypeInfo("struct", list(FieldInfo), Bool, 0, 0, list(VariantInfo));
+    diagnostic("t", t);
+    o := true;
+}
