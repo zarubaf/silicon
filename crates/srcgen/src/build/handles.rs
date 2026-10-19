@@ -933,7 +933,7 @@ mod tests {
             ("result data (let v = h())", s.scratch_calls > 0),
             ("list of handles", s.list_groups > 0),
             ("list of inputs", s.list_input_groups > 0),
-            (":= through a container", s.container_binds > 0),
+            (":= through a container", s.container_binds > 0), // a direct `:=` only
             ("caller binds a child input", s.caller_child_inputs > 0),
             ("nested call", s.nested_calls > 0),
             ("repeated call", s.repeat_calls > 0),
