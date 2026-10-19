@@ -567,20 +567,12 @@ impl Builder {
             return Ok(());
         };
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
+        if !self.afford(ctx, Self::declarations_of(&h)) {
+            return Ok(());
+        }
         called!(self, ctx, i);
         #[cfg(test)]
         self.note_declarations(&h);
-        let declared = h
-            .body
-            .iter()
-            .filter(|s| {
-                matches!(
-                    s,
-                    Stmt::Reg(..) | Stmt::Wire(..) | Stmt::Mem(..) | Stmt::Instance(..)
-                )
-            })
-            .count();
-        self.decls += declared * ctx.envs.len();
         let (callee, args) = self.data_args(ctx, i, 0)?;
         for (j, tuple) in &h.children {
             let known = self.contexts.get_mut(*j).ok_or(Fault::Type)?;

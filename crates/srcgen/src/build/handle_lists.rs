@@ -140,7 +140,6 @@ impl Builder {
             return Ok(());
         }
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
-        called!(self, ctx, i);
         let Role::List(of) = h.role else {
             return Err(Fault::Type);
         };
@@ -151,15 +150,28 @@ impl Builder {
         let Some(mut inner) = self.iterations(ctx, &binder, &lo, &hi)? else {
             return Ok(());
         };
-        self.decls += inner.envs.len();
+        // Each iteration declares the resources of its element: one, or all
+        // that the helper of the element declares.
+        let source = match &of {
+            ListOf::Reg(ty) => self.list_source(m, ty, true),
+            ListOf::Wire(ty) => self.list_source(m, ty, false),
+            ListOf::Input { .. } => None,
+        };
+        let per_element = source
+            .and_then(|d| self.res_helpers.get(d))
+            .map_or(1, Self::declarations_of);
+        if !self.afford(ctx, len as usize * per_element) {
+            return Ok(());
+        }
+        called!(self, ctx, i);
         let mut body = Vec::new();
         let (elem, readable) = match &of {
             ListOf::Reg(ty) => {
-                self.list_resource(&mut inner, m, (&list, ty, true), &mut body)?;
+                self.list_resource(&mut inner, m, (&list, ty, true), source, &mut body)?;
                 (FTy::Reg(ty.clone()), Some(ty.clone()))
             }
             ListOf::Wire(ty) => {
-                self.list_resource(&mut inner, m, (&list, ty, false), &mut body)?;
+                self.list_resource(&mut inner, m, (&list, ty, false), source, &mut body)?;
                 (FTy::Wire(ty.clone()), Some(ty.clone()))
             }
             ListOf::Input { module, port, ty } => {
@@ -185,22 +197,30 @@ impl Builder {
         Ok(())
     }
 
-    /// One iteration of a group of registers or wires: a `reg` or `wire`,
-    /// or a call of a helper that returns one unbound, and its push.
-    fn list_resource(
-        &mut self,
-        inner: &mut Ctx,
-        m: &mut Module,
-        (list, ty, reg): (&str, &Ty, bool),
-        body: &mut Vec<Stmt>,
-    ) -> Built {
+    /// The helper whose result each element of a group of registers (or
+    /// wires) of the type `ty` is, in one draw in two: a helper that declares
+    /// and returns one such resource unbound.
+    fn list_source(&mut self, m: &Module, ty: &Ty, reg: bool) -> Option<usize> {
         let declarers: Vec<usize> = self
             .usable_declarers(m)
             .into_iter()
             .filter(|&d| self.returns_unbound(d, ty, reg))
             .collect();
-        let name = if self.tape.flag() && !declarers.is_empty() {
-            let d = declarers[self.tape.index(declarers.len())];
+        let pick = self.tape.index(declarers.len());
+        declarers.get(pick).copied().filter(|_| self.tape.flag())
+    }
+
+    /// One iteration of a group of registers or wires: a `reg` or `wire`,
+    /// or a call of the helper `source`, and its push.
+    fn list_resource(
+        &mut self,
+        inner: &mut Ctx,
+        m: &mut Module,
+        (list, ty, reg): (&str, &Ty, bool),
+        source: Option<usize>,
+        body: &mut Vec<Stmt>,
+    ) -> Built {
+        let name = if let Some(d) = source {
             called!(self, inner, d);
             let (callee, args) = self.data_args(inner, d, 0)?;
             let name = m.names.fresh("t");
