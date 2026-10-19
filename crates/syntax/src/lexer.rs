@@ -70,6 +70,11 @@ pub fn lex(input: &str, depth: usize) -> Lexed {
     out
 }
 
+/// The text of a character that starts no token (front-end spec, section 6.2).
+const INVALID_CHAR: &str = "invalid character; outside a string or a comment, the source has only \
+     names, numbers, and symbols, and a name has only ASCII letters, digits, and `_`; remove the \
+     character";
+
 /// Whitespace is space, tab, CR, and LF only. Every other character, also U+FEFF and
 /// Unicode whitespace, is an invalid character, as in the Lean lexer.
 fn is_whitespace(c: char) -> bool {
@@ -177,7 +182,7 @@ impl Lexer<'_> {
             return self.bracket(*kind);
         }
         self.pos += first.len_utf8();
-        (SyntaxKind::Error, Some("invalid character".into()))
+        (SyntaxKind::Error, Some(INVALID_CHAR.into()))
     }
 
     /// Tracks the open brackets. A token that is not a bracket passes unchanged.
