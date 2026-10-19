@@ -6,7 +6,7 @@ use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn tapes(count: usize) -> Vec<Vec<u32>> {
+pub(super) fn tapes(count: usize) -> Vec<Vec<u32>> {
     let mut runner = TestRunner::deterministic();
     let strategy = vec(any::<u32>(), 0..4096);
     (0..count)
@@ -275,8 +275,9 @@ fn programs_cover_slice_1() {
     assert!(shape.contexts * 10 >= 400, "{shape:?}");
 }
 
-/// The mean program stays near the size of the slice-1 programs (2457
-/// bytes over these 256 tapes before containers): at most 50% more.
+/// The mean program stays small: at most 4300 bytes over these 256 tapes.
+/// The programs without helpers that take resources have a mean of 3594
+/// bytes, and these helpers add at most 20%.
 #[test]
 fn the_mean_program_stays_small() {
     const TAPES: usize = 256;
@@ -285,7 +286,7 @@ fn the_mean_program_stays_small() {
         .filter_map(|tape| build(tape).ok())
         .map(|p| p.text().len())
         .sum();
-    assert!(total / TAPES <= 3700, "the mean is {} bytes", total / TAPES);
+    assert!(total / TAPES <= 4300, "the mean is {} bytes", total / TAPES);
 }
 
 /// The most levels of container types in `t`.

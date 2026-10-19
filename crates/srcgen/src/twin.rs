@@ -17,6 +17,10 @@
 //!   per iteration, so the twin never depends on how elaboration treats a
 //!   declaration that sibling blocks repeat in one frame (spec 7.3).
 //! - `const`s, `comptime fn`s, static `let`s, and `static_assert`s go.
+//! - A helper that takes or declares resources (its name starts with `H`)
+//!   goes too. Each call of it becomes its body, with new names for its
+//!   declarations, a typed `let` for each data actual, and the resource
+//!   that a handle actual names in the place of the handle formal.
 //!
 //! A static fault is a builder bug. The twin then keeps the construct as it
 //! is, with its static names (`build::STATIC_PREFIXES` and digits).
@@ -82,6 +86,7 @@ pub fn twin(program: &Program) -> Twin {
                 _ => None,
             })
             .collect(),
+        calls: 0,
         enums: program
             .items
             .iter()
@@ -110,7 +115,7 @@ pub fn twin(program: &Program) -> Twin {
                 ret,
                 body,
                 result,
-            } => {
+            } if !is_resource(name) => {
                 let mut f = Frame::default();
                 Some(Item::Helper {
                     name: name.clone(),
@@ -196,6 +201,8 @@ fn literal(v: Value) -> Option<SExpr> {
 struct Frame {
     env: Env,
     names: BTreeMap<String, String>,
+    /// The resource that each handle formal of an inlined helper names.
+    handles: BTreeMap<String, String>,
     suffix: String,
 }
 
@@ -207,11 +214,18 @@ impl Frame {
     }
 
     fn name(&self, name: &str) -> String {
-        self.names
+        self.handles
             .get(name)
+            .or_else(|| self.names.get(name))
             .cloned()
             .unwrap_or_else(|| name.to_owned())
     }
+}
+
+/// Whether the helper `name` takes or declares resources. The twin inlines
+/// its calls.
+fn is_resource(name: &str) -> bool {
+    name.starts_with('H')
 }
 
 struct Writer<'a> {
@@ -225,6 +239,8 @@ struct Writer<'a> {
     hw_values: BTreeMap<String, String>,
     /// The enums of the program.
     enums: BTreeMap<String, EnumDef>,
+    /// The helper calls that the twin has inlined.
+    calls: u32,
 }
 
 impl Writer<'_> {
@@ -286,6 +302,9 @@ impl Writer<'_> {
     fn fty(&self, t: &FTy, fr: &Frame) -> FTy {
         match t {
             FTy::Data(t) => FTy::Data(self.ty(t, fr)),
+            FTy::Unit => FTy::Unit,
+            FTy::Reg(t) => FTy::Reg(self.ty(t, fr)),
+            FTy::Wire(t) => FTy::Wire(self.ty(t, fr)),
         }
     }
 
@@ -428,6 +447,7 @@ impl Writer<'_> {
                 g.clone(),
                 args.iter().map(|a| self.hexpr(a, fr)).collect(),
             ),
+            HExpr::Unit => HExpr::Unit,
         }
     }
 
@@ -444,6 +464,7 @@ impl Writer<'_> {
         let mut inner = Frame {
             env,
             names: fr.names.clone(),
+            handles: fr.handles.clone(),
             suffix,
         };
         Stmt::Block(self.stmts(body, &mut inner))
@@ -546,7 +567,46 @@ impl Writer<'_> {
             // The twin compares outputs only; a record is no output.
             Stmt::Diagnostic(..) => {}
             Stmt::Block(body) => out.push(self.block(body, fr, fr.env.clone(), fr.suffix.clone())),
+            Stmt::Call(f, args) => self.inline(f, args, fr, out),
         }
+    }
+
+    /// The body of the helper `f` at a call with `args`. A data formal
+    /// becomes a typed `let` of its actual, so the actual converts as the
+    /// formal does. A handle formal names the resource of its actual.
+    fn inline(&mut self, f: &str, args: &[HExpr], fr: &Frame, out: &mut Vec<Stmt>) {
+        let found = self.items.iter().find_map(|item| match item {
+            Item::Helper {
+                name, params, body, ..
+            } if name == f => Some((params, body)),
+            _ => None,
+        });
+        let Some((params, body)) = found else {
+            panic!("a call of the builder names no helper: {f}");
+        };
+        self.calls += 1;
+        let mut callee = Frame {
+            suffix: format!("_c{}", self.calls),
+            ..Frame::default()
+        };
+        for ((name, t), arg) in params.iter().zip(args) {
+            if let FTy::Data(t) = t {
+                let ty = self.ty(t, &callee);
+                let value = self.hexpr(arg, fr);
+                out.push(Stmt::Let {
+                    name: callee.declare(name),
+                    mutable: false,
+                    ty: Some(ty),
+                    value,
+                });
+            } else if let HExpr::Name(n) = arg {
+                callee.handles.insert(name.clone(), fr.name(n));
+            } else {
+                panic!("a handle actual of the builder is no name: {arg:?}");
+            }
+        }
+        let body = self.stmts(body, &mut callee);
+        out.extend(body);
     }
 }
 
@@ -580,7 +640,7 @@ fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
     let all = |xs: &[HExpr]| xs.iter().map(|a| subst(a, map)).collect::<Vec<_>>();
     match e {
         HExpr::Name(n) => map.get(n).cloned().unwrap_or_else(|| e.clone()),
-        HExpr::Field(..) | HExpr::Static(_) | HExpr::Make(..) => e.clone(),
+        HExpr::Field(..) | HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => e.clone(),
         HExpr::Unary(op, a) => HExpr::Unary(*op, sub(a)),
         HExpr::Binary(op, a, b) => HExpr::Binary(*op, sub(a), sub(b)),
         HExpr::If(c, a, b) => HExpr::If(sub(c), sub(a), sub(b)),
@@ -905,6 +965,47 @@ mod tests {
         assert_eq!(
             t.text,
             "fn h0(x0: UInt[8]) -> UInt[8] {\n    return x0;\n}\nmodule M0() domains() {\n    output o0: UInt[8];\n    input i0: UInt[2];\n    instance u0 = M1_f0();\n    u0.i0 := i0;\n    o0 := u0.o0;\n}\nmodule M1_f0() domains() {\n    input i0: UInt[2];\n    output o0: UInt[8];\n    o0 := h0(i0);\n}\n"
+        );
+        assert!(t.static_names().is_empty(), "{:?}", t.static_names());
+    }
+
+    /// A call of a helper that binds a register inlines the body: the
+    /// data actual becomes a typed `let`, and the handle formal names the
+    /// register. Two calls get two sets of names.
+    #[test]
+    fn the_twin_inlines_a_helper_that_binds_a_formal() {
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![
+                ("a0".to_owned(), FTy::Reg(uint(8))),
+                ("x1".to_owned(), uint(8).into()),
+            ],
+            mut_first: false,
+            ret: FTy::Unit,
+            body: vec![
+                Stmt::Let {
+                    name: "l0".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: hbin(HBin::Addw, hname("a0"), hname("x1")),
+                },
+                connect("a0", hname("l0")),
+            ],
+            result: HExpr::Unit,
+        };
+        let call = |actual: HExpr| Stmt::Call("H0".to_owned(), vec![hname("r0"), actual]);
+        let body = vec![
+            Stmt::Input("i0".to_owned(), uint(8)),
+            Stmt::Output("o0".to_owned(), uint(8)),
+            Stmt::Reg("r0".to_owned(), uint(8), int(0)),
+            call(hname("i0")),
+            connect("o0", hname("r0")),
+        ];
+        let m0 = module("M0", &[], true, body);
+        let t = twin(&program(vec![helper, m0], Vec::new()));
+        assert_eq!(
+            t.text,
+            "module M0() {\n    input i0: UInt[8];\n    output o0: UInt[8];\n    reg r0: UInt[8] = 0;\n    let x1_c1: UInt[8] = i0;\n    let l0_c1 = (r0 +% x1_c1);\n    r0 := l0_c1;\n    o0 := r0;\n}\n"
         );
         assert!(t.static_names().is_empty(), "{:?}", t.static_names());
     }

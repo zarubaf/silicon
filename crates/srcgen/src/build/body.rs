@@ -185,6 +185,7 @@ impl Builder {
             lists: Vec::new(),
             counters: Vec::new(),
             enums: Vec::new(),
+            pending: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -386,6 +387,7 @@ impl Builder {
             lists: Vec::new(),
             counters: Vec::new(),
             enums: Vec::new(),
+            pending: Vec::new(),
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
@@ -466,10 +468,15 @@ impl Builder {
         let mut eregs = Vec::new();
         let mut instances = 0;
         let mut extra = self.enum_stmts();
+        let mut handles = self.handle_stmts();
         for _ in 0..self.tape.below(max + 1) {
             while extra > 0 && self.side_below(3) == 0 {
                 self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
                 extra -= 1;
+            }
+            while handles > 0 && self.side_below(3) == 0 {
+                self.handle_stmt(ctx, m, &mut out)?;
+                handles -= 1;
             }
             let nested = level < NESTING;
             match self.statement_kind() {
@@ -506,8 +513,12 @@ impl Builder {
         for _ in 0..extra {
             self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
         }
+        for _ in 0..handles {
+            self.handle_stmt(ctx, m, &mut out)?;
+        }
         self.close_regs(ctx, regs, &mut out)?;
         self.close_enum_regs(ctx, eregs, &mut out);
+        self.close_pending(ctx, &mut out)?;
         Ok(out)
     }
 

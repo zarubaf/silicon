@@ -320,6 +320,13 @@ impl<'a> Walk<'a> {
             }
             Stmt::Error(_) => {}
             Stmt::Block(body) => self.stmts(body, false),
+            Stmt::Call(f, args) => {
+                self.rename(f);
+                self.args(f, args, HExpr::Static(zero()));
+                for a in args {
+                    self.hexpr(a);
+                }
+            }
         }
     }
 
@@ -823,7 +830,8 @@ impl<'a> Walk<'a> {
 
     fn fty(&mut self, t: &mut FTy) {
         match t {
-            FTy::Data(t) => self.ty(t),
+            FTy::Data(t) | FTy::Reg(t) | FTy::Wire(t) => self.ty(t),
+            FTy::Unit => {}
         }
     }
 
@@ -1049,6 +1057,7 @@ impl<'a> Walk<'a> {
                     self.hexpr(a);
                 }
             }
+            HExpr::Unit => {}
             HExpr::Receiver(recv, f, args) => {
                 self.hexpr(recv);
                 self.rename(f);
