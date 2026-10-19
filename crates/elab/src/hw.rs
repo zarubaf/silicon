@@ -17,6 +17,8 @@ pub(crate) struct HwId(usize);
 
 /// The core name of the port with the source name `x`. A port keeps its source name.
 pub(crate) fn port_name(x: &str) -> Name {
+    #[cfg(test)]
+    crate::counters::add(crate::counters::Count::TextBytes, x.len() as u64);
     Name {
         head: x.to_owned(),
         rest: Vec::new(),

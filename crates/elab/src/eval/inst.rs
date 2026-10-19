@@ -34,7 +34,7 @@
 use super::typed::Whole;
 use super::{Evaluator, Let, Mode, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, Kind, Port, Seen, Val, port_name};
+use crate::hw::{Graph, Handle, Kind, Port, Seen, Val};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
@@ -90,7 +90,8 @@ pub(crate) struct ChildDecl {
     pub name: String,
 }
 
-/// The target of a `:=` binding: an own resource, or an input of the child number `index`.
+/// The target of a `:=` binding: an own resource, or an input of the child number `index`. The
+/// input names its port by symbol, so a binding copies no name; the lowering renders it.
 pub(crate) enum Sink {
     Own {
         kind: Kind,
@@ -100,7 +101,7 @@ pub(crate) enum Sink {
     Child {
         index: usize,
         inst: PathId,
-        port: Name,
+        port: Sym,
         ty: Ty,
     },
 }
@@ -988,12 +989,11 @@ impl Evaluator<'_> {
                     let x = self.second_binding(pos, subject, first, decl);
                     self.breach(pos, x);
                 }
-                let name = port_name(self.syms.texts.get(port.sym).map_or("", String::as_str));
                 let ty = self.tys.get(port.ty).clone();
                 Sink::Child {
                     index: inst,
                     inst: path,
-                    port: name,
+                    port: port.sym,
                     ty,
                 }
             }
