@@ -3,7 +3,7 @@
 //! of passes 2 and 3 apart, because pass 2 errors rank before pass 3 errors (design
 //! section 6.2). It recurses over the AST, so it runs on the front-end thread.
 
-use crate::prelude::{DOMAIN_TEXT, INSTANCE_TEXT, Prelude, RESPONSE, later_slice, node};
+use crate::prelude::{Built, DOMAIN_TEXT, INSTANCE_TEXT, Leaf, Prelude, STRUCTS, later_slice};
 use crate::scope::Scopes;
 use crate::{
     Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target, VariantNames, VariantRef,
@@ -16,12 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Resolves the names of the items. Returns the table, or the errors of the first pass with
 /// an error.
-pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
+pub(crate) fn run(items: &[Item], built: &[Built]) -> Result<Table, Vec<Error>> {
     let mut walker = Walker::default();
     for item in items {
         walker.declare_item(item);
     }
-    let response = walker.declare_response();
+    walker.declare_prelude(built);
     for item in items {
         walker.item(item);
     }
@@ -34,6 +34,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
         calls,
         variants,
         variant_names,
+        prelude,
         ..
     } = walker;
     let mut errors = if duplicates.is_empty() {
@@ -49,7 +50,7 @@ pub(crate) fn run(items: &[Item]) -> Result<Table, Vec<Error>> {
             calls,
             variants,
             variant_names,
-            response,
+            prelude,
         });
     }
     errors.sort_by_key(|e| e.pos);
@@ -64,7 +65,7 @@ pub(crate) fn run_expr(resolved: &Resolved, expr: &Expr) -> Result<ExprTable, Ve
         decls: resolved.decls.clone(),
         scopes: Scopes::of_items(resolved.items.clone()),
         variant_names: resolved.variant_names.clone(),
-        response: Some(resolved.response),
+        prelude: resolved.prelude.clone(),
         ..Walker::default()
     };
     walker.expr(expr);
@@ -110,8 +111,8 @@ struct Walker {
     /// How many names so far resolved to a parameter. A `fn` item reads the change over its
     /// signature to tell whether it is generic.
     param_uses: usize,
-    /// The declaration of the prelude struct `ReadResponse`.
-    response: Option<DeclId>,
+    /// The declaration of each prelude struct, in the order of `STRUCTS`.
+    prelude: Vec<DeclId>,
 }
 
 impl Walker {
@@ -162,36 +163,50 @@ impl Walker {
         }
     }
 
-    /// Declares the prelude struct and gives the names of its item their targets, past the item
-    /// scope. The name `ReadResponse` is not in the item scope, so a user item shadows it.
-    fn declare_response(&mut self) -> DeclId {
-        let pos = Pos { line: 0, col: 0 };
-        let decl = |walker: &mut Walker, k: usize, name: &str, kind: Kind| {
-            let id = DeclId(walker.decls.len());
-            walker.decls.push(Decl {
-                kind,
-                receiver: None,
-                name: name.to_owned(),
-                pos,
-                generic: false,
-            });
-            walker.names.insert(NodeId::prelude(k), Target::Decl(id));
-            id
-        };
-        let response = decl(self, node::NAME, RESPONSE, Kind::Struct);
-        let t = decl(self, node::PARAM, "T", Kind::Param);
-        self.names.insert(
-            NodeId::prelude(node::PARAM_TYPE),
-            Target::Prelude(Prelude::Type),
-        );
-        self.names
-            .insert(NodeId::prelude(node::DATA_TYPE), Target::Decl(t));
-        self.names.insert(
-            NodeId::prelude(node::VALID_TYPE),
-            Target::Prelude(Prelude::Bool),
-        );
-        self.response = Some(response);
-        response
+    /// Declares the prelude structs and gives the names of their items their targets, past the
+    /// item scope. Their names are not in the item scope, so a user item shadows them.
+    fn declare_prelude(&mut self, built: &[Built]) {
+        let structs: Vec<(&Built, &Ident, &[Param])> = built
+            .iter()
+            .filter_map(|b| match &b.item {
+                Item::Struct { name, params, .. } => Some((b, name, params.as_slice())),
+                _ => None,
+            })
+            .collect();
+        let decls: Vec<DeclId> = structs
+            .iter()
+            .map(|(_, name, _)| self.declare_hidden(name, Kind::Struct))
+            .collect();
+        for (b, _, params) in &structs {
+            let params: Vec<DeclId> = params
+                .iter()
+                .map(|p| self.declare_hidden(&p.name, Kind::Param))
+                .collect();
+            for &(id, leaf) in &b.uses {
+                let target = match leaf {
+                    Leaf::Prim(name) => Prelude::of(name).map(Target::Prelude),
+                    Leaf::Param => params.first().copied().map(Target::Decl),
+                };
+                if let Some(target) = target {
+                    self.names.insert(id, target);
+                }
+            }
+        }
+        self.prelude = decls;
+    }
+
+    /// Declares a name of a prelude struct, which has no source position.
+    fn declare_hidden(&mut self, name: &Ident, kind: Kind) -> DeclId {
+        let id = DeclId(self.decls.len());
+        self.decls.push(Decl {
+            kind,
+            receiver: None,
+            name: name.name.clone(),
+            pos: Pos { line: 0, col: 0 },
+            generic: false,
+        });
+        self.names.insert(name.id, Target::Decl(id));
+        id
     }
 
     /// Declares a name in the innermost scope. A use resolves to it only after this call.
@@ -671,13 +686,12 @@ impl Walker {
         }
     }
 
-    /// The prelude declaration of a name: a prelude name, else the prelude struct.
+    /// The prelude declaration of a name: a prelude name, else a prelude struct.
     fn prelude_target(&self, name: &str) -> Option<Target> {
-        match Prelude::of(name) {
-            Some(p) => Some(Target::Prelude(p)),
-            None if name == RESPONSE => self.response.map(Target::Decl),
-            None => None,
-        }
+        Prelude::of(name).map(Target::Prelude).or_else(|| {
+            let k = STRUCTS.iter().position(|s| s.name == name)?;
+            self.prelude.get(k).copied().map(Target::Decl)
+        })
     }
 
     fn is_module(&self, target: Target) -> bool {

@@ -14,6 +14,7 @@ method resolve::Resolved::decl
 method resolve::Resolved::depth
 method resolve::Resolved::is_prelude_item
 method resolve::Resolved::item
+method resolve::Resolved::prelude_struct
 method resolve::Resolved::receiver
 method resolve::Resolved::site
 method resolve::Resolved::target

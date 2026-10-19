@@ -133,7 +133,10 @@ pub struct Resolved {
     calls: BTreeMap<NodeId, Call>,
     variants: BTreeMap<NodeId, VariantRef>,
     variant_names: VariantNames,
-    response: DeclId,
+    /// The number of user items: the prelude struct items follow them in `ast`.
+    users: usize,
+    /// The declaration of each prelude struct, in the order of `prelude::STRUCTS`.
+    prelude: Vec<DeclId>,
 }
 
 impl Resolved {
@@ -143,12 +146,20 @@ impl Resolved {
         &self.ast
     }
 
-    /// Whether the item `i` of [`Resolved::ast`] is the prelude struct `ReadResponse`. It is the
-    /// last item, after the user items, so it changes no index of a user item. It has no source
-    /// position, so a pass that orders by position skips it.
+    /// Whether the item `i` of [`Resolved::ast`] is a prelude struct. The prelude structs follow
+    /// the user items, so they change no index of a user item. They have no source position, so
+    /// a pass that orders by position skips them.
     #[must_use]
     pub fn is_prelude_item(&self, i: usize) -> bool {
-        i + 1 == self.ast.len()
+        i >= self.users
+    }
+
+    /// The index in [`Resolved::ast`] of the prelude struct with a name, such as `ReadResponse`.
+    /// It reads a table of constant size, so it takes constant work.
+    #[must_use]
+    pub fn prelude_struct(&self, name: &str) -> Option<usize> {
+        let k = prelude::STRUCTS.iter().position(|s| s.name == name)?;
+        Some(self.users + k)
     }
 
     /// The syntax depth of the parse, which sizes the stack of each pass over the AST.
@@ -204,9 +215,11 @@ impl Resolved {
 /// and `Failed::Stack` if the machine cannot give the stack for the syntax depth.
 pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
     let (mut ast, depth) = parse.into_ast().map_err(Failed::Parse)?;
-    let table = parse::on_stack(depth, || walk::run(&ast)).map_err(Failed::Stack)?;
+    let built = prelude::build();
+    let table = parse::on_stack(depth, || walk::run(&ast, &built)).map_err(Failed::Stack)?;
     let table = table.map_err(Failed::Names)?;
-    ast.push(prelude::response_item());
+    let users = ast.len();
+    ast.extend(built.into_iter().map(|b| b.item));
     Ok(Resolved {
         ast,
         depth,
@@ -216,7 +229,8 @@ pub fn resolve(parse: Parse) -> Result<Resolved, Failed> {
         calls: table.calls,
         variants: table.variants,
         variant_names: table.variant_names,
-        response: table.response,
+        users,
+        prelude: table.prelude,
     })
 }
 
@@ -313,7 +327,7 @@ struct Table {
     calls: BTreeMap<NodeId, Call>,
     variants: BTreeMap<NodeId, VariantRef>,
     variant_names: VariantNames,
-    response: DeclId,
+    prelude: Vec<DeclId>,
 }
 
 #[cfg(test)]
