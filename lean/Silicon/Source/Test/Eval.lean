@@ -2706,6 +2706,33 @@ def useResponse : String := "module M() {\n  input a: UInt[8];\n  let t = ReadRe
   r.startsWith "S015 " && !r.startsWith "S015 0:"
 #guard (List.range 13).all fun f => top useResponse "M" (fuel := 50 + f) == "S015 3:11"
 
+/-!
+The prelude structs of slice 4 act as their declarations of section 5.6. A program constructs
+them, selects their fields, and serializes them with `prelude`. A user `struct String` or
+`struct FieldInfo` does not change them, and a user struct of one of their names shadows it. The
+first use of `TypeInfo` completes `FieldInfo` and `VariantInfo`, and each error of this work
+reports at the use.
+-/
+def key : String := "PortKey(\"a\", true, 2)"
+#guard out "" key == "(record (struct prelude PortKey ()) ((string \"a\") (bool true) (int 2)))"
+#guard out "" (key ++ ".index") == "(int 2)"
+#guard out "" "FieldInfo(\"x\", UInt[8]).ty" == "(type (uint 8))"
+#guard out "" "VariantInfo(\"v\", 1, list(Type)).payload" == "(list type ())"
+#guard out "" ("PortInfo(" ++ key ++ ", Bool, false, \"clock\").key.name") == "(string \"a\")"
+#guard out "" "TypeInfo(\"uint\", list(FieldInfo), Unit, 0, 8, list(VariantInfo))" ==
+  "(record (struct prelude TypeInfo ()) ((string \"uint\") " ++
+    "(list (struct prelude FieldInfo ()) ()) (type unit) (int 0) (int 8) " ++
+    "(list (struct prelude VariantInfo ()) ())))"
+#guard out "struct String {}\nstruct FieldInfo { a: Bool }" key == out "" key
+#guard out "struct String {}\nstruct FieldInfo { a: Bool }" "TypeInfo" ==
+  "(type (struct prelude TypeInfo ()))"
+#guard out "struct PortKey { a: UInt[8] }" "PortKey(3)" ==
+  "(record (struct root PortKey ()) ((uint 8 3)))"
+#guard out "" "TypeInfo(1)" == "S007 1:1"
+#guard out "" "PortKey()" == "S010 1:1"
+#guard out "" "TypeInfo" (depth := 1) == "S015 1:1"
+#guard (List.range (cost "" "TypeInfo")).all fun f => out "" "TypeInfo" (fuel := f) == "S015 1:1"
+
 /-! A user function `read_port` or `write_port` shadows the prelude function and runs as usual. -/
 #guard out "comptime fn read_port(a: Nat, b: Nat) -> Nat { return a + b; }" "read_port(1, 2)" ==
   "(int 3)"

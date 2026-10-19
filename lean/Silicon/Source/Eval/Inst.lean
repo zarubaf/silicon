@@ -106,7 +106,8 @@ handle type names its data type (`notHandle`).
 def dataType (p : Pos) (t : Ty) : Eval.M Ty := do
   notHandle p t
   if t.info.data then pure t
-  else fail .S010 p s!"a port, a register, and a wire need a hardware data type, not {t.text}"
+  else fail .S010 p (s!"a port, a register, and a wire need a hardware data type, not " ++
+    s!"`{t.text}`; use a fixed-width type, for example `UInt[8]`")
 
 /-! A resource that needs one binding. The result is its handle. -/
 def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : Eval.M Val := do

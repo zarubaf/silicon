@@ -1955,7 +1955,24 @@ def handleMods : String := "module D() {\n}\n"
 #guard said (memBody "  mem m: [Reg[UInt[8]]; 4];\n") ==
   "`Reg[UInt[8]]` is a handle type, not hardware data; use its data type `UInt[8]`"
 #guard said (memBody "  wire w: [Reg[Bool]; 0];\n") ==
-  "a port, a register, and a wire need a hardware data type, not [Reg[Bool]; 0]"
+  "a port, a register, and a wire need a hardware data type, not `[Reg[Bool]; 0]`; use a " ++
+    "fixed-width type, for example `UInt[8]`"
+
+/-!
+No prelude struct of slice 4 is hardware data (section 5.6). Thus a port, a register, or a wire
+of one is `S010`, with the text "Data type of a port". A user struct of the name shadows it.
+-/
+#guard cost (memBody "  input k: PortKey;\n") "M" == "S010 2:3"
+#guard said (memBody "  input k: PortKey;\n") ==
+  "a port, a register, and a wire need a hardware data type, not `PortKey`; use a " ++
+    "fixed-width type, for example `UInt[8]`"
+#guard cost (memBody "  wire w: TypeInfo;\n") "M" == "S010 2:3"
+#guard cost (memBody "  reg r: [FieldInfo; 0] = [];\n") "M" == "S010 2:3"
+#guard said (memBody "  output o: (VariantInfo, PortInfo);\n") ==
+  "a port, a register, and a wire need a hardware data type, not `(VariantInfo, PortInfo)`; " ++
+    "use a fixed-width type, for example `UInt[8]`"
+#guard cost ("struct PortKey { a: UInt[8] }\n" ++ memBody "  input k: PortKey;\n") "M" ==
+  "total 71\nM 43\n"
 
 /-! The memory texts of a `mem` statement name their fix (section 6.2). -/
 #guard said (memBody "  mem m: [Int; 4];\n") ==

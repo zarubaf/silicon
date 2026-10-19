@@ -335,6 +335,14 @@ def readFix : Ref → String
   | _ => ""
 
 /-!
+The `S007` text of a struct constructor with `n` fields and `m` arguments (section 6.2). Pass 4
+and pass 5 both give it.
+-/
+def structArity (n m : Nat) : String :=
+  s!"a struct constructor takes 0 or {n} argument(s), but it has {m}; pass one value for " ++
+    "each field, or none for the zero"
+
+/-!
 The arity of a call at `pos` with the callee `f` and `got` arguments. `h` is the type head of a
 type callee. The result is the callee: the modes of the parameters and the static positions.
 A constructor `T(n)` has no modes, and its argument is static.
@@ -349,7 +357,7 @@ def call (pos : Pos) (f : Resolve.Expr) (h : Option Head) (got : Nat) : M (Optio
       return some ⟨#[], fun _ => true⟩
     | .record k =>
       unless got == 0 || got == k do
-        report .S007 pos s!"a struct constructor takes 0 or {k} argument(s), but it has {got}"
+        report .S007 pos (structArity k got)
       return none
     | .unknown => return none
   | none, .name _ g r =>

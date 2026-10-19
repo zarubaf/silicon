@@ -20,6 +20,10 @@ def run (s : String) : Except Error (Array Resolve.Item) :=
 
 def ok (s : String) : Bool := (run s).toBool
 
+/-! The user items of a resolved file, without the prelude structs. -/
+def users (s : String) : Option (Array Resolve.Item) :=
+  (run s).toOption.map fun a => a.extract 0 (a.size - preludeCount)
+
 def fails (s : String) (code : ErrorCode) (line col : Nat) : Bool :=
   match run s with
   | .error e => e.code == code && e.pos == ⟨line, col⟩
@@ -165,10 +169,18 @@ parameters, so a parameter `clock` is `S002` at the parameter. `domains()` decla
 #guard fails "module A() {}\nmodule B() {\nlet x = A;\n}" .S003 3 9
 #guard fails "module A() {}\nconst N: Nat = A();" .S003 2 16
 
-/-! `S003`: a prelude name of a later slice. The message names the slice. -/
-#guard fails "fn f(x: TypeInfo) -> Bool { return true; }" .S003 1 9
-#guard message "fn f(x: TypeInfo) -> Bool { return true; }" ==
-  "`TypeInfo` is not supported yet; it comes in slice 4"
+/-!
+The prelude structs of slice 4 are type names and names in an expression (section 5.6). They are
+the items after `ReadResponse`, and a user item of one of their names shadows it.
+-/
+#guard ok "fn f(x: TypeInfo) -> Bool { return true; }"
+#guard ok "module M() {\ninput k: PortKey;\nreg r: PortInfo = PortInfo();\n}"
+#guard retRef "fn f() -> Bool { return FieldInfo; }" == some (.item 2)
+#guard retRef "fn f() -> Bool { return TypeInfo; }" == some (.item 3)
+#guard retRef "fn f() -> Bool { return VariantInfo; }" == some (.item 4)
+#guard retRef "fn f() -> Bool { return PortKey; }" == some (.item 5)
+#guard retRef "fn f() -> Bool { return PortInfo; }" == some (.item 6)
+#guard retRef "fn f() -> Bool { return PortKey; }\nstruct PortKey {}" == some (.item 1)
 #guard ok "const TypeInfo: Nat = 1;\nconst N: Nat = TypeInfo;"
 
 /-!
@@ -383,16 +395,24 @@ prelude. A local never hides it, and an item hides a prelude function.
 #guard message (fnBody "return p.foo();") == "`foo` is not declared"
 #guard fails (fnBody "let h = 1;\nreturn p.h();") .S003 3 10
 #guard fails ("const g: Nat = 1;\n" ++ fnBody "return p.g();") .S003 3 10
-#guard message ("const g: Nat = 1;\n" ++ fnBody "return p.g();") == "`g` is not a function"
+#guard message ("const g: Nat = 1;\n" ++ fnBody "return p.g();") ==
+  "`g` is not a function; a receiver call `a.f()` needs a function `f`, so " ++
+    "write `g(a)` to call a type or a function value"
 #guard fails ("const len: Nat = 1;\n" ++ fnBody "return p.len();") .S003 3 10
 #guard fails ("module M() {}\n" ++ fnBody "return p.M();") .S003 3 10
 #guard fails ("struct S {}\n" ++ fnBody "return p.S();") .S003 3 10
 #guard fails (fnBody "return p.Bool();") .S003 2 10
-#guard message (fnBody "return p.Bool();") == "`Bool` is not a function"
+#guard message (fnBody "return p.Bool();") ==
+  "`Bool` is not a function; a receiver call `a.f()` needs a function `f`, so " ++
+    "write `Bool(a)` to call a type or a function value"
 #guard fails (fnBody "return p.Reg();") .S003 2 10
-#guard message (fnBody "return p.Reg();") == "`Reg` is not a function"
+#guard message (fnBody "return p.Reg();") ==
+  "`Reg` is not a function; a receiver call `a.f()` needs a function `f`, so " ++
+    "write `Reg(a)` to call a type or a function value"
+#guard fails (fnBody "return p.PortKey();") .S003 2 10
 #guard message (fnBody "return p.PortKey();") ==
-  "`PortKey` is not supported yet; it comes in slice 4"
+  "`PortKey` is not a function; a receiver call `a.f()` needs a function `f`, so " ++
+    "write `PortKey(a)` to call a type or a function value"
 
 /-! `S003` in the receiver or an argument of a receiver call. The first error by position wins. -/
 #guard fails (fnBody "return q.len();") .S003 2 8
@@ -514,15 +534,33 @@ let m = 1;") .S002 3 5
 #guard fails (modBody "mem W: [Bool; 4];") .S002 2 5
 
 /-!
-The prelude struct `ReadResponse` is one struct item after the user items, with the `prelude`
-flag. It is built already resolved, so a user `struct Bool` or `type Type` does not change it.
-The user items keep their indices.
+The prelude structs are struct items after the user items, with the `prelude` flag, in the order
+of section 5.6. They are built already resolved, so a user `struct Bool`, `type Type`,
+`struct String`, or `struct FieldInfo` does not change them. A field type refers to a prelude
+struct by its index. The user items keep their indices.
 -/
-#guard (run "").toOption == some #[response]
-#guard (run "struct Bool { x: UInt[2] }\ntype Type = UInt[3];").toOption.map (·.back?) ==
-  some (some response)
+#guard (run "").toOption == some (preludeStructs 0).toArray
+#guard preludeCount == 6
+#guard (preludeStructs 0).map (·.name.name) ==
+  ["ReadResponse", "FieldInfo", "TypeInfo", "VariantInfo", "PortKey", "PortInfo"]
+#guard (run "struct Bool { x: UInt[2] }\ntype Type = UInt[3];").toOption.map (·.extract 2) ==
+  some (preludeStructs 2).toArray
+#guard (run "struct String {}\nstruct FieldInfo {}\nstruct List {}").toOption.map (·.extract 3) ==
+  some (preludeStructs 3).toArray
+#guard responseIndex (2 + preludeCount) == 2
+def listOf (x : String) (k : Nat) : Resolve.TypeExpr :=
+  .index ⟨0, 0⟩ (.name ⟨0, 0⟩ "List" (.type .list)) [.name ⟨0, 0⟩ x (.item k)]
+#guard match ((preludeStructs 2)[2]? : Option Resolve.Item) with
+  | some (.struct _ x [] [_, f, _, _, _, v] true) =>
+    x.name == "TypeInfo" && f.ty == listOf "FieldInfo" 3 && v.ty == listOf "VariantInfo" 5
+  | _ => false
+#guard match ((preludeStructs 2)[5]? : Option Resolve.Item) with
+  | some (.struct _ x [] [k, _, _, d] true) =>
+    x.name == "PortInfo" && k.ty == .name ⟨0, 0⟩ "PortKey" (.item 6) &&
+      d.ty == .name ⟨0, 0⟩ "String" (.type .string)
+  | _ => false
 #guard match (run "struct Bool { x: UInt[2] }\ntype Type = UInt[3];").toOption with
-  | some #[.struct _ _ [] _ false, .alias .., .struct _ x [q] [d, v] true] =>
+  | some #[.struct _ _ [] _ false, .alias .., .struct _ x [q] [d, v] true, _, _, _, _, _] =>
     x.name == "ReadResponse" && q.mode == .comptime && q.name.id == 0 &&
       q.ty == .name ⟨0, 0⟩ "Type" (.type .type) &&
       d.ty == .name ⟨0, 0⟩ "T" (.local 0) && v.ty == .name ⟨0, 0⟩ "Bool" (.type .bool)
@@ -545,13 +583,13 @@ the receiver form.
 #guard retRef "fn f() -> Bool { return write_port; }" == some (.fn .writePort)
 #guard retRef "fn f() -> Bool { return read_port; }\ncomptime fn read_port() -> Bool {}" ==
   some (.item 1)
-#guard match (run "fn f(x: Nat) -> Nat { return x.write_port(1, 2, 3); }").toOption with
-  | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.fn .writePort) (some 0) _ _))], _] =>
+#guard match users "fn f(x: Nat) -> Nat { return x.write_port(1, 2, 3); }" with
+  | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.fn .writePort) (some 0) _ _))]] =>
     true
   | _ => false
-#guard match (run ("fn f(x: Nat) -> Nat { return x.write_port(); }\n" ++
-    "fn write_port(a: Nat) -> Nat { return a; }")).toOption with
-  | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.item 1) (some 0) _ _))], _, _] => true
+#guard match users ("fn f(x: Nat) -> Nat { return x.write_port(); }\n" ++
+    "fn write_port(a: Nat) -> Nat { return a; }") with
+  | some #[.fn _ _ _ _ _ [.ret _ (some (.method _ _ _ (.item 1) (some 0) _ _))], _] => true
   | _ => false
 
 /-! `diagnostic` is a prelude function of slice 2, and a user function with the name shadows it. -/
@@ -570,19 +608,19 @@ def ops : String := "enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n"
 #guard ok "fn f() -> UInt[1] { return E::A; }\nenum E: UInt[1] { A = 0 }"
 #guard ok "enum E: UInt[1] {}"
 #guard retRef ("fn f() -> Bool { return Op; }\n" ++ ops) == some (.item 1)
-#guard match (run (ops ++ "fn f(x: UInt[8]) -> Op { return Op::Load(x); }")).toOption with
-  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.variant _ _ _ 0 1 [.name _ _ (.local 0)] true))], _] =>
+#guard match users (ops ++ "fn f(x: UInt[8]) -> Op { return Op::Load(x); }") with
+  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.variant _ _ _ 0 1 [.name _ _ (.local 0)] true))]] =>
     true
   | _ => false
-#guard match (run (ops ++ "fn f() -> Op { return Op::Add; }")).toOption with
-  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.variant _ _ _ 0 0 [] false))], _] => true
+#guard match users (ops ++ "fn f() -> Op { return Op::Add; }") with
+  | some #[_, .fn _ _ _ _ _ [.ret _ (some (.variant _ _ _ 0 0 [] false))]] => true
   | _ => false
 
 /-! A call of a path keeps its call site, so a later call gets the next site. -/
-#guard match (run (ops ++ "fn f(x: UInt[8]) -> Op { return g(Op::Load(g(x))); }\n" ++
-    "fn g(x: UInt[8]) -> UInt[8] { return x; }")).toOption with
+#guard match users (ops ++ "fn f(x: UInt[8]) -> Op { return g(Op::Load(g(x))); }\n" ++
+    "fn g(x: UInt[8]) -> UInt[8] { return x; }") with
   | some #[_, .fn _ _ _ _ _ [.ret _ (some (.call _ _ [.variant _ _ _ _ _ [.call _ _ _ 2] _] 0))],
-      _, _] => true
+      _] => true
   | _ => false
 
 /-! `S002`: a second variant with one name in one enum, at its name. -/
