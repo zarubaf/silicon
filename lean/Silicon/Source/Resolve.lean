@@ -153,8 +153,8 @@ names of the containers of slice 2, and `Type` and `data_bits`, the names of the
 The names of the strings and the lists are `String`, `List`, `list`, `push`, `pop`, and `str`.
 The memory ports are `read_port` and `write_port`, and `diagnostic` makes a record. The handle
 type families are `Reg`, `Wire`, `Input`, `Mem`, and `Instance`, and `read` reads a handle.
-`true` and `false` are keywords, and `T(n)` is syntax, so they need no name. The prelude struct
-`ReadResponse` is an item (`responseName`).
+`true` and `false` are keywords, and `T(n)` is syntax, so they need no name. The prelude structs
+are items (`preludeStructs`).
 -/
 def prelude : List (String × Ref) :=
   [("Bool", .type .bool), ("UInt", .type .uint), ("SInt", .type .sint), ("Nat", .type .nat),
@@ -166,9 +166,6 @@ def prelude : List (String × Ref) :=
    ("write_port", .fn .writePort), ("diagnostic", .fn .diagnostic), ("Reg", .type .reg),
    ("Wire", .type .wire), ("Input", .type .input), ("Mem", .type .mem),
    ("Instance", .type .instance), ("read", .fn .read)]
-
-/-! The name of the prelude struct (section 5.6). -/
-def responseName : String := "ReadResponse"
 
 /-!
 The prelude names of later slices, with their slice. A use of one is `S003`, and the message
@@ -403,8 +400,32 @@ source position, so each of its forms has the position `0:0`. Its errors report 
 -/
 def response : Item :=
   let p : Pos := ⟨0, 0⟩
-  .struct p ⟨p, responseName⟩ [⟨p, .comptime, ⟨⟨p, "T"⟩, 0⟩, .name p "Type" (.type .type)⟩]
+  .struct p ⟨p, "ReadResponse"⟩ [⟨p, .comptime, ⟨⟨p, "T"⟩, 0⟩, .name p "Type" (.type .type)⟩]
     [⟨⟨p, "data"⟩, .name p "T" (.local 0)⟩, ⟨⟨p, "valid"⟩, .name p "Bool" (.type .bool)⟩] true
+
+/-!
+The prelude struct items in the order of section 5.6. They follow the user items, so `base` is
+the index of the first one. `ReadResponse` comes first.
+-/
+def preludeStructs (_base : Nat) : List Item := [response]
+
+/-! The number of prelude struct items. -/
+def preludeCount : Nat := (preludeStructs 0).length
+
+/-! The name of an item. -/
+def Item.name : Item → Ident
+  | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
+  | .enum _ n .. => n
+
+/-! The offset of the prelude struct `n` in `preludeStructs`, or none. -/
+def preludeStruct (n : String) : Option Nat :=
+  (preludeStructs 0).findIdx? (·.name.name == n)
+
+/-!
+The index of `ReadResponse` in a resolved file of `size` items. It is the first prelude struct,
+so the read takes constant work.
+-/
+def responseIndex (size : Nat) : Nat := size - preludeCount
 
 /-! A visible declaration and the number of its scope. The item scope has the number 0. -/
 structure Binding where
@@ -472,13 +493,16 @@ def missing (pos : Pos) (n : String) : M Unit :=
     | none => if n == "Domain" then domainText else s!"`{n}` is not declared"
   recordUnknown ⟨.S003, pos, msg⟩
 
-/-! The prelude declaration of the name `n`. `ReadResponse` is the item after the user items. -/
+/-!
+The prelude declaration of the name `n`. A prelude struct is an item after the user items
+(`preludeStructs`).
+-/
 def inPrelude (n : String) : M (Option Ref) := do
   match prelude.lookup n with
   | some r => return some r
   | none => do
     let k := (← read).items.size
-    return if n == responseName then some (.item k) else none
+    return (preludeStruct n).map (.item <| k + ·)
 
 /-!
 The declaration of the name `n` at `pos`, or `S003`. After an error, the walk continues with a
@@ -507,7 +531,7 @@ def isType : Ref → M Bool
     match (← read).items[i]? with
     | some (.struct ..) | some (.alias ..) | some (.enum ..) => return true
     | some _ => return false
-    | none => return i == (← read).items.size
+    | none => return i - (← read).items.size < preludeCount
   | .fn _ => return false
 
 /-! The next call site of the current item body. -/
@@ -799,10 +823,10 @@ def inFile (items : List Source.Item) (act : M α) : Except Error α :=
 
 /-!
 The resolved items of a file, or the first error. The index of an item in the result is its
-index in `items`. The prelude struct `response` follows the user items, so it changes no index.
+index in `items`. The prelude structs follow the user items, so they change no index.
 -/
 def resolve (items : List Source.Item) : Except Error (Array Item) :=
-  inFile items (return (← items.toArray.mapM item).push response)
+  inFile items (return (← items.toArray.mapM item) ++ (preludeStructs items.length).toArray)
 
 /-! An expression in the file scope, such as the `EXPR` of `eval`, or its first `S003`. -/
 def resolveExpr (items : List Source.Item) (e : Source.Expr) : Except Error Expr :=

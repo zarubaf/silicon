@@ -1692,10 +1692,10 @@ def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
 
 /-!
 The use at `p` of the prelude struct `ReadResponse` at the word type `t`: `ReadResponse[T]`. It
-is the item after the user items (`Resolve.response`), and it charges as a struct use.
+is the first prelude struct item (`Resolve.responseIndex`), and it charges as a struct use.
 -/
 def responseTy (ty : Resolve.TypeExpr → M Ty) (p : Pos) (t : Ty) : M Ty := do
-  let i := (← read).items.size - 1
+  let i := Resolve.responseIndex (← read).items.size
   let some (.struct _ x ps fs true) := (← read).items[i]?
     | fail .S010 p "the prelude struct `ReadResponse` is missing"
   specOf ty p i x ps fs true [.static (.type t)]

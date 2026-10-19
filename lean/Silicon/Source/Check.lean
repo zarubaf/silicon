@@ -116,8 +116,8 @@ only two `S007` errors could share a position. A receiver call starts at its rec
 binding and the arity of the call first, because the receiver has no parameter before the
 binding. Then it checks the receiver as a `mut` actual (`S008`), then its parts (`S005`).
 
-The prelude struct `ReadResponse` is an item of the resolved file, but it has no source position.
-The walk skips it, so its errors never compete by position (section 5.6).
+The prelude structs are items of the resolved file, but they have no source position. The walk
+skips them by their `prelude` flag, so their errors never compete by position (section 5.6).
 
 The walk is a single pass in source order. Its recursion follows the blocks and the expressions.
 The syntax depth thus bounds it at about 2N. A loop handles each list. The resources, the mutable
