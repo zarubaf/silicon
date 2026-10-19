@@ -302,7 +302,8 @@ expression.
 -/
 #guard fails ("const A: P[8, 9] = 0;" ++ structs) .S007 1 10
 #guard fails ("const A: S[1] = 0;" ++ structs) .S007 1 10
-#guard message ("const A: S[1] = 0;" ++ structs) == "`S` takes 0 argument(s), but it has 1"
+#guard message ("const A: S[1] = 0;" ++ structs) ==
+  "`S` takes 0 argument(s), but it has 1; pass one argument for each `comptime` parameter of `S`"
 #guard fails ("const A: P[8][1] = 0;" ++ structs) .S007 1 10
 #guard fails (fnBody "let t = P[1, 2];\nreturn p;" ++ structs) .S007 2 9
 #guard fails (fnBody "let t = E[0];\nreturn p;" ++ structs) .S007 2 9
@@ -312,7 +313,8 @@ expression.
 as the callee of a constructor. The position is the name.
 -/
 #guard fails ("const A: P = 0;" ++ structs) .S007 1 10
-#guard message ("const A: P = 0;" ++ structs) == "`P` takes 1 argument(s), but it has 0"
+#guard message ("const A: P = 0;" ++ structs) ==
+  "`P` takes 1 argument(s), but it has 0; pass one argument for each `comptime` parameter of `P`"
 #guard fails (fnBody "let t = P;\nreturn p;" ++ structs) .S007 2 9
 #guard fails (fnBody "let t = P(1, true);\nreturn p;" ++ structs) .S007 2 9
 #guard fails (fnBody "let t = P();\nreturn p;" ++ structs) .S007 2 9
@@ -600,7 +602,8 @@ arguments or none. The position is the type name, the index, or the call.
     "field, or none for the zero"
 #guard fails (fnBody "let r = PortKey[Bool]();\nreturn p;") .S007 2 9
 #guard message (fnBody "let r = PortKey[Bool]();\nreturn p;") ==
-  "`PortKey` takes 0 argument(s), but it has 1"
+  "`PortKey` takes 0 argument(s), but it has 1; pass one argument for each `comptime` " ++
+    "parameter of `PortKey`"
 #guard fails (fnBody "let r = ReadResponse(p, p);\nreturn p;") .S007 2 9
 
 /-!

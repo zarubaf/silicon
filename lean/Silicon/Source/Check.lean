@@ -271,6 +271,18 @@ structure Head where
   inst : Bool := false
 
 /-!
+The `S007` text of the struct type `x` with `n` parameters and `m` index arguments (section 6.2).
+Pass 4 builds it from `structFix`, and pass 5 gives it whole.
+-/
+def structTypeArity (x : String) (n m : Nat) : String :=
+  s!"`{x}` takes {n} argument(s), but it has {m}; pass one argument for each `comptime` " ++
+    s!"parameter of `{x}`"
+
+/-! The fix of `structTypeArity` for the struct `x`. -/
+def structFix (x : String) : String :=
+  s!"; pass one argument for each `comptime` parameter of `{x}`"
+
+/-!
 The type head of the type name `n`. A struct item misses its parameters. A `type` item and an
 `enum` item are complete types. A local has no known head.
 -/
@@ -281,7 +293,8 @@ def head (n : String) : Ref → M (Option Head)
                   inst := t == .instance }
   | .item i => do
     match (← read)[i]? with
-    | some (.struct k f) => return some { text := s!"`{n}`", missing := k, ctor := .record f }
+    | some (.struct k f) =>
+      return some { text := s!"`{n}`", missing := k, ctor := .record f, fix := structFix n }
     | some .alias | some (.enum _) =>
       return some { text := s!"`{n}`", missing := 0, ctor := .unknown }
     | _ => return none
