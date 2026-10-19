@@ -1,9 +1,12 @@
 # The known gaps of the rule `spec-texts` (`cargo xtask check`, `xtask/src/spec_texts.rs`).
 #
 # One line for each gap: `<part> | <row> | <issue>`.
-#   part   one of `fix`, `lean`, `rust`, `pin`: the part of the text that is missing.
+#   part   one of `fix`, `lean`, `rust`, `pin`: the part of the text that is missing. Or `unlisted`:
+#          an error text of a front end that no row holds.
 #   row    the code and the case of a row of a message table of section 6.2, as the
-#          rule prints it, for example `S021 Uncovered value`.
+#          rule prints it, for example `S021 Uncovered value`. For `unlisted`, the code and the
+#          first 48 characters of the text, or `<code> unscannable <file>` for an error site that
+#          builds its message in a helper.
 #   issue  the number of the issue that closes the gap, with no `#`.
 # A line that starts with `#` is a comment. An entry with no issue, or for a row that is not in
 # the spec, is an error.
@@ -16,7 +19,6 @@
 lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
 lean | S010 Memory as data | 314
-pin | S011 Hardware in `eval` | 320
 fix | S010 `read` of another value | 314
 lean | S010 `read` of another value | 314
 rust | S010 `read` of another value | 314
@@ -63,3 +65,291 @@ pin | S022 Second field name | 345
 lean | S022 Scalar key index | 339
 rust | S022 Scalar key index | 339
 pin | S022 Scalar key index | 339
+unlisted | S001 a comparison does not chain | 354
+unlisted | S001 a comparison does not chain; use parentheses | 354
+unlisted | S001 a parameter of a function type has no `comptime` | 354
+unlisted | S001 expected `;` | 354
+unlisted | S001 expected `fn` | 354
+unlisted | S001 expected `if` or `for` | 354
+unlisted | S001 expected a field name | 354
+unlisted | S001 expected a type | 354
+unlisted | S001 expected an expression | 354
+unlisted | S001 expected an item | 354
+unlisted | S001 expected the end of the expression | 354
+unlisted | S001 expected the name of a builtin | 354
+unlisted | S001 invalid escape | 354
+unlisted | S001 number literal is not below 2^65536 | 354
+unlisted | S001 parser fuel exhausted | 354
+unlisted | S001 the expression does not lower | 354
+unlisted | S001 unscannable crates/parse/src/parser.rs | 354
+unlisted | S001 unscannable crates/syntax/src/lexer.rs | 354
+unlisted | S001 unterminated comment | 354
+unlisted | S001 unterminated string | 354
+unlisted | S002 `{}` is already declared in this scope | 354
+unlisted | S002 the field `{}` is already declared | 354
+unlisted | S002 the variant `{}` is already declared in this enu | 354
+unlisted | S003 `{}` is not {} | 354
+unlisted | S003 unscannable crates/resolve/src/walk.rs | 354
+unlisted | S004 a helper cannot declare a port; declare the port | 354
+unlisted | S004 {} is not supported yet | 354
+unlisted | S005 `{}` is {}; a static position needs a static val | 354
+unlisted | S006 a `comptime fn` has no memory port call | 354
+unlisted | S006 a `comptime fn` has no {} | 354
+unlisted | S006 a module body has no `return` | 354
+unlisted | S006 only a function has `return` | 354
+unlisted | S007 Instance[M, args] | 354
+unlisted | S007 `len` takes 1 argument(s), but it has {} | 354
+unlisted | S007 `{}` has no parameter without `comptime` for the | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has 0; write `I | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has 0; write `L | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has 0; write `R | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has 0; write `S | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has 0; write `U | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has 0; write `W | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has {} | 354
+unlisted | S007 `{}` takes 1 argument(s), but it has {}; write ` | 354
+unlisted | S007 `{}` takes 2 argument(s), but it has 0; write `M | 354
+unlisted | S007 `{}` takes 2 argument(s), but it has {} | 354
+unlisted | S007 `{}` takes {} argument(s), but it has 0; write ` | 354
+unlisted | S007 a complete type takes no index | 354
+unlisted | S007 a complete type takes no more index | 354
+unlisted | S007 a constructor takes 0 or 1 argument(s) | 354
+unlisted | S007 a constructor takes 0 or 1 argument(s), but it h | 354
+unlisted | S007 a struct constructor takes 0 or {} argument(s), | 354
+unlisted | S007 a type family takes one argument | 354
+unlisted | S007 a type family takes one index argument | 354
+unlisted | S007 the top takes {} argument(s), but it has {} | 354
+unlisted | S007 unscannable crates/elab/src/eval/types.rs | 354
+unlisted | S007 unscannable lean/Silicon/Source/Eval/Types.lean | 354
+unlisted | S007 {} takes {} argument(s), but it has {}{} | 354
+unlisted | S008 a `mut` actual has a `let mut` local or a `mut` | 354
+unlisted | S008 a `mut` actual is a place | 354
+unlisted | S008 the root `{}` is pending in a window | 354
+unlisted | S008 the root of the place is pending in a window | 354
+unlisted | S008 the root of this `mut` actual is pending in its | 354
+unlisted | S010 `==` compares values of one type, not {} and {} | 354
+unlisted | S010 `==` does not accept {} and {} | 354
+unlisted | S010 `==` needs a common type, not {} and {} | 354
+unlisted | S010 `Instance` needs a module | 354
+unlisted | S010 `[]` needs the type [T; 0] from its context | 354
+unlisted | S010 `len` takes a string | 354
+unlisted | S010 `len` takes an array, a list, or a string, not { | 354
+unlisted | S010 `len` takes an array, not hardware {} | 354
+unlisted | S010 `reinterpret` gives the bits of {} only as UInt[ | 354
+unlisted | S010 `reinterpret` keeps the width | 354
+unlisted | S010 `reinterpret` makes {} only from UInt[{}], not { | 354
+unlisted | S010 `reinterpret` needs an enum here, not {} | 354
+unlisted | S010 `reinterpret` needs finite types, not {} | 354
+unlisted | S010 `resize` needs finite types of one signedness, n | 354
+unlisted | S010 `return` needs a value of {} | 354
+unlisted | S010 `static_assert` gives no value | 354
+unlisted | S010 `{}` accepts only Int and Nat, not {} and {} | 354
+unlisted | S010 `{}` accepts only Int and Nat; hardware has `+%` | 354
+unlisted | S010 `{}` does not accept [{}, {}] | 354
+unlisted | S010 `{}` does not accept [{}] | 354
+unlisted | S010 `{}` does not accept strings; `+` joins them | 354
+unlisted | S010 `{}` does not accept {} | 354
+unlisted | S010 `{}` does not accept {} and {} | 354
+unlisted | S010 `{}` ends without `return` | 354
+unlisted | S010 `{}` has no declaration | 354
+unlisted | S010 `{}` is a builtin; a builtin is not a value | 354
+unlisted | S010 `{}` is a memory, not data; {} | 354
+unlisted | S010 `{}` is generic; a generic function is not a val | 354
+unlisted | S010 `{}` is not a constant | 354
+unlisted | S010 `{}` is not a function | 354
+unlisted | S010 `{}` is not a value | 354
+unlisted | S010 `{}` is not an item | 354
+unlisted | S010 `{}` is not an ordinary operator | 354
+unlisted | S010 `{}` names a type, not {} | 354
+unlisted | S010 `{}` needs a common type, not {} and {} | 354
+unlisted | S010 `{}` needs a finite operand | 354
+unlisted | S010 `{}` needs a hardware data type, not {} | 354
+unlisted | S010 `{}` needs a list, not {} | 354
+unlisted | S010 `{}` needs a memory | 354
+unlisted | S010 `{}` needs a memory, not {} | 354
+unlisted | S010 `{}` needs a type, not {} | 354
+unlisted | S010 `{}` needs an Int, not {} | 354
+unlisted | S010 `{}` needs integers of one type, not {} and {} | 354
+unlisted | S010 `{}` needs one argument | 354
+unlisted | S010 `{}` needs two arguments | 354
+unlisted | S010 `{}` orders integers of one type, not {} and {} | 354
+unlisted | S010 `{}` selects; it has no step | 354
+unlisted | S010 `{}` takes a register or a wire, not {}; {} | 354
+unlisted | S010 `{}` takes no container | 354
+unlisted | S010 `{}` takes no function | 354
+unlisted | S010 `{}` takes no function, here {} and {} | 354
+unlisted | S010 a `mut` actual has the type {}, but its formal h | 354
+unlisted | S010 a condition is a Bool, not {} | 354
+unlisted | S010 a constructor needs a hardware data type, not {} | 354
+unlisted | S010 a container is expected | 354
+unlisted | S010 a domain is not data | 354
+unlisted | S010 a hardware aggregate is expected | 354
+unlisted | S010 a loop bound is a static Int, not {} | 354
+unlisted | S010 a part of UInt[{}] has no leaves | 354
+unlisted | S010 a payload type is hardware data, not {} | 354
+unlisted | S010 a payload value of {} is not data | 354
+unlisted | S010 a port, a register, and a wire need a hardware d | 354
+unlisted | S010 a select is hardware | 354
+unlisted | S010 a shift count is UInt or a static Int, not {} | 354
+unlisted | S010 a width is a static Int, not {} | 354
+unlisted | S010 a zero `T()` needs a hardware data type, not {} | 354
+unlisted | S010 an Int shift needs a static Int count | 354
+unlisted | S010 an arm has no select | 354
+unlisted | S010 an element has no type | 354
+unlisted | S010 an element of a container is data | 354
+unlisted | S010 an element of the tuple has no type | 354
+unlisted | S010 an enum is not hardware data | 354
+unlisted | S010 an extract is hardware | 354
+unlisted | S010 an index is a static integer, not {} | 354
+unlisted | S010 an index needs a string | 354
+unlisted | S010 an index needs an array, a list, or a tuple, not | 354
+unlisted | S010 an index of a value has one argument | 354
+unlisted | S010 an instance needs a module | 354
+unlisted | S010 enum {} has no entry | 354
+unlisted | S010 enum {} has no variant {} | 354
+unlisted | S010 expected UInt[{}], but the value is {} | 354
+unlisted | S010 expected data operands, not {} and {} | 354
+unlisted | S010 expected {}, but the value is {} | 354
+unlisted | S010 hardware needs a Bool or a finite value, not {} | 354
+unlisted | S010 no conversion of {} to {} here | 354
+unlisted | S010 not a container expression | 354
+unlisted | S010 the aggregate has no value | 354
+unlisted | S010 the arms of an `if` have one type, not {} and {} | 354
+unlisted | S010 the arms of {} have one type, not {} and {} | 354
+unlisted | S010 the container has no value | 354
+unlisted | S010 the data type was not made | 354
+unlisted | S010 the element has no part | 354
+unlisted | S010 the element of a list is a type, not {} | 354
+unlisted | S010 the elements of an array have no common type | 354
+unlisted | S010 the enum item is missing | 354
+unlisted | S010 the field `{}` has no symbol | 354
+unlisted | S010 the instance has no port `{}` | 354
+unlisted | S010 the length of an array is a static Nat, not {} | 354
+unlisted | S010 the literal has no value | 354
+unlisted | S010 the message of `{}` is a String, not `[]` withou | 354
+unlisted | S010 the message of `{}` is a String, not {} | 354
+unlisted | S010 the name is not a value | 354
+unlisted | S010 the part does not exist | 354
+unlisted | S010 the part has no shape | 354
+unlisted | S010 the part has no type | 354
+unlisted | S010 the part has the wrong shape | 354
+unlisted | S010 the place has no part for its value | 354
+unlisted | S010 the place has no static part to change | 354
+unlisted | S010 the prelude struct `ReadResponse` is missing | 354
+unlisted | S010 the response has the wrong shape | 354
+unlisted | S010 the root is not an aggregate | 354
+unlisted | S010 the scrutinee is not data | 354
+unlisted | S010 the selector `.{}` needs a tuple, not {} | 354
+unlisted | S010 the tag type of an enum is UInt[W], not {} | 354
+unlisted | S010 the type has no parts | 354
+unlisted | S010 the unpack has no value | 354
+unlisted | S010 the value is not a function | 354
+unlisted | S010 the value of `{}` needs a type; {} | 354
+unlisted | S010 the variant has no entry | 354
+unlisted | S010 the variant has {} payload type(s) here | 354
+unlisted | S010 the variant path has no target | 354
+unlisted | S010 unscannable crates/elab/src/eval.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/agg.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/container.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/data.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/hwops.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/matching.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/mem.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/string.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/types.rs | 354
+unlisted | S010 unscannable crates/elab/src/ops.rs | 354
+unlisted | S010 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S010 unscannable lean/Silicon/Source/Eval/Container.lean | 354
+unlisted | S010 unscannable lean/Silicon/Source/Eval/Types.lean | 354
+unlisted | S010 variant {} has {} payload type(s) here | 354
+unlisted | S010 {} has no entry | 354
+unlisted | S010 {} has no field `{}` | 354
+unlisted | S010 {} has no field {} | 354
+unlisted | S010 {} has no key literal | 354
+unlisted | S010 {} has no payload leaf | 354
+unlisted | S010 {} has no specialization | 354
+unlisted | S010 {} has no static unpack | 354
+unlisted | S010 {} has no struct item | 354
+unlisted | S010 {} has no tag leaf | 354
+unlisted | S010 {} has no variant {} | 354
+unlisted | S010 {} has no zero | 354
+unlisted | S010 {} has {} payload type(s) here, but {} value(s) | 354
+unlisted | S010 {} is deeper than its depth | 354
+unlisted | S010 {} is not a function | 354
+unlisted | S010 {} is not a hardware scrutinee | 354
+unlisted | S010 {} is not an element of a list | 354
+unlisted | S010 {} is not an enum | 354
+unlisted | S010 {} is not data | 354
+unlisted | S010 {} is not hardware data | 354
+unlisted | S011 `{}` is not a static value | 354
+unlisted | S011 a list holds no hardware value | 354
+unlisted | S011 a list holds no value with a hardware leaf | 354
+unlisted | S011 a loop bound is a static Int, not {} | 354
+unlisted | S011 a static condition needs a static Bool, not {} | 354
+unlisted | S011 the arms of a hardware `{}` differ in a static p | 354
+unlisted | S011 the message of `{}` is a static String, not hard | 354
+unlisted | S011 the message of `{}` is a static String, not {} | 354
+unlisted | S011 unscannable crates/elab/src/eval.rs | 354
+unlisted | S011 unscannable crates/elab/src/eval/types.rs | 354
+unlisted | S011 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S011 unscannable lean/Silicon/Source/Eval/Types.lean | 354
+unlisted | S012 a memory depth is 1 to {}, not {}; use a depth i | 354
+unlisted | S012 a memory word has at most {} bits, not {}; split | 354
+unlisted | S012 no value of {} bits | 354
+unlisted | S012 the length {} is not a Nat | 354
+unlisted | S012 the payload of `{}` has {} bits, above 65536; us | 354
+unlisted | S012 the payload of `{}` has {} bits, above {}; use s | 354
+unlisted | S012 the width {} is not 1 to 65536 | 354
+unlisted | S012 unscannable crates/elab/src/eval/matching.rs | 354
+unlisted | S012 unscannable crates/elab/src/ops/container.rs | 354
+unlisted | S012 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S013 `pop` of an empty list | 354
+unlisted | S013 division by zero | 354
+unlisted | S013 remainder by zero | 354
+unlisted | S013 the index is out of range for {} element(s) | 354
+unlisted | S013 the index {} is out of range for {} element(s) | 354
+unlisted | S013 the index {} is out of range for {} scalar(s) | 354
+unlisted | S013 the selector {} is out of range for {} | 354
+unlisted | S013 the shift count {} is negative | 354
+unlisted | S014 static assertion failed: {} | 354
+unlisted | S014 unscannable crates/elab/src/eval/call.rs | 354
+unlisted | S014 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S015 the depth {} goes above the nesting depth {}; ra | 354
+unlisted | S015 the fuel cannot pay the joins of the types; {} r | 354
+unlisted | S015 the fuel cannot pay the scan of the string; {} r | 354
+unlisted | S015 the fuel cannot pay {} unit(s) of the lowering; | 354
+unlisted | S015 the fuel cannot pay {} unit(s) of the result; {} | 354
+unlisted | S015 the fuel is exhausted; raise --fuel | 354
+unlisted | S015 the nesting depth goes above {}; raise --depth | 354
+unlisted | S015 unscannable crates/elab/src/limit.rs | 354
+unlisted | S015 unscannable crates/elab/src/ops.rs | 354
+unlisted | S015 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S015 unscannable lean/Silicon/Source/Eval/Basic.lean | 354
+unlisted | S015 unscannable lean/Silicon/Source/Eval/Container.lean | 354
+unlisted | S015 unscannable lean/Silicon/Source/Eval/Types.lean | 354
+unlisted | S016 unscannable crates/elab/src/eval/inst.rs | 354
+unlisted | S016 unscannable crates/elab/src/eval/mem.rs | 354
+unlisted | S016 unscannable crates/elab/src/eval/observe.rs | 354
+unlisted | S016 unscannable crates/elab/src/eval/place.rs | 354
+unlisted | S016 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S016 unscannable lean/Silicon/Source/Eval/Basic.lean | 354
+unlisted | S017 unscannable crates/elab/src/eval.rs | 354
+unlisted | S017 unscannable crates/elab/src/eval/data.rs | 354
+unlisted | S017 unscannable crates/elab/src/eval/inst.rs | 354
+unlisted | S017 unscannable crates/elab/src/eval/target.rs | 354
+unlisted | S017 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S017 unscannable lean/Silicon/Source/Eval/Container.lean | 354
+unlisted | S017 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
+unlisted | S018 unscannable crates/elab/src/eval/inst.rs | 354
+unlisted | S018 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
+unlisted | S019 the constant `{}` depends on itself | 354
+unlisted | S019 the enum `{}` depends on itself | 354
+unlisted | S019 the instantiation of `{}` is not in the table | 354
+unlisted | S019 the parameter types of `{}` depend on `{}` | 354
+unlisted | S019 the specialization {} is in progress | 354
+unlisted | S019 two declarations have the core name `{}` | 354
+unlisted | S019 two instantiations have the emitted name `{}` | 354
+unlisted | S020 the lowered design has a combinational cycle | 354
+unlisted | S021 the `match` has no arm | 354
+unlisted | S021 the `match` has no arm for its value | 354
+unlisted | S021 the `match` has no arm {} | 354
