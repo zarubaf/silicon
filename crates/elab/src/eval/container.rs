@@ -8,7 +8,7 @@
 //! nothing before the charge. The size, the depth, and the number of hardware leaves of an
 //! element come from its stored numbers.
 
-use super::{Evaluator, Out, Res, Store, at, fail, need};
+use super::{Evaluator, Out, Res, Store, at, fail, need, no_type};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Graph, Handle, Kind as Resource, Part, Seen, Val};
@@ -188,11 +188,19 @@ impl Evaluator<'_> {
 
     /// The part that a piece gives. A result or a part that waits copies now: the caller paid
     /// the charge of the node that holds the part.
-    fn part_of_piece(&self, p: Piece<'_>) -> Agg {
+    fn part_of_piece(&self, pos: Pos, p: Piece<'_>) -> Res<Agg> {
         match p {
-            Piece::Out(o) => Agg::of_val(self.store.take(o)).unwrap_or(Agg::Static(Value::Unit)),
-            Piece::Part(a) => a.clone(),
-            Piece::New(a) => a,
+            Piece::Out(o) => match Agg::of_val(self.store.take(o)) {
+                Ok(a) => Ok(a),
+                Err(Val::Pending(q, _)) => no_type(q),
+                Err(v) => fail(
+                    Code::S010,
+                    pos,
+                    format!("{} is not data", self.text(v.seen())),
+                ),
+            },
+            Piece::Part(a) => Ok(a.clone()),
+            Piece::New(a) => Ok(a),
         }
     }
 
@@ -298,7 +306,10 @@ impl Evaluator<'_> {
         };
         self.bounded(pos, node.depth)?;
         self.charge(pos, u128::from(node.size))?;
-        let xs = pieces.into_iter().map(|p| self.part_of_piece(p)).collect();
+        let xs = pieces
+            .into_iter()
+            .map(|p| self.part_of_piece(pos, p))
+            .collect::<Res<_>>()?;
         Ok(Agg::finish(&self.tys, node, xs))
     }
 
@@ -482,6 +493,6 @@ impl Evaluator<'_> {
             return Ok(out);
         };
         let piece = self.build(pos, t, &part)?;
-        Ok(Out::Made(self.part_of_piece(piece).into_val()))
+        Ok(Out::Made(self.part_of_piece(pos, piece)?.into_val()))
     }
 }
