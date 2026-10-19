@@ -550,6 +550,8 @@ struct Builder {
     /// The resources that handle forms declare so far, once for each env
     /// that runs the declaration.
     decls: usize,
+    /// The most such resources: `MAX_DECLS`, and less in a test of the cap.
+    max_decls: usize,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
@@ -601,6 +603,7 @@ impl Builder {
             res_helpers: Vec::new(),
             hstructs: Vec::new(),
             decls: 0,
+            max_decls: handles::MAX_DECLS,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
             mut_helpers: Vec::new(),

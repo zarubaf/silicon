@@ -47,8 +47,7 @@ pub(super) const HANDLE_DEPTH: u32 = 1;
 /// for each env that runs the declaration, and the most that one statement
 /// of a frame declares. A statement waits when the rest of the budget does
 /// not cover it.
-const MAX_DECLS: usize = 24;
-const UNIT_DECLS: usize = 6;
+pub(super) const MAX_DECLS: usize = 24;
 
 /// The roles of the draw of a helper, the first role that declares, and the
 /// first role of a list.
@@ -492,9 +491,6 @@ impl Builder {
         out: &mut Vec<Stmt>,
     ) -> Built {
         self.on_hand(|b| {
-            if !b.within_budget(ctx) {
-                return Ok(());
-            }
             let mut classes: Vec<Class> = Vec::new();
             if m.clocked {
                 classes.push(Class::Direct);
@@ -549,7 +545,7 @@ impl Builder {
     ) -> Built {
         self.on_hand(|b| {
             for i in 0..b.res_helpers.len() {
-                if b.called.contains(&i) || !b.within_budget(ctx) {
+                if b.called.contains(&i) {
                     continue;
                 }
                 let Some(role) = b.res_helpers.get(i).map(|h| h.role.clone()) else {
@@ -567,7 +563,7 @@ impl Builder {
                             b.bind_call(ctx, m, i, out)?;
                             // A second call of a helper that binds a wire
                             // makes a second wire under another path.
-                            if matches!(role, Role::Wire) && b.tape.flag() && b.within_budget(ctx) {
+                            if matches!(role, Role::Wire) && b.tape.flag() {
                                 b.bind_call(ctx, m, i, out)?;
                             }
                         }
@@ -578,10 +574,30 @@ impl Builder {
         })
     }
 
-    /// Whether the budget of declarations covers one more statement in the
-    /// frame of `ctx`.
-    fn within_budget(&self, ctx: &Ctx) -> bool {
-        self.decls + UNIT_DECLS * ctx.envs.len() <= MAX_DECLS
+    /// Charges `per_env` declarations for each env of the frame to the budget
+    /// before a statement emits them, and tells whether the budget covers
+    /// them. A statement that the budget does not cover is not made.
+    pub(super) fn afford(&mut self, ctx: &Ctx, per_env: usize) -> bool {
+        let total = per_env * ctx.envs.len();
+        if self.decls + total > self.max_decls {
+            return false;
+        }
+        self.decls += total;
+        true
+    }
+
+    /// The resources that one call of the helper `h` declares: each
+    /// `reg`, `wire`, `mem`, and `instance` of its body.
+    pub(super) fn declarations_of(h: &ResHelper) -> usize {
+        h.body
+            .iter()
+            .filter(|s| {
+                matches!(
+                    s,
+                    Stmt::Reg(..) | Stmt::Wire(..) | Stmt::Mem(..) | Stmt::Instance(..)
+                )
+            })
+            .count()
     }
 
     /// The helpers that a module can call: a register and a memory need a
@@ -605,6 +621,9 @@ impl Builder {
     /// register binds at the end of the frame.
     fn bind_call(&mut self, ctx: &mut Ctx, m: &mut Module, i: usize, out: &mut Vec<Stmt>) -> Built {
         let h = self.res_helpers.get(i).cloned().ok_or(Fault::Type)?;
+        if matches!(h.role, Role::Declare | Role::List(_)) || !self.afford(ctx, 1) {
+            return Ok(());
+        }
         called!(self, ctx, i);
         match h.role {
             Role::Wire | Role::Reg => {
@@ -615,7 +634,6 @@ impl Builder {
                 };
                 let types = self.types(ty, &ctx.envs)?;
                 let name = m.names.fresh(if wire { "w" } else { "r" });
-                self.decls += ctx.envs.len();
                 if wire {
                     out.push(Stmt::Wire(name.clone(), ty.clone()));
                     let call = self.binder_call(ctx, i, HExpr::Name(name.clone()))?;
@@ -638,7 +656,6 @@ impl Builder {
                 });
             }
             Role::Input { module, port } => {
-                self.decls += ctx.envs.len();
                 let child = self.declare_child(ctx, m, module, out)?;
                 self.bind_child_inputs(ctx, &child, Some(&port), out)?;
                 let first = HExpr::Field(child.name.clone(), port);
@@ -648,7 +665,6 @@ impl Builder {
                 self.expose_child_handles(ctx, &child)?;
             }
             Role::Mem { word, depth } => {
-                self.decls += ctx.envs.len();
                 let name = m.names.fresh("n");
                 out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
                 self.mem_ports(ctx, &mut m.names, (&name, &word, depth), Some(i), out)?;
@@ -714,10 +730,12 @@ impl Builder {
     /// `mem n: [T; N];`, `write_port`, and `let l = read_port`, in the
     /// module. The data of the response is readable.
     fn direct_mem(&mut self, ctx: &mut Ctx, m: &mut Module, out: &mut Vec<Stmt>) -> Built {
+        if !self.afford(ctx, 1) {
+            return Ok(());
+        }
         let (word, _) = self.word_ty();
         let depth = self.pick(&DEPTHS);
         let name = m.names.fresh("n");
-        self.decls += ctx.envs.len();
         out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
         self.mem_ports(ctx, &mut m.names, (&name, &word, depth), None, out)?;
         Ok(())
@@ -890,7 +908,7 @@ mod tests {
     use super::super::handle_lists::HANDLE_LEN;
     use super::super::tests::tapes;
     use super::super::*;
-    use super::{MAX_DECLS, RES_HELPERS};
+    use super::{Leaf, ListOf, MAX_DECLS, Part, RES_HELPERS, ResHelper, Role, literal};
     use crate::program::is_resource_helper;
     use std::collections::BTreeMap;
 
@@ -1013,16 +1031,196 @@ mod tests {
         }
     }
 
-    /// The caps of the forms of handles hold on 256 programs: the
-    /// declarations that they make, the helpers, the length of a list, the
-    /// depth of a memory, and its word.
+    /// The declarations that helper bodies and module memories make in the
+    /// twin of `p`: the statements `reg`, `wire`, `mem`, and `instance` whose
+    /// name ends in `_c<n>` (a body that the twin inlined), and each `mem`.
+    /// The count walks the twin, so it shares no code with the budget.
+    fn twin_declarations(p: &Program) -> usize {
+        fn inlined(name: &str) -> bool {
+            name.rsplit_once("_c")
+                .is_some_and(|(_, n)| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        }
+        fn count(body: &[Stmt]) -> usize {
+            body.iter()
+                .map(|s| match s {
+                    Stmt::Reg(n, ..) | Stmt::Wire(n, ..) | Stmt::Instance(n, ..) => {
+                        usize::from(inlined(n))
+                    }
+                    Stmt::Mem(..) => 1,
+                    Stmt::Block(b) => count(b),
+                    _ => 0,
+                })
+                .sum()
+        }
+        let (items, _) = crate::twin::twin_items(p);
+        items
+            .iter()
+            .map(|item| match item {
+                Item::Module { body, .. } => count(body),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// The most declarations of handle forms in one of 256 programs, with
+    /// the cap `cap`, as the budget counts them and as the twin shows them.
+    fn most_declarations(cap: usize) -> (usize, usize) {
+        let (mut charged, mut seen) = (0, 0);
+        for tape in tapes(256) {
+            let mut b = Builder::new(tape);
+            b.max_decls = cap;
+            let Ok(p) = b.program() else { continue };
+            assert!(
+                b.decls <= cap,
+                "{} declarations under the cap {cap}",
+                b.decls
+            );
+            let found = twin_declarations(&p);
+            assert!(
+                found <= b.decls,
+                "the budget charged {}, the twin has {found}",
+                b.decls
+            );
+            charged = charged.max(b.decls);
+            seen = seen.max(found);
+        }
+        (charged, seen)
+    }
+
+    /// The budget covers every declaration of a statement before it makes
+    /// the statement: the full body of a helper, with the resources of a
+    /// struct and its arrays, and each iteration of a group. A small cap
+    /// shows it, because the old guard reserved a fixed number for a
+    /// statement.
+    #[test]
+    fn the_cap_on_declarations_is_exact() {
+        for cap in [3, 6, 9, 12] {
+            let (charged, seen) = most_declarations(cap);
+            assert!(charged <= cap && seen <= charged);
+            // A program reaches the cap, or comes within a helper of it.
+            assert!(
+                charged + 4 >= cap,
+                "cap {cap}: the most charged is {charged}"
+            );
+        }
+        let (charged, seen) = most_declarations(MAX_DECLS);
+        assert!(seen > 0 && charged <= MAX_DECLS);
+    }
+
+    /// A helper `H<i>` of the role `Declare` that holds the statements `body`
+    /// and returns what `ret` and `parts` say.
+    fn declarer(i: usize, ret: FTy, body: Vec<Stmt>, parts: Vec<Part>) -> ResHelper {
+        let result = HExpr::Unit;
+        let clocked = true;
+        ResHelper {
+            name: format!("H{i}"),
+            params: Vec::new(),
+            ret,
+            body,
+            result,
+            role: Role::Declare,
+            parts,
+            clocked,
+            children: Vec::new(),
+        }
+    }
+
+    fn reg(n: &str) -> Stmt {
+        Stmt::Reg(n.to_owned(), Ty::Bool, SExpr::Bool(false))
+    }
+
+    /// A clocked module, and the frame of one env.
+    fn frame() -> (Module, Ctx) {
+        let m = Module {
+            index: 0,
+            clocked: true,
+            names: Names::default(),
+        };
+        let ctx = Ctx {
+            envs: vec![Env::default()],
+            ..Ctx::default()
+        };
+        (m, ctx)
+    }
+
+    /// A call of a helper that declares eleven resources, as a struct of
+    /// arrays does with its two internal ones, is made only if the budget
+    /// covers all eleven.
+    #[test]
+    fn a_call_is_made_only_if_the_budget_covers_the_whole_helper() {
+        let body: Vec<Stmt> = (0..11).map(|k| reg(&format!("r{k}"))).collect();
+        let mut b = Builder::new(Vec::new());
+        b.res_helpers.push(declarer(0, FTy::Unit, body, Vec::new()));
+        for (cap, calls) in [(10, 0), (11, 1), (22, 2)] {
+            b.decls = 0;
+            b.max_decls = cap;
+            let (mut m, mut ctx) = frame();
+            let mut out = Vec::new();
+            for _ in 0..3 {
+                b.declare_call(&mut ctx, &mut m, &[0], &mut out).unwrap();
+            }
+            assert_eq!(out.len(), calls, "cap {cap}");
+            assert_eq!(b.decls, 11 * calls, "cap {cap}");
+        }
+    }
+
+    /// A group whose elements come from a helper with internal resources
+    /// pays for them in each iteration: four elements of a helper that
+    /// declares three resources are twelve.
+    #[test]
+    fn a_group_pays_for_the_resources_inside_the_helper_of_its_element() {
+        let ty = Ty::UInt(literal(8));
+        let leaf = Leaf::Reg(ty.clone());
+        let part = Part {
+            path: Vec::new(),
+            leaf,
+            bound: false,
+        };
+        let factory = declarer(
+            0,
+            FTy::Reg(ty.clone()),
+            vec![
+                Stmt::Reg("r0".to_owned(), ty.clone(), literal(0)),
+                Stmt::Wire("w0".to_owned(), ty.clone()),
+                Stmt::Wire("w1".to_owned(), ty.clone()),
+            ],
+            vec![part],
+        );
+        let list = ResHelper::binder(
+            "H1".to_owned(),
+            vec![
+                ("a0".to_owned(), FTy::List(Box::new(FTy::Reg(ty.clone())))),
+                ("x1".to_owned(), FTy::Data(ty.clone())),
+            ],
+            FTy::Unit,
+            Vec::new(),
+            HExpr::Unit,
+            Role::List(ListOf::Reg(ty)),
+        );
+        for (cap, made) in [(11, false), (12, true)] {
+            let mut b = Builder::new(Vec::new());
+            b.res_helpers.extend([factory.clone(), list.clone()]);
+            b.max_decls = cap;
+            // Four elements, the first helper that declares, and its draw.
+            b.hand = Tape {
+                numbers: vec![3, 0, 1].into_iter(),
+            };
+            let (mut m, mut ctx) = frame();
+            let mut out = Vec::new();
+            b.on_hand(|b| b.list_group_of(&mut ctx, &mut m, 1, &mut out))
+                .unwrap();
+            assert_eq!(!out.is_empty(), made, "cap {cap}: {out:?}");
+            assert_eq!(b.decls, if made { 12 } else { 0 }, "cap {cap}");
+        }
+    }
+
+    /// The caps of the forms of handles hold on 256 programs: the helpers,
+    /// the length of a list, the depth of a memory, and its word.
     #[test]
     fn handle_forms_stay_in_caps() {
-        let mut most = 0;
         for tape in tapes(256) {
             let mut b = Builder::new(tape);
             let Ok(p) = b.program() else { continue };
-            most = most.max(b.decls);
             assert!(b.res_helpers.len() <= 2 * RES_HELPERS as usize);
             let mut stmts = Vec::new();
             for item in &p.items {
@@ -1046,6 +1244,5 @@ mod tests {
                 }
             }
         }
-        assert!(most <= MAX_DECLS, "{most} declarations in one program");
     }
 }
