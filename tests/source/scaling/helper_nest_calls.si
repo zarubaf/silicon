@@ -1,5 +1,7 @@
-// A call depth of N through a recursive helper that declares a register (issue #279). Each level declares one register in
-// its own call frame and calls the next level, so the work is `O(N)` and the call depth is N.
+// Call depth N through a recursive helper that declares a register (issue #279). Each frame declares one register and
+// calls the next level, so the paths of the frames and of the registers grow with the depth. The fuel of a call pays for
+// the length of its path, so a walk of the path at each level is paid by the fuel and no template can pin it. The
+// template keeps the work for each unit of fuel flat when the call depth grows.
 // SCALE helper_nest_calls 8 16 32 64 128
 // TOP M()
 fn deep(x: UInt[8], n: Nat) -> UInt[8] {
