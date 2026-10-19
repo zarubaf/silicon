@@ -40,6 +40,7 @@ mod enum_hw;
 mod enums;
 mod file;
 mod fnvalues;
+mod handle_lists;
 mod handles;
 mod hw;
 mod hw_match;
@@ -64,7 +65,6 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 use stat::Reach;
 use std::collections::BTreeMap;
-#[cfg(test)]
 use std::collections::BTreeSet;
 use std::fmt;
 
@@ -271,6 +271,13 @@ struct Ctx {
     enums: Vec<HwEnum>,
     /// The resources that this frame declared and has not bound yet.
     pending: Vec<handles::Pending>,
+    /// The readable names that helpers and groups of handles made. The
+    /// draws of the main tape never see them, so that a program with
+    /// handles holds the program of the main tape alone; the values of the
+    /// handles reach the outputs through `mix_hand`.
+    hand: Vec<Hw>,
+    /// Whether the scope is a helper body, which has no `hand`.
+    local: bool,
 }
 
 impl Ctx {
@@ -314,7 +321,37 @@ impl Ctx {
             counters: Vec::new(),
             enums: self.enums.clone(),
             pending: Vec::new(),
+            hand: self
+                .hand
+                .iter()
+                .map(|h| Hw {
+                    types: parents
+                        .iter()
+                        .filter_map(|&p| h.types.get(p).copied())
+                        .collect(),
+                    ..h.clone()
+                })
+                .collect(),
+            local: self.local,
         }
+    }
+
+    /// Makes `h` readable to the draws of the hand tape. A helper body has
+    /// one pool.
+    fn publish(&mut self, h: Hw) {
+        if self.local {
+            self.hw.push(h);
+        } else {
+            self.hand.push(h);
+        }
+    }
+
+    /// The scope with the names of `hand` among the others, for an
+    /// expression that the hand tape draws.
+    fn view(&self) -> Ctx {
+        let mut ctx = self.clone();
+        ctx.hw.append(&mut ctx.hand);
+        ctx
     }
 }
 
@@ -437,6 +474,9 @@ struct Stats {
     bind_mem_calls: u32,
     direct_mems: u32,
     declare_calls: u32,
+    mixed_outputs: u32,
+    list_groups: u32,
+    list_declarer_elements: u32,
     explicit_reads: u32,
     container_reads: u32,
     /// The most arms of one match.
@@ -470,6 +510,8 @@ struct Builder {
     res_helpers: Vec<handles::ResHelper>,
     /// The structs of handles that those helpers return.
     hstructs: Vec<StructDef>,
+    /// The helpers that a call names.
+    called: BTreeSet<usize>,
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
@@ -516,6 +558,7 @@ impl Builder {
             helpers: Vec::new(),
             res_helpers: Vec::new(),
             hstructs: Vec::new(),
+            called: BTreeSet::new(),
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
             hw_values: Vec::new(),

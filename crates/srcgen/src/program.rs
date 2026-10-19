@@ -225,6 +225,8 @@ pub(crate) enum FTy {
     Array(Box<FTy>, u32),
     /// A struct with handle fields, by name.
     Struct(String),
+    /// `List[A]`.
+    List(Box<FTy>),
 }
 
 impl From<Ty> for FTy {
@@ -459,6 +461,10 @@ pub(crate) enum Stmt {
     Diagnostic(String, SExpr),
     /// `h(args);`: a call of a helper that returns `()`.
     Call(String, Vec<HExpr>),
+    /// `let mut name = list(A);`: a list of handles.
+    HList(String, FTy),
+    /// `name.push(h);` of a handle.
+    HPush(String, HExpr),
     /// `mem name: [T; N];`
     Mem(String, Ty, SExpr),
     /// `m.write_port(addr, data, en);`, or `write_port(m, addr, data, en);`
@@ -929,6 +935,8 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             "}".to_owned()
         }
         Stmt::Call(f, args) => format!("{f}({});", list(args, hexpr)),
+        Stmt::HList(n, t) => format!("let mut {n} = list({});", fty(t)),
+        Stmt::HPush(n, h) => format!("{n}.push({});", hexpr(h)),
         Stmt::Mem(n, t, depth) => format!("mem {n}: [{}; {}];", ty(t), sexpr(depth)),
         Stmt::WritePort {
             mem,
@@ -965,6 +973,7 @@ fn fty(t: &FTy) -> String {
         FTy::Tuple(ts) => format!("({})", list(ts, fty)),
         FTy::Array(t, n) => format!("[{}; {n}]", fty(t)),
         FTy::Struct(name) => name.clone(),
+        FTy::List(t) => format!("List[{}]", fty(t)),
     }
 }
 
@@ -1778,6 +1787,52 @@ module M1(comptime P0: Nat) domains() {
         assert_eq!(
             out,
             "t0[1] := read(t1.0);\nt1.0 := (t0[1] +% i0);\nt2.m0 := t2.m1;\n"
+        );
+    }
+
+    #[test]
+    fn lists_of_handles_print() {
+        let body = vec![
+            Stmt::HList("G0".to_owned(), FTy::Reg(u8())),
+            Stmt::For(
+                "j0".to_owned(),
+                dec(0),
+                dec(2),
+                vec![
+                    Stmt::Reg("r0".to_owned(), u8(), dec(0)),
+                    Stmt::HPush("G0".to_owned(), hname("r0")),
+                ],
+            ),
+            Stmt::Call("H0".to_owned(), vec![hname("G0"), hname("i0")]),
+        ];
+        let mut out = String::new();
+        stmts(&mut out, 0, &body);
+        assert_eq!(
+            out,
+            "let mut G0 = list(Reg[UInt[8]]);\ncomptime for j0 in 0..2 {\n    reg r0: UInt[8] = 0;\n    G0.push(r0);\n}\nH0(G0, i0);\n"
+        );
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![
+                ("a0".to_owned(), FTy::List(Box::new(FTy::Reg(u8())))),
+                ("x1".to_owned(), u8().into()),
+            ],
+            mut_first: false,
+            ret: FTy::Unit,
+            body: vec![Stmt::For(
+                "j0".to_owned(),
+                dec(0),
+                SExpr::Len(Box::new(sname("a0"))),
+                vec![Stmt::Connect(
+                    Place::Path(HExpr::Index(Box::new(hname("a0")), sname("j0"))),
+                    hname("x1"),
+                )],
+            )],
+            result: HExpr::Unit,
+        };
+        assert_eq!(
+            render_items(&[helper]),
+            "fn H0(a0: List[Reg[UInt[8]]], x1: UInt[8]) -> () {\n    comptime for j0 in 0..len(a0) {\n        a0[j0] := x1;\n    }\n    return ();\n}\n"
         );
     }
 

@@ -24,7 +24,7 @@
 //!   no call reaches stays dropped. The `instance` statement and the type
 //!   `Instance[M, args]` share their arguments (`S019`).
 
-use super::handles::{DEPTHS, Leaf, Part, Pending, ResHelper, Role, Step, at, literal};
+use super::handles::{DEPTHS, Leaf, ListOf, Part, Pending, ResHelper, Role, Step, at, literal};
 use super::inst::Child;
 use super::stat::Reach;
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module, Names};
@@ -56,7 +56,7 @@ impl Builder {
     /// A helper that declares resources.
     pub(super) fn declare_helper(&mut self, name: String) -> Built<ResHelper> {
         let mut names = Names::default();
-        let (data, hw) = self.data_formals(&mut names);
+        let (data, hw) = self.data_formals(&mut names, None);
         let mut hb = Hb {
             names,
             ctx: self.helper_ctx(hw),
@@ -79,6 +79,37 @@ impl Builder {
             result,
             role: Role::Declare,
             parts,
+            clocked: hb.clocked,
+            children: hb.children,
+        })
+    }
+
+    /// `fn H<k>(x0: U) -> Reg[T] { reg r0: T = k; return r0; }`, or the
+    /// same with a wire: a helper that declares one element for a list.
+    pub(super) fn factory_helper(&mut self, name: String, reg: bool, ty: &Ty) -> Built<ResHelper> {
+        let mut names = Names::default();
+        let (data, hw) = self.data_formals(&mut names, None);
+        let mut hb = Hb {
+            names,
+            ctx: self.helper_ctx(hw),
+            body: Vec::new(),
+            clocked: false,
+            children: Vec::new(),
+        };
+        let (var, fty, leaf) = self.register_or_wire(&mut hb, reg, Some(ty), false)?;
+        let part = Part {
+            path: Vec::new(),
+            leaf,
+            bound: false,
+        };
+        Ok(ResHelper {
+            name,
+            params: data,
+            ret: fty,
+            body: hb.body,
+            result: HExpr::Name(var),
+            role: Role::Declare,
+            parts: vec![part],
             clocked: hb.clocked,
             children: hb.children,
         })
@@ -259,9 +290,9 @@ impl Builder {
         let binders: Vec<Ty> = self
             .res_helpers
             .iter()
-            .filter_map(|h| match (&h.role, h.params.first()) {
-                (Role::Reg, Some((_, FTy::Reg(t)))) if reg => Some(t.clone()),
-                (Role::Wire, Some((_, FTy::Wire(t)))) if !reg => Some(t.clone()),
+            .filter_map(|h| match &h.role {
+                Role::Reg | Role::List(ListOf::Reg(_)) if reg => element(h),
+                Role::Wire | Role::List(ListOf::Wire(_)) if !reg => element(h),
                 _ => None,
             })
             .collect();
@@ -403,6 +434,20 @@ impl Builder {
             .collect()
     }
 
+    /// Whether the helper `d` declares one register (or wire) of the type
+    /// `ty`, returns it unbound, and has no child.
+    pub(super) fn returns_unbound(&self, d: usize, ty: &Ty, reg: bool) -> bool {
+        let Some(h) = self.res_helpers.get(d) else {
+            return false;
+        };
+        let want = if reg {
+            FTy::Reg(ty.clone())
+        } else {
+            FTy::Wire(ty.clone())
+        };
+        h.children.is_empty() && h.ret == want && matches!(h.parts.as_slice(), [p] if !p.bound)
+    }
+
     /// A call of one of the helpers `declarers`: `h(args);` for `()`, else
     /// `let t = h(args);`. Then the caller takes each resource of the
     /// result: it binds the unbound ones, and the registers and wires
@@ -489,7 +534,7 @@ impl Builder {
                 if !part.bound {
                     self.bind_child_inputs(ctx, &child, None, out)?;
                 }
-                self.expose_child_outputs(ctx, &child)?;
+                self.expose_child_handles(ctx, &child)?;
             }
         }
         Ok(())
@@ -497,7 +542,7 @@ impl Builder {
 
     /// Makes the register or wire `first` readable: in a `data` context it
     /// reads as data, or `read(first)` reads it.
-    fn read_handle(&mut self, ctx: &mut Ctx, first: &HExpr, ty: &Ty) -> Built {
+    pub(super) fn read_handle(&mut self, ctx: &mut Ctx, first: &HExpr, ty: &Ty) -> Built {
         let expr = if self.tape.below(3) == 0 {
             note!(self, explicit_reads);
             HExpr::Read(Box::new(first.clone()))
@@ -508,7 +553,7 @@ impl Builder {
             note!(self, container_reads);
         }
         let types = self.types(ty, &ctx.envs)?;
-        ctx.hw.push(Hw {
+        ctx.publish(Hw {
             expr,
             ty: Some(ty.clone()),
             types,
@@ -520,5 +565,18 @@ impl Builder {
     /// The structs of handles, as items.
     pub(super) fn handle_struct_items(&self) -> impl Iterator<Item = Item> + '_ {
         self.hstructs.iter().cloned().map(Item::Struct)
+    }
+}
+
+/// The type of the resource that a binder or a list helper takes: the type
+/// of its first formal, or of the elements of its list.
+fn element(h: &ResHelper) -> Option<Ty> {
+    match h.params.first() {
+        Some((_, FTy::Reg(t) | FTy::Wire(t))) => Some(t.clone()),
+        Some((_, FTy::List(l))) => match &**l {
+            FTy::Reg(t) | FTy::Wire(t) => Some(t.clone()),
+            _ => None,
+        },
+        _ => None,
     }
 }

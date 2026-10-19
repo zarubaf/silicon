@@ -366,6 +366,8 @@ impl Builder {
             counters: Vec::new(),
             enums: Vec::new(),
             pending: Vec::new(),
+            hand: Vec::new(),
+            local: false,
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(2) {

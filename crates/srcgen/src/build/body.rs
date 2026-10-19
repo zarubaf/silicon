@@ -186,6 +186,8 @@ impl Builder {
             counters: Vec::new(),
             enums: Vec::new(),
             pending: Vec::new(),
+            hand: Vec::new(),
+            local: false,
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -256,7 +258,13 @@ impl Builder {
 
     /// The scope of the body of `comptime for binder in lo..hi`, or `None`
     /// when the loop would pass `ENVS` envs.
-    fn iterations(&self, ctx: &Ctx, binder: &str, lo: &SExpr, hi: &SExpr) -> Built<Option<Ctx>> {
+    pub(super) fn iterations(
+        &self,
+        ctx: &Ctx,
+        binder: &str,
+        lo: &SExpr,
+        hi: &SExpr,
+    ) -> Built<Option<Ctx>> {
         let los = self.values(lo, &ctx.envs).ok_or(Fault::Type)?;
         let his = self.values(hi, &ctx.envs).ok_or(Fault::Type)?;
         let mut parents = Vec::new();
@@ -388,6 +396,8 @@ impl Builder {
             counters: Vec::new(),
             enums: Vec::new(),
             pending: Vec::new(),
+            hand: Vec::new(),
+            local: false,
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
@@ -434,6 +444,8 @@ impl Builder {
             }
         }
         body.extend(self.frame(&mut ctx, &mut m, 0)?);
+        self.call_unused(&mut ctx, &mut m, &mut body)?;
+        self.close_pending(&mut ctx, &mut body)?;
         // The first module that no parent reaches yet gets this one as a
         // parent, so that most signatures become modules of the tree.
         let orphan = (k + 1..self.sigs.len())
@@ -442,7 +454,9 @@ impl Builder {
             self.instantiate(&mut ctx, &mut m, j, &mut body)?;
         }
         for (n, w) in outputs {
-            body.push(Stmt::Connect(Place::Name(n), self.driver(&ctx, &w)));
+            let value = self.driver(&ctx, &w);
+            let value = self.mix_hand(&ctx, &w, value);
+            body.push(Stmt::Connect(Place::Name(n), value));
         }
         for (n, def) in &sig.enum_outputs {
             let value = self.enum_driver(&ctx, def);
