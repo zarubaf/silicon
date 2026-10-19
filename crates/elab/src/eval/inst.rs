@@ -1222,7 +1222,12 @@ impl Evaluator<'_> {
                 return fail(
                     Code::S019,
                     pos,
-                    format!("the instantiation of `{}` depends on itself", m.name),
+                    format!(
+                        "the instantiation of `{}` depends on itself, with the same arguments; \
+                         change an argument at each level, and end the recursion with a \
+                         `comptime if`",
+                        m.name
+                    ),
                 );
             }
             Some(Status::Done(k)) => return Ok(*k),
