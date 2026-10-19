@@ -1,6 +1,7 @@
 // S010: a port has a hardware data type, and a function type is none.
 // TOP M()
 module M() {
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: a port, a register, and a wire need a hardware data type, not `fn () -> Bool`; use a fixed-width type, for example `UInt[8]`
     input f: fn () -> Bool;
 }

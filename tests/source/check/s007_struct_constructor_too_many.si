@@ -4,6 +4,7 @@ struct P {
     a: Bool,
 }
 module M() domains() {
-    // expected-error S007 @+1
+    // expected-error S007 @+2
+    // expected-message: a struct constructor takes 0 or 1 argument(s), but it has 2; pass one value for each field, or none for the zero
     let r = P(true, false);
 }

@@ -1,6 +1,7 @@
 // S010: an array of a function type is no data, also with length 0.
 // TOP M()
 module M() {
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: a port, a register, and a wire need a hardware data type, not `[fn () -> Bool; 0]`; use a fixed-width type, for example `UInt[8]`
     input a: [fn () -> Bool; 0];
 }

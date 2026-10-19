@@ -4,6 +4,7 @@ struct P {
     a: Int,
 }
 module M() domains() {
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: a zero `T()` needs a hardware data type, not `P`; write a full value, for example a constructor with one value for each field
     let z = P();
 }

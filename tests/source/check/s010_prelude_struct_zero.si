@@ -1,0 +1,7 @@
+// S010: the zero `T()` of a prelude struct needs a hardware data type, and the struct holds a `String`.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+2
+    // expected-message: a zero `T()` needs a hardware data type, not `PortKey`; write a full value, for example a constructor with one value for each field
+    let k = PortKey();
+}

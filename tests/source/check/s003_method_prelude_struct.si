@@ -1,0 +1,8 @@
+// S003: a prelude struct is a type, not a function, so it is no method.
+// TOP M()
+module M() domains() {
+    let x = true;
+    // expected-error S003 @+2
+    // expected-message: `PortKey` is not a function; a receiver call `a.f()` needs a function `f`, so write `PortKey(a)` to call a type or a function value
+    x.PortKey();
+}

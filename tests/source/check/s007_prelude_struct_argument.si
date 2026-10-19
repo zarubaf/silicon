@@ -1,0 +1,7 @@
+// S007: a prelude struct of slice 4 has no parameter, so it takes no index argument.
+// TOP M()
+module M() domains() {
+    // expected-error S007 @+2
+    // expected-message: `PortKey` takes 0 argument(s), but it has 1; pass one argument for each `comptime` parameter of `PortKey`
+    type K = PortKey[UInt[8]];
+}
