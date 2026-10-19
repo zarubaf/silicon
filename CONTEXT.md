@@ -306,6 +306,26 @@ The type of a handle: `Reg[T]`, `Wire[T]`, `Mem[T, N]`, `Input[T]`, or `Instance
 
 A parameter of a function with a handle type. It keeps its argument as a handle and does not read it.
 
+### builtin
+
+An operation with a fixed name that the compiler gives, for example `resize` or `len`. Slice 4 of the front end adds the five `@` builtins: `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, and `@ports`. A builtin is not a macro, and the source cannot add one.
+
+### query
+
+An `@` builtin. It reads static facts of a binding, a type, or a child, or it makes a type or a selection from them. A query makes no hardware and instantiates no module. A query-shaped stage of the Rust front end (decision F9) is a different idea: a pure function of its key.
+
+### port family
+
+A namespace of ports with one basename and static `Nat` keys, for example `req[0]` and `req[3]`. Each entry is one whole port. A port family is not a value, so it has no length and no hardware index.
+
+### public key
+
+The name of a port that the parent, the port schema, and the core name use. It is the binder of the port, its family entry, or its `as` key. A call frame of a helper does not change it.
+
+### as key
+
+The key after `as` in a port declaration, for example `input pin: T as key;`. It is a static `String` or a `PortKey`, and it gives the public key of the port. The binder stays the name of the port in the body.
+
 ### observation record
 
 The record that one call of the source builtin `diagnostic` appends during elaboration. The command `observe` prints the records. An observation record is not a diagnostic.
