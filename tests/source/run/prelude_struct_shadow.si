@@ -1,0 +1,23 @@
+// A user item shadows a prelude struct, and it does not change the other prelude structs. The user
+// `struct FieldInfo` is another type than the prelude struct, and the user `struct String` does not
+// change the field types of `PortKey`.
+// TOP M()
+struct FieldInfo {
+    v: Bool,
+}
+struct String {
+    s: Bool,
+}
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    let f = FieldInfo(x);
+    let k = PortKey("req", false, 0);
+    static_assert(k.name == "req", "key name");
+    static_assert(!k.indexed, "key indexed");
+    diagnostic("field", f.v);
+    diagnostic("key", k);
+    y := f.v;
+}
+// STEP in=(x true) out=(y true)
+// STEP in=(x false) out=(y false)

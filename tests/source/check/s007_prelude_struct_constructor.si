@@ -1,0 +1,7 @@
+// S007: a constructor of a prelude struct has one argument for each field.
+// TOP M()
+module M() domains() {
+    // expected-error S007 @+2
+    // expected-message: a struct constructor takes 0 or 6 argument(s), but it has 1; pass one value for each field, or none for the zero
+    let t = TypeInfo(1);
+}

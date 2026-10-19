@@ -1,0 +1,7 @@
+// S010: a prelude struct of slice 4 holds a `String`, so it is no hardware data and no port type.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: a port, a register, and a wire need a hardware data type, not `PortKey`; use a fixed-width type, for example `UInt[8]`
+    input k: PortKey;
+}

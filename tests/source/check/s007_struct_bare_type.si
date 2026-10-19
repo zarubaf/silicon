@@ -4,6 +4,7 @@ struct P(comptime W: Nat) {
     a: UInt[W],
 }
 module M() domains() {
-    // expected-error S007 @+1
+    // expected-error S007 @+2
+    // expected-message: `P` takes 1 argument(s), but it has 0; pass one argument for each `comptime` parameter of `P`
     type A = P;
 }

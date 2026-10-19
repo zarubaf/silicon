@@ -1,6 +1,7 @@
 // S010: a register has a hardware data type, and an empty array of a function type is none.
 // TOP M()
 module M() {
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: a port, a register, and a wire need a hardware data type, not `[fn () -> Bool; 0]`; use a fixed-width type, for example `UInt[8]`
     reg r: [fn () -> Bool; 0] = [];
 }

@@ -1,0 +1,37 @@
+// The prelude structs of slice 4 are structs of the prelude: a program builds one, reads its fields,
+// and gives it to `diagnostic`. None is hardware data, so each lives in the static part.
+// TOP M()
+module M() domains() {
+    input x: Bool;
+    output y: Bool;
+    let f = FieldInfo("a", UInt[8]);
+    static_assert(f.name == "a", "field name");
+    static_assert(f.ty == UInt[8], "field type");
+    let mut vs = list(VariantInfo);
+    push(vs, VariantInfo("V", 1, list(Type)));
+    static_assert(len(vs) == 1, "variants");
+    let mut fs = list(FieldInfo);
+    push(fs, f);
+    let t = TypeInfo("struct", fs, Bool, 0, 0, vs);
+    static_assert(t.kind == "struct", "kind");
+    static_assert(len(t.fields) == 1, "fields");
+    static_assert(t.element == Bool, "element");
+    static_assert(len(t.variants) == 1, "variants of the type");
+    let k = PortKey("req", true, 3);
+    static_assert(k.name == "req", "key name");
+    static_assert(k.indexed, "key indexed");
+    static_assert(k.index == 3, "key index");
+    let p = PortInfo(k, UInt[8], true, "clock");
+    static_assert(p.key.index == 3, "info key");
+    static_assert(p.ty == UInt[8], "info type");
+    static_assert(p.is_input, "info direction");
+    static_assert(p.domain == "clock", "info domain");
+    diagnostic("field", f);
+    diagnostic("type", t);
+    diagnostic("variant", vs);
+    diagnostic("key", k);
+    diagnostic("port", p);
+    y := !x;
+}
+// STEP in=(x true) out=(y false)
+// STEP in=(x false) out=(y true)

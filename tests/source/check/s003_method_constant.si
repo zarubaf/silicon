@@ -3,6 +3,7 @@
 const N: Int = 1;
 module M() {
     let x = 1;
-    // expected-error S003 @+1
+    // expected-error S003 @+2
+    // expected-message: `N` is not a function; a receiver call `a.f()` needs a function `f`, so write `N(a)` to call a type or a function value
     x.N();
 }

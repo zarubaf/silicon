@@ -5,6 +5,7 @@ struct P {
 }
 module M() {
     let x = true;
-    // expected-error S003 @+1
+    // expected-error S003 @+2
+    // expected-message: `P` is not a function; a receiver call `a.f()` needs a function `f`, so write `P(a)` to call a type or a function value
     x.P();
 }

@@ -1,0 +1,7 @@
+// S010: `data_bits(T)` of a prelude struct needs a hardware data type, and the struct holds a `String`.
+// TOP M()
+module M() domains() {
+    // expected-error S010 @+2
+    // expected-message: `data_bits` needs a hardware data type, not `TypeInfo`; only a fixed-width type has a bit count, for example `UInt[8]`
+    let n = data_bits(TypeInfo);
+}
