@@ -24,11 +24,3 @@ lean | S007 Arity of `read` | 314
 rust | S007 Arity of `read` | 314
 rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
-rust | S001 Invalid character | 321
-pin | S001 Invalid character | 321
-rust | S011 Value not static | 319
-pin | S011 Value not static | 319
-rust | S016 Mutation in a hardware arm | 319
-pin | S016 Mutation in a hardware arm | 319
-rust | S019 Instantiation cycle | 319
-pin | S019 Instantiation cycle | 319
