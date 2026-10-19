@@ -65,10 +65,10 @@ at the name. These are the static positions:
   `Instance` misses one. The text of these families ends with their signature (section 6.2).
   `Bool`, `Nat`, `Int`, `Unit`, `Type`, and `String` have none.
   A struct has one index argument for each parameter. The prelude struct `ReadResponse` thus
-  has one, and its constructor two arguments. Thus each use of a struct with parameters
-  has its arguments, also the callee of a constructor. This also holds for a type name in an
-  expression. A complete type such as `UInt[8]`, `P[8]`, a `type` item, `()`, a tuple type, or
-  an array type takes no index.
+  has one, and its constructor two arguments. The prelude structs of slice 4 have none. Thus
+  each use of a struct with parameters has its arguments, also the callee of a constructor.
+  This also holds for a type name in an expression. A complete type such as `UInt[8]`, `P[8]`,
+  a `type` item, `()`, a tuple type, or an array type takes no index.
 - A function type takes no index, in a type and in an expression: `(fn () -> UInt)[8]` is
   `S007` at the index.
 - A variant constructor `E::V(args)` has one argument for each payload type of `V`. A path
