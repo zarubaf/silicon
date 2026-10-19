@@ -258,7 +258,10 @@ impl Guard {
     /// The text of a mutation of the binding `x`.
     pub(crate) fn change(self, x: &str) -> String {
         match self.kind {
-            GuardKind::Arm => "a hardware arm changes a binding from before the arm".to_owned(),
+            GuardKind::Arm => format!(
+                "a hardware arm cannot change `{x}`, a binding from before the arm; change `{x}` \
+                 before the `if` or `match`, and use the result in the arm"
+            ),
             GuardKind::Structural => format!(
                 "a type or a constant cannot change `{x}`; change `{x}` before it, keep the result in a `let`, and use that name here"
             ),
@@ -749,15 +752,17 @@ impl Evaluator<'_> {
         match self.store.seen(out) {
             Seen::Static(_) => Ok(()),
             Seen::Pending(q, _) => no_type(q),
-            s => fail(
-                Code::S011,
-                pos,
-                format!(
-                    "a static position needs a static value, not {}",
-                    self.text(s)
-                ),
-            ),
+            s => fail(Code::S011, pos, self.not_static(s)),
         }
+    }
+
+    /// The text of a value `{a}` at a static position (section 6.2, "Value not static").
+    fn not_static(&self, s: Seen<'_>) -> String {
+        format!(
+            "a static position needs a static value, not {}; compute the value from static \
+             values, for example from constants and `comptime` parameters",
+            self.about(s)
+        )
     }
 
     /// The value of a static position at the node `pos`. Another value there is `S011`.
@@ -765,11 +770,7 @@ impl Evaluator<'_> {
         self.check_static(pos, &out)?;
         match self.store.take(out) {
             Val::Static(v) => Ok(v),
-            _ => fail(
-                Code::S011,
-                pos,
-                "a static position needs a static value".to_owned(),
-            ),
+            v => fail(Code::S011, pos, self.not_static(v.seen())),
         }
     }
 
