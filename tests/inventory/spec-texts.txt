@@ -115,13 +115,13 @@ unlisted | S007 a complete type takes no index | 354
 unlisted | S007 a complete type takes no more index | 354
 unlisted | S007 a constructor takes 0 or 1 argument(s) | 354
 unlisted | S007 a constructor takes 0 or 1 argument(s), but it h | 354
-unlisted | S007 a struct constructor takes 0 or {} argument(s), | 354
 unlisted | S007 a type family takes one argument | 354
 unlisted | S007 a type family takes one index argument | 354
 unlisted | S007 the top takes {} argument(s), but it has {} | 354
 unlisted | S007 unscannable crates/elab/src/eval/types.rs | 354
 unlisted | S007 unscannable lean/Silicon/Source/Eval/Types.lean | 354
 unlisted | S007 {} takes {} argument(s), but it has {}{} | 354
+unlisted | S007 unscannable lean/Silicon/Source/Eval.lean | 354
 unlisted | S008 a `mut` actual has a `let mut` local or a `mut` | 354
 unlisted | S008 a `mut` actual is a place | 354
 unlisted | S008 the root `{}` is pending in a window | 354
@@ -156,14 +156,12 @@ unlisted | S010 `{}` is a builtin; a builtin is not a value | 354
 unlisted | S010 `{}` is a memory, not data; {} | 354
 unlisted | S010 `{}` is generic; a generic function is not a val | 354
 unlisted | S010 `{}` is not a constant | 354
-unlisted | S010 `{}` is not a function | 354
 unlisted | S010 `{}` is not a value | 354
 unlisted | S010 `{}` is not an item | 354
 unlisted | S010 `{}` is not an ordinary operator | 354
 unlisted | S010 `{}` names a type, not {} | 354
 unlisted | S010 `{}` needs a common type, not {} and {} | 354
 unlisted | S010 `{}` needs a finite operand | 354
-unlisted | S010 `{}` needs a hardware data type, not {} | 354
 unlisted | S010 `{}` needs a list, not {} | 354
 unlisted | S010 `{}` needs a memory | 354
 unlisted | S010 `{}` needs a memory, not {} | 354
@@ -188,11 +186,9 @@ unlisted | S010 a loop bound is a static Int, not {} | 354
 unlisted | S010 a part of UInt[{}] has no leaves | 354
 unlisted | S010 a payload type is hardware data, not {} | 354
 unlisted | S010 a payload value of {} is not data | 354
-unlisted | S010 a port, a register, and a wire need a hardware d | 354
 unlisted | S010 a select is hardware | 354
 unlisted | S010 a shift count is UInt or a static Int, not {} | 354
 unlisted | S010 a width is a static Int, not {} | 354
-unlisted | S010 a zero `T()` needs a hardware data type, not {} | 354
 unlisted | S010 an Int shift needs a static Int count | 354
 unlisted | S010 an arm has no select | 354
 unlisted | S010 an element has no type | 354
@@ -355,16 +351,3 @@ unlisted | S021 the `match` has no arm for its value | 354
 unlisted | S021 the `match` has no arm {} | 354
 unlisted | S001 brackets nest deeper than {} levels; raise --syn | 354
 unlisted | S001 invalid character in string | 354
-lean | S010 Data type of a port | 337
-rust | S010 Data type of a port | 337
-pin | S010 Data type of a port | 337
-rust | S003 Receiver call of a non-function | 337
-pin | S003 Receiver call of a non-function | 337
-rust | S007 Arity of a struct constructor | 337
-pin | S007 Arity of a struct constructor | 337
-rust | S007 Arity of a struct type | 337
-pin | S007 Arity of a struct type | 337
-rust | S010 Zero of a non-data type | 337
-pin | S010 Zero of a non-data type | 337
-rust | S010 `data_bits` of a non-data type | 337
-pin | S010 `data_bits` of a non-data type | 337
