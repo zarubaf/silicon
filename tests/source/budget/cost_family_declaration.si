@@ -1,0 +1,10 @@
+// The declarations of three family entries from a loop. Each declaration charges its statement, its key, and its type. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 120
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..3 {
+        input req[i]: UInt[8];
+    }
+    o := 0;
+}

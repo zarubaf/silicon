@@ -1,0 +1,19 @@
+// The parent binds the input entries of a child with `u.req[k]` and reads its output entries with `u.gnt[k]`.
+// TOP M()
+module C() {
+    comptime for i in 0..2 {
+        input req[i]: UInt[8];
+        output gnt[i]: UInt[8];
+        gnt[i] := req[i] +% i;
+    }
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    u.req[0] := x;
+    u.req[1] := x +% 10;
+    o := u.gnt[0] +% u.gnt[1];
+}
+// STEP in=(clock$0rst false x 1) out=(o 13)
+// STEP in=(clock$0rst false x 250) out=(o 255)

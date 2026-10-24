@@ -1,0 +1,13 @@
+// An output entry is a `:=` target, as a whole port. A loop binds the entries, and a literal key binds one more.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    comptime for i in 0..3 {
+        output gnt[i]: UInt[8];
+    }
+    gnt[0] := x;
+    gnt[1] := x +% 1;
+    gnt[2] := x +% 2;
+}
+// STEP in=(clock$0rst false x 0) out=(gnt[0] 0 gnt[1] 1 gnt[2] 2)
+// STEP in=(clock$0rst false x 254) out=(gnt[0] 254 gnt[1] 255 gnt[2] 0)

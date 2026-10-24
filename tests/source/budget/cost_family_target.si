@@ -1,0 +1,8 @@
+// A `:=` target of an output entry. The target charges its index step and its key. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 87
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output gnt[0]: UInt[8];
+    gnt[0] := x;
+}

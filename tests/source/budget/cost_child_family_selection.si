@@ -1,0 +1,15 @@
+// A binding `u.req[k]` and a read `u.gnt[k]` of a child family. Each selection charges the index node, the field node, the base, and the key. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 237
+// TOP M()
+module C() {
+    input req[0]: UInt[8];
+    output gnt[0]: UInt[8];
+    gnt[0] := req[0];
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    u.req[0] := x;
+    o := u.gnt[0];
+}

@@ -1,0 +1,15 @@
+// A second loop reads the entries that the first loop declared. The family name has module scope, so the selection in the second loop refers to the same family.
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..4 {
+        input req[i]: UInt[8];
+    }
+    let mut acc: UInt[8] = 0;
+    comptime for j in 0..4 {
+        acc = acc +% req[j];
+    }
+    o := acc;
+}
+// STEP in=(clock$0rst false req[0] 1 req[1] 2 req[2] 4 req[3] 8) out=(o 15)
+// STEP in=(clock$0rst false req[0] 255 req[1] 255 req[2] 0 req[3] 0) out=(o 254)

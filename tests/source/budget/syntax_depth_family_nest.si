@@ -1,0 +1,12 @@
+// A family entry in three nested `comptime if` arms, with a key in a bracket. The module brace, the three arms, and the bracket of the key nest five deep. The resolver walks the arms with an explicit stack.
+// SYNTAX-DEPTH 5
+// TOP M()
+module M() {
+    comptime if (true) {
+        comptime if (true) {
+            comptime if (true) {
+                input req[1]: Bool;
+            }
+        }
+    }
+}

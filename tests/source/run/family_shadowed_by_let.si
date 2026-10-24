@@ -1,0 +1,14 @@
+// A `let` in a nested block without an indexed declaration of the name shadows the family by the ordinary rule.
+// TOP M()
+module M() {
+    output o: UInt[8];
+    input req[0]: UInt[8];
+    let mut v: UInt[8] = 0;
+    {
+        let req = 5;
+        v = UInt[8](req);
+    }
+    o := v +% req[0];
+}
+// STEP in=(clock$0rst false req[0] 1) out=(o 6)
+// STEP in=(clock$0rst false req[0] 253) out=(o 2)

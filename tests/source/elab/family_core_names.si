@@ -1,0 +1,20 @@
+// A family entry gets the made field `<k>f` after its basename. The leaves of a record entry follow with `$a`. The inputs come before the outputs, in the order of the layout: the keys 2 and 10 sort as numbers.
+// TOP M()
+// CHECK: (input req$2f$a (bits 4))
+// CHECK-NEXT: (input req$2f$b (bits 4))
+// CHECK-NEXT: (input req$10f (bits 4))
+// CHECK-NEXT: (input z (bits 1))
+// CHECK-NEXT: (output gnt$2f (bits 4))
+// CHECK-NEXT: (output gnt$10f (bits 4))
+// CHECK-NEXT: (assign gnt$10f req$10f)
+// CHECK-NEXT: (assign gnt$2f req$2f$a)
+struct P { a: UInt[4], b: UInt[4] }
+module M() {
+    input req[10]: UInt[4];
+    input req[2]: P;
+    input z: Bool;
+    output gnt[10]: UInt[4];
+    output gnt[2]: UInt[4];
+    gnt[10] := req[10];
+    gnt[2] := req[2].a;
+}

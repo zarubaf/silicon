@@ -1,0 +1,15 @@
+// Each entry of a family can have its own type.
+// TOP M()
+module M() {
+    output a: UInt[8];
+    output b: Bool;
+    output c: UInt[3];
+    input req[0]: UInt[8];
+    input req[1]: Bool;
+    input req[2]: UInt[3];
+    a := req[0];
+    b := req[1];
+    c := req[2];
+}
+// STEP in=(clock$0rst false req[0] 200 req[1] true req[2] 5) out=(a 200 b true c 5)
+// STEP in=(clock$0rst false req[0] 0 req[1] false req[2] 7) out=(a 0 b false c 7)

@@ -1,0 +1,15 @@
+// A family in the arm of a `comptime if` that runs has entries, and a family in the arm that does not run has none. The arm that runs is selected by a parameter.
+// TOP M(true)
+module M(comptime wide: Bool) {
+    output o: UInt[8];
+    comptime if (wide) {
+        input req[0]: UInt[8];
+        input req[1]: UInt[8];
+        o := req[0] +% req[1];
+    } else {
+        input req[5]: UInt[8];
+        o := req[5];
+    }
+}
+// STEP in=(clock$0rst false req[0] 3 req[1] 4) out=(o 7)
+// STEP in=(clock$0rst false req[0] 250 req[1] 10) out=(o 4)

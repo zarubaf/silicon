@@ -1,0 +1,12 @@
+// A loop declares the entries `req[0]` to `req[2]` of one family, and the output sums the three. The key `0` is a literal, and the others come from the loop value.
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..3 {
+        input req[i]: UInt[8];
+    }
+    o := req[0] +% req[1] +% req[2];
+}
+// STEP in=(clock$0rst false req[0] 1 req[1] 2 req[2] 3) out=(o 6)
+// STEP in=(clock$0rst false req[0] 100 req[1] 100 req[2] 100) out=(o 44)
+// STEP in=(clock$0rst false req[0] 255 req[1] 1 req[2] 0) out=(o 0)
