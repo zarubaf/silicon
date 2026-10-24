@@ -40,15 +40,15 @@ fn before(a: Pos, b: Pos) -> bool {
 /// declaration. `owner` is the module item of the instantiation, whose static families the table
 /// does not copy (`public_of`).
 pub(super) struct Work {
-    pub(super) body: Body,
+    body: Body,
     needs: Vec<Need>,
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, PortId), (u64, Here)>,
     entries: BTreeMap<(Sym, u32), (Val, Pos)>,
-    pub(super) publics: BTreeMap<PubKey, (Public, Pos, usize)>,
+    publics: BTreeMap<PubKey, (Public, Pos, usize)>,
     owner: usize,
     dup: Option<(Pos, Breach)>,
-    pub(super) spent: u64,
+    spent: u64,
 }
 
 impl Work {
@@ -254,5 +254,16 @@ impl Work {
         }
         let (input, pos) = *families.get(self.owner)?.get(&sym)?;
         Some((Public::Family(input), pos, 0))
+    }
+
+    /// Adds the fuel `used` by a new child to `spent`.
+    pub(super) fn charge_child(&mut self, used: u64) {
+        self.spent += used;
+    }
+
+    /// Ends the instantiation. The result is its body, the table of its public names, and the
+    /// fuel of its new children.
+    pub(super) fn close(self) -> (Body, BTreeMap<PubKey, (Public, Pos, usize)>, u64) {
+        (self.body, self.publics, self.spent)
     }
 }
