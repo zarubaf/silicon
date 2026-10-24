@@ -1,19 +1,23 @@
-// T4 of the work-counter tests of the ports with `as` keys (issue #339). A child has 4 entries whose public basename has
-// N bytes. The parent selects `u.<B>[k]` N times. A selection holds the symbol of the name, so a use copies, hashes, and
-// compares no name. A copy of the name for each use makes N more work for each use, and the work escapes the bound.
+// T4 of the work-counter tests of the ports with `as` keys (issue #339). A child has 4 input entries whose public basename
+// has N bytes. The parent selects `u.<B>[k]` N times, then binds each entry once. A selection of an input gives a handle
+// and holds the symbol of the name, so a use copies, hashes, and compares no name. A copy of the name for each use makes
+// N more work for each use, and the work escapes the bound.
 // SCALE port_key_long_basename 16 32 64 128 256
 // TOP M()
 module C() {
     comptime for i in 0..4 {
-        output g: UInt[8] as PortKey("NEST{a|req|}", true, i);
-        g := 0;
+        input g: UInt[8] as PortKey("NEST{a|req|}", true, i);
     }
 }
 module M() {
+    input x: UInt[8];
     output o: UInt[8];
     instance u = C();
     comptime for j in 0..{N} {
-        let b = u.NEST{a|req|}[j % 4];
+        let h = u.NEST{a|req|}[j % 4];
     }
-    o := 0;
+    comptime for i in 0..4 {
+        u.NEST{a|req|}[i] := x;
+    }
+    o := x;
 }
