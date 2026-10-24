@@ -109,11 +109,12 @@ def dataType (p : Pos) (t : Ty) : Eval.M Ty := do
   else fail .S010 p (s!"a port, a register, and a wire need a hardware data type, not " ++
     s!"`{t.text}`; use a fixed-width type, for example `UInt[8]`")
 
-/-! A resource that needs one binding. The result is its handle. -/
-def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) : Eval.M Val := do
+/-! A resource that needs one binding, with the key of a family entry. The result is its handle. -/
+def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) (key : Option Nat := none) :
+    Eval.M Val := do
   let id := (← get).inst.work.needs.size
   modify fun s =>
-    { s with inst.work.needs := s.inst.work.needs.push { name := x, pos := p, count := 0 } }
+    { s with inst.work.needs := s.inst.work.needs.push { name := x, key, pos := p, count := 0 } }
   return .handle (.res k id t path)
 
 /-!
@@ -136,6 +137,50 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
   if !input then resource .output ⟨x, []⟩ t p x
   else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
   else normalize p (.ref (.name ⟨x, []⟩) t)
+
+/-! The `S010` text "Family as a value" of section 6.2, for the family `x`. -/
+def familyValueText (x : String) : String :=
+  s!"`{x}` is a port family, not a value; select one port with `{x}[k]`"
+
+/-! The `S010` text "Family key type" of section 6.2, for the key `a`. -/
+def keyTypeText (a : String) : String :=
+  s!"a family key is a static `Nat`, not {a}; compute the key from static integers, for " ++
+    "example a loop value"
+
+/-! The `S012` text "Family key range" of section 6.2, for the key `i`. -/
+def keyRangeText (i : Int) : String :=
+  s!"a family key is 0 to 4294967295, not {intText i}; use a key in this range"
+
+/-! The `S013` text "Undeclared family key" of section 6.2, for the key `k` of the family `x`. -/
+def undeclaredText (x : String) (k : Nat) : String :=
+  s!"the port family `{x}` has no key {k} here; declare `{x}[{k}]` before this use"
+
+/-!
+The `S019` text "Family key twice" of section 6.2, for the key `k` of the family `x` with the
+earlier declaration at `b`.
+-/
+def keyTwiceText (x : String) (k : Nat) (b : Pos) : String :=
+  s!"the port `{x}[{k}]` is declared here and at {b.line}:{b.col}; declare each key of `{x}` " ++
+    "once"
+
+/-!
+The entry `k` of the family with the binder `b`, of the type `t`, declared at `p` (section 5.6).
+A key that the family has already is `S019`. The entry is one whole port with the core name
+`<x>$<k>f`, and it goes into the table of entries (`Work.entries`), not into a frame slot. The
+field `<k>f` keeps its name apart from each other name (section 7.2), so it takes no version.
+-/
+def entry (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) : Eval.M Unit := do
+  let x := b.name.name
+  if let some (_, q) := (← get).inst.work.entries[(b.id, k)]? then
+    fail .S019 p (keyTwiceText x k q)
+  let sym := (← readThe Ctx).binder b.id
+  modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, some k, input, t, p⟩ }
+  let path : Path := ⟨x, [.family k]⟩
+  -- An input entry refers to its name as a scalar input does (`port`).
+  let v ← if !input then resource .output path t p x (some k)
+    else if t.info.leaves = 0 then pure (.agg (.ref (.name path) t))
+    else normalize p (.ref (.name path) t)
+  modify fun s => { s with inst.work.entries := s.inst.work.entries.insert (b.id, k) (v, p) }
 
 /-! The target of a `:=` binding: an own resource, or the input `port` of the child `inst`. -/
 inductive Target where

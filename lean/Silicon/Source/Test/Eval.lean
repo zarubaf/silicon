@@ -696,6 +696,26 @@ def hw (body : String) : String :=
 #guard (top (hw "  let t = [1, 2];\n  let u = t[N];") "M(1)").startsWith "total"
 
 /-!
+The charges of a family entry (section 5.4). The key `3` charges its node and its size, 2 units,
+and nothing else. A selection `req[3]` charges the index node, the name node, and its key: 3
+units more than the name `req`. A target `g[3]` charges its index step and its key: 3 units
+more than the root `g`. The lowering charges the made field `3f` as an integer of the size 1, so
+each core name `req$3f` or `g$3f` costs 1 unit more. Each pair thus differs by 7 units.
+-/
+def famIn (port use : String) : String :=
+  s!"module M() \{\n  input {port}: Bool;\n  output o: Bool;\n  o := {use};\n}\n"
+def famOut (port use : String) : String :=
+  s!"module M() \{\n  input a: Bool;\n  output {port}: Bool;\n  {use} := a;\n}\n"
+#guard top (famIn "req" "req") "M" == "total 70\nM 42\n"
+#guard top (famIn "req[3]" "req[3]") "M" == "total 77\nM 49\n"
+#guard top (famIn "req[3]" "req[3]") "M" (fuel := 76) == "S015 1:1"
+#guard top (famOut "g" "g") "M" == "total 66\nM 38\n"
+#guard top (famOut "g[3]" "g[3]") "M" == "total 73\nM 45\n"
+#guard top (famOut "g[3]" "g[3]") "M" (fuel := 72) == "S015 1:1"
+-- A key is below 2^32, so a key of the size 2 is out of its range.
+#guard top (famIn "req[1 << 64]" "req[1 << 64]") "M" == "S012 2:13"
+
+/-!
 The nested doubling of section 11.3: making `a_k` charges `2^(k + 2) - 1`. Each `let` adds 4
 units: the statement, the literal, and the two names. The join of the two element types
 visits `k` pairs of arrays. With the fuel 1000000, the sum first goes above the fuel at the

@@ -2259,9 +2259,54 @@ def fieldPart (p : Pos) (o : Out) (f : Ident) : M Out := do
     return part o w (← field p f w)
 
 /-!
+The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A negative
+key is `S012`, a key of 2^32 or more is `S012` "Family key range", and a key of another type is
+`S010` "Family key type". A static `UInt` is such a type. The key fits 32 bits, so each later
+compare and name of it takes constant work.
+-/
+def familyKey (p : Pos) : Value → M Nat
+  | .int i =>
+    if i < 0 then fail .S012 p (fitText .nat i)
+    else if i < 2 ^ 32 then pure i.toNat
+    else fail .S012 p (Elab.keyRangeText i)
+  | v => fail .S010 p (Elab.keyTypeText (Val.static v).about)
+
+/-!
+The key `v` at `p` of a selection of the family `x` with its name at `np` (section 6.2). A
+hardware key is `S010` "Family as a value" at the name. A handle is no static value (`S011`).
+Then the key gets its typed use (`familyKey`).
+-/
+def selectionKey (np p : Pos) (x : String) (v : Val) : M Nat := do
+  let hardware : Bool := match v with
+    | .hw _ => true
+    | .agg a => !a.ty?.any (·.info.handles)
+    | _ => false
+  if hardware then fail .S010 np (Elab.familyValueText x)
+  familyKey p (← static p v)
+
+/-!
+The value of the entry `k` of the family `x` with the binder `id`, at the key `p`. A key that
+the body did not declare before is `S013` "Undeclared family key" (section 6.2).
+-/
+def entryVal (p : Pos) (x : String) (id k : Nat) : M Val := do
+  match (← get).inst.work.entries[(id, k)]? with
+  | some (v, _) => pure v
+  | none => fail .S013 p (Elab.undeclaredText x k)
+
+/-!
+The selection of the entry `k` of the family `x` with the binder `id`, at the index node `p` and
+the key `kp`. An input entry reads as a port name does (`readRef`), and an output entry gives its
+handle. The result refers to the port, so it charges no size, and it has no local root.
+-/
+def entryAt (p kp : Pos) (x : String) (id k : Nat) : M Out := do
+  match ← entryVal kp x id k with
+  | .agg (.ref b t) => return ⟨← readRef p b t, t.info.leaves != 0, none⟩
+  | v => return ⟨v, true, none⟩
+
+/-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
-charges 1, then its index evaluates by `ev` and is static (`S011`). Another step has no index
-here.
+charges 1, then its index evaluates by `ev` in a structural context (section 9.4) and is static
+(`S011`). Another step has no index here.
 -/
 def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
     M (List (Sel × Option Value)) := do
@@ -2270,7 +2315,8 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
     match sel with
     | .index q [i] =>
       charge q 1
-      keys := keys.push (sel, some (← static i.pos (← need i (← ev i)).value))
+      let o ← structural do need i (← ev i)
+      keys := keys.push (sel, some (← static i.pos o.value))
     | .index q _ =>
       charge q 1
       fail .S010 q "an index of a value has one argument"
@@ -2287,6 +2333,25 @@ def targetRoot (ev : Resolve.Expr → M (Option Out)) (root : Resolve.Expr) : M 
   | _ => pure (← need root (← ev root)).value
 
 /-!
+The part that the `:=` target with the start `s` selects, when its root is the own family `x`
+with the binder `id` at `rp` (section 5.2). The first index takes the key checks of a family
+selection, not check 1. Then the other indices evaluate (`targetKeys`), and the key selects the
+entry, as a local root gives its value. A family root without a first index is `S010` "Family
+as a value" at the root, after the indices.
+-/
+def familyTarget (ev : Resolve.Expr → M (Option Out)) (s rp : Pos) (x : String) (id : Nat) :
+    List Sel → M Val
+  | .index q [i] :: rest => do
+    charge q 1
+    let v ← structural do return (← need i (← ev i)).value
+    let k ← selectionKey rp i.pos x v
+    let keys ← targetKeys ev rest
+    Elab.targetWalk s (← entryVal i.pos x id k) keys
+  | sels => do
+    let _ ← targetKeys ev sels
+    fail .S010 rp (Elab.familyValueText x)
+
+/-!
 The part that the `:=` target `e` selects. A root that is not a local evaluates first. Then
 the indices evaluate (`targetKeys`), and a local root gives its value after them. One walk then
 runs the steps from the root outward (`Elab.targetWalk`). Another root has no slot, and its value
@@ -2295,6 +2360,7 @@ no held root.
 -/
 def targetPart (ev : Resolve.Expr → M (Option Out)) (e : Resolve.Expr) : M Val := do
   let (root, sels) := (chain e).getD (e, [])
+  if let .name rp x (.family id _) := root then return ← familyTarget ev e.pos rp x id sels
   let early ← match root with
     | .name _ _ (.local _) => pure none
     | _ => do pure (some (← targetRoot ev root))
@@ -2332,9 +2398,10 @@ def sinkValue (p : Pos) (t : Ty) : Val → M Agg
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`,
-`indexBase`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`, `call`, `hwStmt`, and
-`instantiate` get the bound `n` of their caller after its charge. They call entry functions,
-`spec`, which a name of a struct item uses, and the helpers that `call` and `hwStmt` use.
+`indexBase`, `familySel`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`, `call`,
+`hwStmt`, `entryDecl`, and `instantiate` get the bound `n` of their caller after its charge.
+They call entry functions, `spec`, which a name of a struct item uses, and the helpers that
+`call` and `hwStmt` use.
 -/
 /-!
 The kind of a declaration or a `:=` statement in the text "Hardware in a `comptime fn`"
@@ -2439,6 +2506,7 @@ mutual
             charge bp 1
             return some ⟨.static (.type (← spec n p i xs)), false, none⟩
         let [x] := xs | fail .S010 p "an index of a value has one argument"
+        if let .name bp y (.family id _) := b then return some (← familySel n p bp y id x)
         let o ← indexBase n b
         let v ← baseData p o.value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
@@ -2603,6 +2671,18 @@ mutual
   termination_by (n + 1, 0)
 
   /--
+  The selection `x[k]` of the own family with the binder `id` at the index node `p` (section
+  5.6). The index node charged 1, and the name node at `np` charges 1. The key evaluates in a
+  structural context, gets the checks of a selection key (`selectionKey`), and selects the entry
+  (`entryAt`).
+  -/
+  def familySel (n : Nat) (p np : Pos) (x : String) (id : Nat) (k : Resolve.Expr) : M Out := do
+    charge np 1
+    let v ← structural do return (← need k (← eval n k)).value
+    entryAt p k.pos x id (← selectionKey np k.pos x v)
+  termination_by (n + 1, 0)
+
+  /--
   A use of the enum item `i` at `p`, in the table of enums (`enumOf`). Its tag type, its tag
   values, and its payload types are structural contexts (section 9.4).
   -/
@@ -2634,7 +2714,7 @@ mutual
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩
     | .fn _ => fail .S010 p s!"`{x}` is a builtin; a builtin is not a value"
-    | .family .. => fail .S004 p "a port family is not supported yet"
+    | .family .. => fail .S010 p (Elab.familyValueText x)
     | .item i => do
       match (← read).items[i]? with
       | some (.const cp _ ty v) => do
@@ -2952,8 +3032,9 @@ mutual
   -/
   def hwStmt (n : Nat) (s : Resolve.Stmt) : M Unit :=
     match s with
-    | .input p x k ty | .output p x k ty => do
-      if let some k := k then fail .S004 k.pos "a port family is not supported yet"
+    | .input p x (some k) ty | .output p x (some k) ty =>
+      entryDecl n p (s matches .input ..) x k ty
+    | .input p x none ty | .output p x none ty => do
       let t ← Elab.dataType p (← typeExpr n ty)
       let v ← Elab.port p (s matches .input ..) x t
       bindLocal x.id ⟨some t, false, v⟩
@@ -3008,6 +3089,19 @@ mutual
       bindLocal u.id ⟨none, false, .handle (.inst k path c t)⟩
     | _ => pure ()
   termination_by (n, 5)
+
+  /--
+  The declaration of the entry `k` of the family `x` at `p` (section 6.2, entry order). The
+  statement charged 1. The key evaluates in a structural context and is static (`S011`), then it
+  gets its typed use (`familyKey`). The type gets the checks of a scalar port, and then the entry
+  exists (`Elab.entry`).
+  -/
+  def entryDecl (n : Nat) (p : Pos) (input : Bool) (x : Binder) (k : Resolve.Expr)
+      (ty : Resolve.TypeExpr) : M Unit := do
+    let v ← structural do return (← need k (← eval n k)).value
+    let key ← familyKey k.pos (← static k.pos v)
+    Elab.entry p input x key (← Elab.dataType p (← typeExpr n ty))
+  termination_by (n, 4)
 
   /--
   The instantiation of the module item `i` with the converted arguments `tvs` and their

@@ -7,10 +7,12 @@ This module also expands each part of a hardware data type into its leaves. `Fla
 `Vectors` both read it. No other module expands a port.
 
 The domain ports come first, then the inputs, then the outputs. In each group of inputs and
-outputs, the ports sort by the byte order of their source names. The leaves of one port follow
-in packing order. Thus the layout order is not the byte order of the core names. The resolver
-makes the port names of a module unique, so this order has no ties, although `qsort` is not
-stable.
+outputs, the ports sort by the byte order of their source names, then by their family keys as
+numbers (`portBefore`). A scalar port has no key, and no key sorts before each key, so `req[2]`
+comes before `req[10]`. The sort compares two names only when their symbols differ. The leaves
+of one port follow in packing order. Thus the layout order is not the byte order of the core
+names. One name has one form (section 5.6), and one family has each key once, so this order has
+no ties, although `qsort` is not stable.
 
 `foldLeaves` streams the leaves of a type in packing order: it makes no list of them. A caller
 thus charges each leaf before it makes the leaf. A part without a leaf takes one step, and a
@@ -37,16 +39,18 @@ structure Leaf where
 def Leaf.name (l : Leaf) : Name := l.path.name
 
 /-!
-The name of a leaf of a port in a source vector. It is the source name of the port, then `.f`
-for a field and `.k` for an element at each level.
+The name of a leaf of a port in a source vector (section 11.2). It is the source name of the
+port, then `[k]` for the key of a family entry. Then each level adds `.f` for a field and `.k`
+for an element.
 -/
 def Leaf.entry (l : Leaf) : String :=
-  l.path.inner.foldr (fun f s => s ++ "." ++ text f) l.path.outer
+  l.path.inner.foldr (fun f s => s ++ text f) l.path.outer
 where
   text : Field → String
-    | .user x => x
-    | .elem k => toString k
-    | f => f.encode
+    | .user x => "." ++ x
+    | .elem k => "." ++ toString k
+    | .family k => s!"[{k}]"
+    | f => "." ++ f.encode
 
 /-!
 Runs `f` on each leaf of the part of the type `t` at the path `p` in packing order, from the
@@ -84,7 +88,7 @@ def foldLeaves [Monad m] (fs : Fields) (sub : α → Field → Nat → Ty → α
 /-! Runs `f` on each leaf of the port `q` in packing order, from the start value `b`. -/
 @[inline] def foldPort [Monad m] (fs : Fields) (q : Elab.PortDecl) (b : β) (f : β → Leaf → m β)
     (bad : β → Ty → m β) : m β :=
-  foldLeaves fs (fun _ _ _ _ => ()) (fun b l _ => f b l) bad q.ty.depth ⟨q.name, []⟩ q.ty () b
+  foldLeaves fs (fun _ _ _ _ => ()) (fun b l _ => f b l) bad q.ty.depth q.path q.ty () b
 
 /-! The ports of one module in layout order: the inputs, then the outputs. -/
 structure Ports (α : Type) where
@@ -92,12 +96,24 @@ structure Ports (α : Type) where
   outputs : List α
 
 /-!
+The order of two ports in the layout: by the source name, then by the key as a number, with no
+key first. One symbol is one name, so the names compare only when the symbols differ.
+-/
+def portBefore (x y : Elab.PortDecl) : Bool :=
+  if x.sym == y.sym then
+    match x.key, y.key with
+    | none, some _ => true
+    | some a, some b => a < b
+    | _, _ => false
+  else x.name < y.name
+
+/-!
 The layout of the domain ports `domain` and the declared ports `ps`. Each declared port comes
 with the values of its leaves in packing order. The domain ports stay in their order, `d$0clk`
 before `d$0rst`.
 -/
 def arrange (domain : List α) (ps : Array (Elab.PortDecl × Array α)) : Ports α :=
-  let sorted := (ps.qsort fun x y => x.1.name < y.1.name).toList
+  let sorted := (ps.qsort fun x y => portBefore x.1 y.1).toList
   let leaves (input : Bool) := (sorted.filter (·.1.input == input)).flatMap (·.2.toList)
   ⟨domain ++ leaves true, leaves false⟩
 

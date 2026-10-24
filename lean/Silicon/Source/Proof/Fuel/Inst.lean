@@ -29,8 +29,9 @@ theorem modifyBody_f (f : Elab.Body → Elab.Body) :
 theorem dataType_f (p : Pos) (t : Ty) : Follows cap (Elab.dataType p t) (Elab.dataType p t) := by
   unfold Elab.dataType; follows [notHandle_f]
 
-theorem resource_f (k : Kind) (path : Names.Path) (t : Ty) (p : Pos) (x : String) :
-    Follows cap (Elab.resource k path t p x) (Elab.resource k path t p x) := by
+theorem resource_f (k : Kind) (path : Names.Path) (t : Ty) (p : Pos) (x : String)
+    (key : Option Nat) :
+    Follows cap (Elab.resource k path t p x key) (Elab.resource k path t p x key) := by
   unfold Elab.resource; follows
 
 theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
@@ -42,6 +43,25 @@ theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
     cases h
     exact ⟨rfl, fun _ => rfl⟩
   · follows [resource_f, modifyBody_f, normalize_f]
+
+theorem entry_f (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) :
+    Follows cap (Elab.entry p input b k t) (Elab.entry p input b k t) := by
+  unfold Elab.entry; follows [resource_f, modifyBody_f, normalize_f]
+
+theorem familyKey_f (p : Pos) (v : Value) : Follows cap (familyKey p v) (familyKey p v) := by
+  unfold familyKey; follows
+
+theorem selectionKey_f (np p : Pos) (x : String) (v : Val) :
+    Follows cap (selectionKey np p x v) (selectionKey np p x v) := by
+  unfold selectionKey; follows [static_f, familyKey_f]
+
+theorem entryVal_f (p : Pos) (x : String) (id k : Nat) :
+    Follows cap (entryVal p x id k) (entryVal p x id k) := by
+  unfold entryVal; follows
+
+theorem entryAt_f (p kp : Pos) (x : String) (id k : Nat) :
+    Follows cap (entryAt p kp x id k) (entryAt p kp x id k) := by
+  unfold entryAt; follows [entryVal_f, readRef_f]
 
 theorem bindTarget_f (p : Pos) (t : Elab.Target) (h : Agg) :
     Follows cap (Elab.bindTarget p t h) (Elab.bindTarget p t h) := by
@@ -70,17 +90,25 @@ theorem sinkValue_f (p : Pos) (t : Ty) (v : Val) :
 theorem targetKeys_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (sels : List Sel) :
     Follows cap (targetKeys ev sels) (targetKeys ev' sels) := by
-  unfold targetKeys; follows [he, need_f, static_f]
+  unfold targetKeys; follows [he, need_f, static_f, structural_f]
 
 theorem targetRoot_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (root : Resolve.Expr) :
     Follows cap (targetRoot ev root) (targetRoot ev' root) := by
   unfold targetRoot; follows [he, need_f]
 
+theorem familyTarget_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (s rp : Pos) (x : String) (id : Nat)
+    (sels : List Sel) :
+    Follows cap (familyTarget ev s rp x id sels) (familyTarget ev' s rp x id sels) := by
+  unfold familyTarget
+  follows [he, need_f, structural_f, selectionKey_f, targetKeys_f he, targetWalk_f, entryVal_f]
+
 theorem targetPart_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (e : Resolve.Expr) :
     Follows cap (targetPart ev e) (targetPart ev' e) := by
-  unfold targetPart; follows [targetRoot_f he, targetKeys_f he, targetWalk_f]
+  unfold targetPart
+  follows [targetRoot_f he, targetKeys_f he, targetWalk_f, familyTarget_f he]
 
 theorem target_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (e : Resolve.Expr) :
@@ -100,6 +128,19 @@ theorem instantiate_f (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (
   rw [instantiate.eq_def k, instantiate.eq_def m]
   follows [hb, serialize_f, bindings_f, nested_f, inFrame_f, Follows.measure, bindLocal_f]
 
+theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (x : String)
+    (id : Nat) (e : Resolve.Expr) :
+    Follows m (familySel k p np x id e) (familySel m p np x id e) := by
+  rw [familySel.eq_def k, familySel.eq_def m]
+  follows [he, need_f, structural_f, selectionKey_f, entryAt_f]
+
+theorem entryDecl_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (input : Bool) (x : Binder)
+    (e : Resolve.Expr) (ty : Resolve.TypeExpr) :
+    Follows m (entryDecl k p input x e ty) (entryDecl m p input x e ty) := by
+  rw [entryDecl.eq_def k, entryDecl.eq_def m]
+  follows [he, ht, need_f, structural_f, static_f, familyKey_f, dataType_f, entry_f]
+
 theorem hwStmt_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (s : Resolve.Stmt) :
@@ -107,7 +148,8 @@ theorem hwStmt_f (he : ∀ e, Follows m (eval k e) (eval m e))
   rw [hwStmt.eq_def k, hwStmt.eq_def m]
   follows [he, ht, instantiate_f hb, arguments_f he ht, need_f, copy_f, conform_f, static_f,
     lit_f, fresh_f, bindLocal_f, dataType_f, memWord_f, memDepth_f, port_f, resource_f,
-    modifyBody_f, target_f he, bindTarget_f, sinkValue_f, typedUse_f, settle_f, structural_f]
+    modifyBody_f, target_f he, bindTarget_f, sinkValue_f, typedUse_f, settle_f, structural_f,
+    entryDecl_f he ht]
 
 end walk
 
@@ -142,7 +184,8 @@ theorem follows_all : ∀ n,
           changesOf_f, normalize_f, readRef_f, aggEq_f, fieldPart_f, indexBase_f (he k),
           enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
-          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
+          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
+          familySel_f (he k)]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -153,7 +196,8 @@ theorem follows_all : ∀ n,
           changesOf_f, normalize_f, readRef_f, aggEq_f, fieldPart_f, indexBase_f (he m),
           enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
-          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
+          matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
+          familySel_f (he m)]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
