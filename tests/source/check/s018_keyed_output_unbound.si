@@ -1,0 +1,7 @@
+// S018: an own output with an `as` key has no binding. The text names the public name and the binder.
+// TOP M()
+module M() {
+    // expected-error S018 @+2
+    // expected-message: the output `out` has no binding; bind its binder with `o := ...;`, or remove its declaration
+    output o: Bool as "out";
+}

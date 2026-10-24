@@ -1,0 +1,8 @@
+// S019: a scalar port, then an entry of a family with the same public name, both from keys.
+// TOP M()
+module M() {
+    input a: Bool as "req";
+    // expected-error S019 @+2
+    // expected-message: `req` names a scalar port and a port family, here and at 4:5; give one of them another key with `as`
+    input b: Bool as PortKey("req", true, 0);
+}

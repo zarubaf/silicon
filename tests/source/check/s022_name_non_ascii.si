@@ -1,0 +1,7 @@
+// S022: a public name is ASCII.
+// TOP M()
+module M() {
+    // expected-error S022 @+2
+    // expected-message: `café` is not a valid port name; use an ASCII letter or `_`, then letters, digits, or `_`
+    input a: Bool as "café";
+}

@@ -1,0 +1,8 @@
+// S019: the public name of a port without a key is its binder, so a key can take it.
+// TOP M()
+module M() {
+    input x: Bool;
+    // expected-error S019 @+2
+    // expected-message: the port name `x` is declared here and at 4:5; give one of them another key with `as`, for example from a parameter
+    input y: Bool as "x";
+}

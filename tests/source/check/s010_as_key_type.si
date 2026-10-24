@@ -1,0 +1,7 @@
+// S010: an `as` key is a `String` or a `PortKey`, so an integer is the "Port key type" error.
+// TOP M()
+module M() {
+    // expected-error S010 @+2
+    // expected-message: an `as` key is a static `String` or `PortKey`, not a value of `Int`; write the public name as a string, for example `as "req_0"`
+    input a: Bool as 5;
+}

@@ -1,0 +1,7 @@
+// S012: the index of an indexed `PortKey` is below 2^32. The error is at the key.
+// TOP M()
+module M() {
+    // expected-error S012 @+2
+    // expected-message: a family key is 0 to 4294967295, not 4294967296; use a key in this range
+    input a: Bool as PortKey("req", true, 4294967296);
+}

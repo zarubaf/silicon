@@ -1,0 +1,9 @@
+// S019: the static family `gnt` of outputs comes after the `PortKey` input entry.
+// TOP M()
+module M() {
+    // expected-error S019 @+2
+    // expected-message: the port family `gnt` has an input entry and an output entry, here and at 7:5; give the entries of one direction another key with `as`
+    input x: Bool as PortKey("gnt", true, 1);
+    output gnt[0]: Bool;
+    gnt[0] := x;
+}

@@ -1,0 +1,10 @@
+// An `as` key charges its expression nodes, and the name then charges its size. Three keyed ports from a loop. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 165
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..3 {
+        input p: UInt[8] as "p" + str(i);
+    }
+    o := 0;
+}

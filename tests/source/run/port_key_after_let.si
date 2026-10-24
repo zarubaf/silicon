@@ -1,0 +1,10 @@
+// A port takes its public name as the first binding of that name, and a later `let` of the name gets a version field.
+// TOP M()
+module M() domains() {
+    input a: UInt[4] as "x";
+    let x = a +% 1;
+    output o: UInt[4];
+    o := x;
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 15) out=(o 0)

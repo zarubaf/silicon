@@ -1,0 +1,6 @@
+// S001: a port with a family key has no `as` key. The error is at `as`.
+module M() {
+    // expected-error S001 @+2
+    // expected-message: an indexed port takes no `as` key; declare a scalar port with `as PortKey("req", true, k)`
+    input req[0]: Bool as "x";
+}

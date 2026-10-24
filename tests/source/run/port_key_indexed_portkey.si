@@ -1,0 +1,10 @@
+// A `PortKey` with `indexed` true gives an entry of a family. The binder stays the name of the port in the body.
+// TOP M()
+module M() domains() {
+    input a: UInt[4] as PortKey("req", true, 2);
+    input b: UInt[4] as PortKey("req", true, 0);
+    output o: UInt[4] as PortKey("gnt", true, 1);
+    o := a +% b;
+}
+// STEP in=(req[0] 1 req[2] 2) out=(gnt[1] 3)
+// STEP in=(req[0] 15 req[2] 2) out=(gnt[1] 1)

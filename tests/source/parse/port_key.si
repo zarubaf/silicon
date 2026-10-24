@@ -1,0 +1,8 @@
+// A port has an optional key after its type: a `String` or a `PortKey` value. The key is any expression.
+module M(comptime N: Nat) {
+    input a: UInt[8] as "req";
+    input b: UInt[8] as "req_" + str(N);
+    output c: Bool as PortKey("gnt", false, 0);
+    output d: Bool as PortKey("gnt", true, N);
+    input e: Bool;
+}

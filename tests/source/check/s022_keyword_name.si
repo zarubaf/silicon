@@ -1,0 +1,7 @@
+// S022: a keyword is no public name.
+// TOP M()
+module M() {
+    // expected-error S022 @+2
+    // expected-message: `module` is a keyword, so it cannot be a port name; choose another name
+    input a: Bool as "module";
+}

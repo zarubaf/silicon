@@ -1,0 +1,11 @@
+// S018: an output that a helper declares has no binding. The text names the public name and the binder.
+// TOP M()
+fn mk(comptime n: String) -> Nat {
+    // expected-error S018 @+2
+    // expected-message: the output `res` has no binding; bind its binder with `o := ...;`, or remove its declaration
+    output o: Bool as n;
+    return 1;
+}
+module M() {
+    let k = mk("res");
+}

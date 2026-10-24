@@ -1,0 +1,17 @@
+// S010: a family that only a helper declares enters the interface with its first entry. Without a call, `u.req` names no port.
+// TOP M()
+fn lane(i: Nat) -> Nat {
+    input req[i]: Bool;
+    return i;
+}
+module C() {
+    comptime if (false) {
+        let n = lane(0);
+    }
+}
+module M() {
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: the instance has no port `req`
+    let b = u.req;
+}

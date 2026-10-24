@@ -1,0 +1,16 @@
+// The parent selects the ports of a child by their public names.
+// TOP M()
+module C() domains() {
+    input a: UInt[8] as "pin";
+    output q: UInt[8] as "res";
+    q := a +% 1;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    u.pin := x;
+    o := u.res;
+}
+// STEP in=(x 1) out=(o 2)
+// STEP in=(x 255) out=(o 0)

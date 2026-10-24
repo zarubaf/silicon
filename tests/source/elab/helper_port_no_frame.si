@@ -1,0 +1,20 @@
+// A port of a helper keeps its public name. The call frame does not change the core name, also in a nested call.
+// TOP M()
+// CHECK: (input inner (bits 4))
+// CHECK-NEXT: (input outer (bits 4))
+// CHECK-NEXT: (output o (bits 4))
+// CHECK-NEXT: (let outer$0c$0ret (bits 4) (add outer outer$0c$inner$0c$0ret))
+// CHECK-NEXT: (let outer$0c$inner$0c$0ret (bits 4) inner)
+// CHECK-NEXT: (assign o outer$0c$0ret)
+fn inner() -> UInt[4] {
+    input a: UInt[4] as "inner";
+    return a;
+}
+fn outer() -> UInt[4] {
+    input b: UInt[4] as "outer";
+    return b +% inner();
+}
+module M() domains() {
+    output o: UInt[4];
+    o := outer();
+}

@@ -1,0 +1,8 @@
+// The size of a string counts its characters, not its bytes. The length of "éé" is 2, so the name is `n2`. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 104
+// TOP M()
+module M() {
+    output o: UInt[8];
+    input p: UInt[8] as "n" + str(len("éé"));
+    o := p;
+}

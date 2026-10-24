@@ -1,0 +1,9 @@
+// S022: a computed name follows the name rule. The text names the computed name.
+// TOP M()
+module M() {
+    comptime for i in 0..2 {
+        // expected-error S022 @+2
+        // expected-message: `p-0` is not a valid port name; use an ASCII letter or `_`, then letters, digits, or `_`
+        input a: Bool as "p-" + str(i);
+    }
+}

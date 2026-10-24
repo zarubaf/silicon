@@ -1,0 +1,10 @@
+// A static `let` takes no core name, so a port can have its name.
+// TOP M()
+module M() domains() {
+    let x = 5;
+    input a: UInt[4] as "x";
+    output o: UInt[4];
+    o := a +% x;
+}
+// STEP in=(x 3) out=(o 8)
+// STEP in=(x 12) out=(o 1)

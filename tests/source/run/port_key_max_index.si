@@ -1,0 +1,10 @@
+// The largest key of a family is 2^32 - 1. An entry with this key from a `PortKey` sorts after the smaller keys.
+// TOP M()
+module M() domains() {
+    input a: UInt[4] as PortKey("req", true, 4294967295);
+    input b: UInt[4] as PortKey("req", true, 7);
+    output o: UInt[4];
+    o := a -% b;
+}
+// STEP in=(req[7] 3 req[4294967295] 9) out=(o 6)
+// STEP in=(req[7] 9 req[4294967295] 3) out=(o 10)

@@ -1,0 +1,7 @@
+// S005: an `as` key is a static position, so a port there is `S005`.
+// TOP M()
+module M() {
+    input a: UInt[4];
+    // expected-error S005 @+1
+    input b: Bool as a;
+}

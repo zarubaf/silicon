@@ -1,0 +1,9 @@
+// S019: the key gives a port the core name of a hardware `let` of the module body.
+// TOP M()
+module M() {
+    input a: UInt[8];
+    let x = a +% 1;
+    // expected-error S019 @+2
+    // expected-message: the port name `x` is already the core name of a hardware `let`, a resource, or an instance of this module; rename that declaration or the port
+    input b: UInt[8] as "x";
+}

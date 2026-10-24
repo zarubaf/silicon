@@ -1,0 +1,15 @@
+// S019: a helper declares a port with a fixed name, and a second call declares it again.
+// TOP M()
+fn lane(x: UInt[8]) -> UInt[8] {
+    // expected-error S019 @+2
+    // expected-message: `lane` declares the port `a` again in a second call; give each call its own port name, for example from a parameter in the `as` key
+    input a: UInt[8];
+    return x +% a;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let p = lane(x);
+    let q = lane(p);
+    o := q;
+}

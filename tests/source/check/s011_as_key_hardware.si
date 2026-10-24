@@ -1,0 +1,9 @@
+// S011: an `as` key is static, so a hardware value there is `S011`.
+// TOP M()
+module M() {
+    input a: Bool;
+    let h = a;
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `Bool`; compute the value from static values, for example from constants and `comptime` parameters
+    input b: Bool as h;
+}

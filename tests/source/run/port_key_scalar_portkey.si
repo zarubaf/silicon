@@ -1,0 +1,10 @@
+// A scalar `PortKey` gives the port its name. The binder is free for another port: the key names differ from it.
+// TOP M()
+module M() domains() {
+    input a: UInt[8] as PortKey("a", false, 0);
+    input b: UInt[8] as PortKey("a_in", false, 0);
+    output o: UInt[8] as PortKey("sum", false, 0);
+    o := a +% b;
+}
+// STEP in=(a 1 a_in 2) out=(sum 3)
+// STEP in=(a 200 a_in 100) out=(sum 44)

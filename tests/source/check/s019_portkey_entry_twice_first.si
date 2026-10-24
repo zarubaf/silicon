@@ -1,0 +1,8 @@
+// S019: a key `PortKey("req", true, 1)` and then a declaration `req[1]` give one entry twice.
+// TOP M()
+module M() {
+    input b: Bool as PortKey("req", true, 1);
+    // expected-error S019 @+2
+    // expected-message: the port `req[1]` is declared here and at 4:5; declare each key of `req` once
+    input req[1]: Bool;
+}

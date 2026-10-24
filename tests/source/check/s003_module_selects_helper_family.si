@@ -1,0 +1,12 @@
+// S003: a family that only a helper declares is not in the scope of the module body.
+// TOP M()
+fn lane(i: Nat) -> Nat {
+    input req[i]: Bool;
+    return i;
+}
+module M() {
+    let n = lane(0);
+    // expected-error S003 @+2
+    // expected-message: `req` is not declared
+    let b = req[0];
+}

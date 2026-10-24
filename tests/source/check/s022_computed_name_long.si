@@ -1,0 +1,7 @@
+// S022: a computed name over the limit of a string in an error message shows in its short form.
+// TOP M()
+module M() {
+    // expected-error S022 @+2
+    // expected-message: `aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggg... (81 characters)` is not a valid port name; use an ASCII letter or `_`, then letters, digits, or `_`
+    input a: Bool as "aaaaaaaaaabbbbbbbbbbccccccccccddddddddddeeeeeeeeeeffffffffffgggggggggghhhhhhhhhh" + "-";
+}

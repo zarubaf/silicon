@@ -1,0 +1,16 @@
+// A helper declares a keyed input in each call. Each call takes its name from a parameter, so the ports differ.
+// TOP M()
+fn lane(comptime n: String) -> UInt[4] {
+    input p: UInt[4] as n;
+    return p;
+}
+module M() domains() {
+    output o: UInt[4];
+    let mut s: UInt[4] = 0;
+    comptime for i in 0..3 {
+        s = s +% lane("p" + str(i));
+    }
+    o := s;
+}
+// STEP in=(p0 1 p1 2 p2 3) out=(o 6)
+// STEP in=(p0 15 p1 15 p2 15) out=(o 13)

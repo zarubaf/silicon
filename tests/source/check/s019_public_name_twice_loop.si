@@ -1,0 +1,9 @@
+// S019: a loop runs one `as` key twice. The error is at the second run, with the same position twice.
+// TOP M()
+module M() {
+    comptime for i in 0..2 {
+        // expected-error S019 @+2
+        // expected-message: the port name `x` is declared here and at 7:9; give one of them another key with `as`, for example from a parameter
+        input p: Bool as "x";
+    }
+}

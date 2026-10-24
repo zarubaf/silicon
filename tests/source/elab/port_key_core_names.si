@@ -1,0 +1,17 @@
+// The core name of a keyed port is its public name: `add` gets the field `0k`, an entry `req[3]` becomes `req$3f`.
+// A `let` after a port with the same name gets the version field.
+// TOP M()
+// CHECK: (input add$0k (bits 4))
+// CHECK-NEXT: (input req$3f (bits 4))
+// CHECK-NEXT: (input x (bits 4))
+// CHECK-NEXT: (output res (bits 4))
+// CHECK-NEXT: (let x$1v (bits 4) (add add$0k (const 4 1)))
+// CHECK-NEXT: (assign res (add (add x$1v req$3f) x))
+module M() domains() {
+    input a: UInt[4] as "add";
+    input b: UInt[4] as PortKey("req", true, 3);
+    input c: UInt[4] as "x";
+    let x = a +% 1;
+    output o: UInt[4] as "res";
+    o := x +% b +% c;
+}

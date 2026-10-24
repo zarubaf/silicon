@@ -1,0 +1,7 @@
+// S022: an empty name breaks the name rule.
+// TOP M()
+module M() {
+    // expected-error S022 @+2
+    // expected-message: `` is not a valid port name; use an ASCII letter or `_`, then letters, digits, or `_`
+    input a: Bool as "";
+}
