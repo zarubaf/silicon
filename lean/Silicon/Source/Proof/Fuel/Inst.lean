@@ -104,7 +104,7 @@ theorem sinkValue_f (p : Pos) (t : Ty) (v : Val) :
 theorem targetKeys_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (sels : List Sel) :
     Follows cap (targetKeys ev sels) (targetKeys ev' sels) := by
-  unfold targetKeys; follows [he, need_f, static_f, structural_f]
+  unfold targetKeys; follows [he, need_f, static_f, guardedBy_f]
 
 theorem targetRoot_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (root : Resolve.Expr) :
@@ -116,7 +116,7 @@ theorem familyTarget_f {ev ev' : Resolve.Expr → M (Option Out)}
     (sels : List Sel) :
     Follows cap (familyTarget ev s rp x id sels) (familyTarget ev' s rp x id sels) := by
   unfold familyTarget
-  follows [he, need_f, structural_f, selectionKey_f, targetKeys_f he, targetWalk_f, entryVal_f]
+  follows [he, need_f, guardedBy_f, selectionKey_f, targetKeys_f he, targetWalk_f, entryVal_f]
 
 theorem targetPart_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (e : Resolve.Expr) :
@@ -145,7 +145,7 @@ theorem instantiate_f (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (
 theorem childSel_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows m (ev e) (ev' e)) (p q : Pos) (o : Out) (f : Ident) (x : Resolve.Expr) :
     Follows m (childSel ev p q o f x) (childSel ev' p q o f x) := by
-  unfold childSel; follows [he, childFamily_f, need_f, structural_f, selectionKey_f, portPart_f]
+  unfold childSel; follows [he, childFamily_f, need_f, guardedBy_f, selectionKey_f, portPart_f]
 
 theorem indexBase_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos)
     (b x : Resolve.Expr) : Follows m (indexBase k p b x) (indexBase m p b x) := by
@@ -156,14 +156,14 @@ theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (
     (id : Nat) (e : Resolve.Expr) :
     Follows m (familySel k p np x id e) (familySel m p np x id e) := by
   rw [familySel.eq_def k, familySel.eq_def m]
-  follows [he, need_f, structural_f, selectionKey_f, entryAt_f]
+  follows [he, need_f, guardedBy_f, selectionKey_f, entryAt_f]
 
 theorem entryDecl_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (input : Bool) (x : Binder)
     (e : Resolve.Expr) (ty : Resolve.TypeExpr) :
     Follows m (entryDecl k p input x e ty) (entryDecl m p input x e ty) := by
   rw [entryDecl.eq_def k, entryDecl.eq_def m]
-  follows [he, ht, need_f, structural_f, static_f, familyKey_f, dataType_f, entry_f]
+  follows [he, ht, need_f, guardedBy_f, static_f, familyKey_f, dataType_f, entry_f]
 
 theorem hwStmt_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))

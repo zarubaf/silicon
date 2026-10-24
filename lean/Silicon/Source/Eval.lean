@@ -2310,7 +2310,7 @@ def childSel (ev : Resolve.Expr → M (Option Out)) (p q : Pos) (o : Out) (f : I
     (k : Resolve.Expr) : M (Option Out) := do
   unless ← Elab.childFamily o.value f do return none
   let .handle (.inst id path iface ty) := o.value | return none
-  let v ← structural do return (← need k (← ev k)).value
+  let v ← guardedBy .key do return (← need k (← ev k)).value
   let key ← selectionKey q k.pos f.name v
   let y := ((← read).field f.pos).getD 0
   match iface.ports[((y, some key) : PortId)]? with
@@ -2329,7 +2329,7 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
     match sel with
     | .index q [i] =>
       charge q 1
-      let o ← structural do need i (← ev i)
+      let o ← guardedBy .index do need i (← ev i)
       keys := keys.push (sel, some (← static i.pos o.value))
     | .index q _ =>
       charge q 1
@@ -2357,7 +2357,7 @@ def familyTarget (ev : Resolve.Expr → M (Option Out)) (s rp : Pos) (x : String
     List Sel → M Val
   | .index q [i] :: rest => do
     charge q 1
-    let v ← structural do return (← need i (← ev i)).value
+    let v ← guardedBy .key do return (← need i (← ev i)).value
     let k ← selectionKey rp i.pos x v
     let keys ← targetKeys ev rest
     Elab.targetWalk s (← entryVal i.pos x id k) none keys
@@ -2698,7 +2698,7 @@ mutual
   -/
   def familySel (n : Nat) (p np : Pos) (x : String) (id : Nat) (k : Resolve.Expr) : M Out := do
     charge np 1
-    let v ← structural do return (← need k (← eval n k)).value
+    let v ← guardedBy .key do return (← need k (← eval n k)).value
     entryAt p k.pos x id (← selectionKey np k.pos x v)
   termination_by (n + 1, 0)
 
@@ -3118,7 +3118,7 @@ mutual
   -/
   def entryDecl (n : Nat) (p : Pos) (input : Bool) (x : Binder) (k : Resolve.Expr)
       (ty : Resolve.TypeExpr) : M Unit := do
-    let v ← structural do return (← need k (← eval n k)).value
+    let v ← guardedBy .key do return (← need k (← eval n k)).value
     let key ← Elab.familyKey k.pos (← static k.pos v)
     Elab.entry p input x key (← Elab.dataType p (← typeExpr n ty))
   termination_by (n, 4)

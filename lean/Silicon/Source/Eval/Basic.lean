@@ -628,10 +628,15 @@ structure Syms where
   members : Array (Std.TreeMap Nat Nat compare)
   families : Array (Std.HashMap Nat Bool)
 
-/-! The kind of a guard (section 9.4): a hardware arm or a structural context. -/
+/-!
+The kind of a guard (section 9.4): a hardware arm or a structural context. A family key (`key`)
+and an index of a `:=` target (`index`) are structural contexts with their own texts.
+-/
 inductive GuardKind where
   | arm
   | structural
+  | key
+  | index
   deriving DecidableEq, BEq
 
 /-!
@@ -653,6 +658,10 @@ def Guard.change (g : Guard) (x : String) : String :=
     "before the `if` or `match`, and use the result in the arm"
   | .structural => s!"a type or a constant cannot change `{x}`; change `{x}` before it, " ++
     "keep the result in a `let`, and use that name here"
+  | .key => s!"a port family key cannot change `{x}`; change `{x}` before this statement, " ++
+    "keep the result in a `let`, and use that name in the key"
+  | .index => s!"a `:=` target index cannot change `{x}`; change `{x}` before the `:=`, keep " ++
+    "the result in a `let`, and use that name in the index"
 
 def Guard.effect (g : Guard) (f : String) : String :=
   match g.kind with
@@ -660,6 +669,10 @@ def Guard.effect (g : Guard) (f : String) : String :=
     "or `match`, and use its result in the arm"
   | .structural =>
     s!"a type or a constant has no graph effect such as `{f}`; call it before and use the result"
+  | .key => s!"a port family key has no graph effect such as `{f}`; call `{f}` before this " ++
+    "statement, keep the result in a `let`, and use that name in the key"
+  | .index => s!"a `:=` target index has no graph effect such as `{f}`; call `{f}` before the " ++
+    "`:=`, keep the result in a `let`, and use that name in the index"
 
 /-!
 The static mode (section 9.4): the `eval` command, or the item of the outermost `comptime fn`
@@ -1070,11 +1083,14 @@ def nested (pos : Pos) (act : M α) : M α := do
   withTheReader Ctx (fun c => { c with depth := c.depth + 1, site := none }) act
 
 /-!
-Runs `act` in a structural context (section 9.4): its guard starts at the current depth, so it
-is the innermost guard.
+Runs `act` under a guard of the kind `k` (section 9.4): the guard starts at the current depth, so
+it is the innermost guard.
 -/
-def structural (act : M α) : M α :=
-  withTheReader Ctx (·.guarded .structural) act
+def guardedBy (k : GuardKind) (act : M α) : M α :=
+  withTheReader Ctx (·.guarded k) act
+
+/-! Runs `act` in a structural context (section 9.4). -/
+def structural (act : M α) : M α := guardedBy .structural act
 
 /-!
 A mutation at `pos` of the binding `x` of the current frame of locals (section 9.4). `x` is the
