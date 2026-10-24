@@ -2448,6 +2448,22 @@ def evalHardware (k h : String) : String :=
   s!"the `eval` command makes no hardware, but its expression reaches this {k} in `{h}`; " ++
     s!"evaluate an expression that makes no hardware, or elaborate a module that calls `{h}`"
 
+/-!
+The two checks of the hardware statement `s` at `p` (section 6.2, **Order of a hardware
+statement**). They have no charge. The effect rule (`S016`) comes first, then the static mode
+(`S011`). A statement reaches a guard only through a call, and the call records its item. Thus
+the current item stands in only for a guard without a call.
+-/
+def hwCheck (p : Pos) (s : Resolve.Stmt) : M Unit := do
+  let c ← read
+  if let some g := c.guard then
+    fail .S016 p (g.effect (c.itemName (g.callee.getD c.item)))
+  match c.mode with
+  | some (.static m) =>
+    fail .S011 p (staticHardware (c.itemName m) (stmtKind s) (c.itemName c.item))
+  | some .eval => fail .S011 p (evalHardware (stmtKind s) (c.itemName c.item))
+  | none => pure ()
+
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
     match b with
@@ -3020,16 +3036,7 @@ mutual
         return none
       | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .inst p .. | .input p ..
       | .output p .. => do
-        let c ← read
-        -- A statement reaches a guard only through a call, which records its item, so the
-        -- current item stands in only for a guard without a call.
-        if let some g := c.guard then
-          fail .S016 p (g.effect (c.itemName (g.callee.getD c.item)))
-        match c.mode with
-        | some (.static m) =>
-          fail .S011 p (staticHardware (c.itemName m) (stmtKind s) (c.itemName c.item))
-        | some .eval => fail .S011 p (evalHardware (stmtKind s) (c.itemName c.item))
-        | none => pure ()
+        hwCheck p s
         hwStmt n s
         return none
       | .alias _ x ty => do
