@@ -10,7 +10,8 @@
 //!
 //! A call site, a version, and a temporary are `u64` values here: an elaboration within a
 //! `u64` fuel makes no larger one. `decode` gives `None` for a larger number. An element is a
-//! natural number as in Lean, so it has no bound.
+//! natural number as in Lean, so it has no bound. A family key is a `u32`: the evaluator rejects
+//! a larger key with `S012`, so `decode` gives `None` for a larger number.
 
 use crate::int::Int;
 use crate::sha256;
@@ -66,6 +67,8 @@ pub enum Field {
     Role(Role),
     /// An array or tuple element `<k>e`. Its index is never negative.
     Elem(Int),
+    /// The key of a port family entry `<k>f` (section 7.2).
+    Family(u32),
 }
 
 /// A name: a first user field, then the other fields in order.
@@ -113,6 +116,7 @@ impl Field {
             Field::Temp(k) => format!("{k}t"),
             Field::Role(r) => r.text().to_owned(),
             Field::Elem(k) => format!("{k}e"),
+            Field::Family(k) => format!("{k}f"),
         }
     }
 }
@@ -196,6 +200,9 @@ fn made_field(s: &str) -> Option<Field> {
         "v" => small().map(Field::Version),
         "t" => small().map(Field::Temp),
         "e" => n.and_then(Int::from_decimal).map(Field::Elem),
+        "f" => small()
+            .and_then(|k| u32::try_from(k).ok())
+            .map(Field::Family),
         "b" => match n {
             Some("0") => Some(Field::Bool(false)),
             Some("1") => Some(Field::Bool(true)),
@@ -295,6 +302,8 @@ pub(crate) enum Step {
     Role(Role),
     /// An array or tuple element `<k>e`.
     Elem(u64),
+    /// The key of a port family entry `<k>f`.
+    Family(u32),
 }
 
 impl Step {
@@ -307,6 +316,7 @@ impl Step {
             Step::Version(k) => Field::Version(*k),
             Step::Role(r) => Field::Role(*r),
             Step::Elem(k) => Field::Elem(Int::from_u64(*k)),
+            Step::Family(k) => Field::Family(*k),
         }
     }
 }

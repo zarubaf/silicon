@@ -207,7 +207,7 @@ fn field_units(f: &Field) -> u128 {
     match f {
         Field::User(x) => x.len().max(1) as u128,
         Field::Int(n) | Field::Elem(n) => u128::from(int_size(n)).pow(2),
-        Field::Call(_) | Field::Version(_) | Field::Temp(_) => 1,
+        Field::Call(_) | Field::Version(_) | Field::Temp(_) | Field::Family(_) => 1,
         Field::Bool(_) => 2,
         Field::Digest(h) => 2 + h.len() as u128,
         Field::Role(r) => r.text().len() as u128,
@@ -992,12 +992,15 @@ impl<'d> Lower<'d> {
         let mut ports = Vec::with_capacity(body.ports.len());
         for decl in &body.ports {
             let at = span(decl.pos);
-            let source = self.text(decl.sym);
             let mut leaves = Vec::new();
             let mut cursor = self.leaves(&decl.ty, ())?;
             while let Some((t, ())) = self.next_leaf(&mut cursor, |(), _, _, _, _| ())? {
                 self.charge(decl.pos, 1)?;
-                let name = self.name(decl.pos, &layout::leaf_name(&source, cursor.fields()))?;
+                // The name of the leaf renders after its charge, so a port without a leaf copies
+                // no text.
+                let source = self.design.texts.get(decl.sym).map_or("", String::as_str);
+                let name = layout::leaf_name(source, decl.key, cursor.fields());
+                let name = self.name(decl.pos, &name)?;
                 leaves.push(Port {
                     dir: if decl.input { Dir::Input } else { Dir::Output },
                     name,
@@ -1006,12 +1009,13 @@ impl<'d> Lower<'d> {
                 });
             }
             ports.push(layout::Declared {
-                name: source,
+                sym: decl.sym,
+                key: decl.key,
                 input: decl.input,
                 leaves,
             });
         }
-        let layout = layout::arrange(domain, ports);
+        let layout = layout::arrange(domain, ports, &self.design.texts);
         let mut ports = layout.inputs;
         ports.extend(layout.outputs);
         Ok(ports)

@@ -349,6 +349,7 @@ impl Evaluator<'_> {
                     Expr::Name { id, .. } => {
                         matches!(self.target(*id), Some(Target::Prelude(k)) if k.is_type())
                             || self.struct_item(*id).is_some()
+                            || self.family_of(*id).is_some()
                     }
                     _ => false,
                 };

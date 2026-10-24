@@ -2,20 +2,22 @@
 //! The part that a `:=` target selects (Lean `Elab.targetPart`, design sections 5.2 and 9.4). As in
 //! a place, the indices come first, and one walk from the root then selects. A root that is not a
 //! local evaluates first. Each index step charges 1, evaluates its index, and gets the static
-//! check. A local root gives its live value after them. The walk then runs the steps from the
-//! root outward, and the static type of each base decides. A base that is not an `Instance`
+//! check. Each index evaluates in a structural context (section 9.4). A local root gives its
+//! live value after them. The walk then runs the steps from the root outward, and the static type
+//! of each base decides. A base that is not an `Instance`
 //! handle and has no handle flag is `S017` at the start of the target. A field of an `Instance`
 //! handle selects a child input with no charge. A field and a selector `.N` of a container of a
 //! type with the handle flag charge 1, then the step gets the checks of a selection. The target
 //! is an identity, so it opens no window and charges no held root.
 
+use super::inst::family_value;
 use super::place::{Key, Sel, chain, key_pos};
-use super::{Evaluator, Out, Res, fail, need};
+use super::{Evaluator, GuardKind, Out, Res, fail, need};
 use crate::Code;
 use crate::hw::{Handle, Ref, Root, Seen, Val};
 use crate::types::TyId;
 use parse::ast::{Expr, Ident, Pos};
-use resolve::Target as Resolved;
+use resolve::{DeclId, Target as Resolved};
 
 /// The `S017` text "Part as a `:=` target" of section 6.2.
 const PART_TEXT: &str = "a `:=` target is a whole resource, not a part of a value; bind the whole \
@@ -26,6 +28,11 @@ impl Evaluator<'_> {
     /// root has no slot, so it evaluates, and its value names it in the text of `S017`.
     pub(super) fn target_part(&mut self, e: &Expr) -> Res<Out> {
         let (root, steps) = chain(e).unwrap_or((e, Vec::new()));
+        if let Expr::Name { pos, id, name } = root
+            && let Some(family) = self.family_of(*id)
+        {
+            return self.family_target(e.pos(), (*pos, name, family), &steps);
+        }
         let local = match root {
             Expr::Name { id, .. } => match self.target(*id) {
                 Some(Resolved::Decl(decl)) if self.store.slot(decl).is_some() => Some(decl),
@@ -39,13 +46,7 @@ impl Evaluator<'_> {
             let out = self.eval(root)?;
             Ok(need(root, out)?)
         };
-        let mut keys = Vec::with_capacity(steps.len());
-        for step in &steps {
-            if matches!(step, Sel::Index(..)) {
-                self.charge(step.pos(), 1)?;
-            }
-            keys.push(self.key(step)?);
-        }
+        let keys = self.target_keys(&steps)?;
         let cur = match start {
             Ok(out) => out,
             Err(decl) => Out::Ref(Ref {
@@ -54,6 +55,58 @@ impl Evaluator<'_> {
             }),
         };
         self.target_walk(e.pos(), cur, &keys)
+    }
+
+    /// The index of each step of a target, in source order (Lean `targetKeys`). An index step
+    /// charges 1, then its index evaluates in a structural context and is static (`S011`).
+    fn target_keys<'e>(&mut self, steps: &[Sel<'e>]) -> Res<Vec<Key<'e>>> {
+        let mut keys = Vec::with_capacity(steps.len());
+        for step in steps {
+            if matches!(step, Sel::Index(..)) {
+                self.charge(step.pos(), 1)?;
+            }
+            let Sel::Index(q, args) = *step else {
+                keys.push(self.key(step)?);
+                continue;
+            };
+            let [i] = args else {
+                return fail(
+                    Code::S010,
+                    q,
+                    "an index of a value has one argument".to_owned(),
+                );
+            };
+            let o = self.guarded(GuardKind::Index, |ev| {
+                let o = ev.eval(i)?;
+                need(i, o)
+            })?;
+            self.check_static(i.pos(), &o)?;
+            keys.push(Key::Index(q, i.pos(), self.index_of(&o)));
+        }
+        Ok(keys)
+    }
+
+    /// The part that the `:=` target with the start `start` selects, when its root is the own
+    /// family `x` with the binder `family` at `rp` (section 5.2). The first index takes the key
+    /// checks of a family selection. Then the other indices evaluate, and the key selects the
+    /// entry, as a local root gives its value. A family root without a first index is `S010`
+    /// "Family as a value" at the root, after the indices.
+    fn family_target(
+        &mut self,
+        start: Pos,
+        (rp, x, family): (Pos, &str, DeclId),
+        steps: &[Sel<'_>],
+    ) -> Res<Out> {
+        if let Some(&Sel::Index(q, [i])) = steps.first() {
+            self.charge(q, 1)?;
+            let o = self.key_out(i)?;
+            let k = self.selection_key(rp, i.pos(), x, &o)?;
+            let keys = self.target_keys(steps.get(1..).unwrap_or_default())?;
+            let v = self.entry_val(i.pos(), x, family, k)?;
+            return self.target_walk(start, Out::Named(v), &keys);
+        }
+        self.target_keys(steps)?;
+        family_value(rp, x)
     }
 
     /// The walk of the steps `keys` of a target that starts at `start`, from the base `cur`
