@@ -32,7 +32,7 @@
 
 use super::hw::{Want, adapt};
 use super::inst::Child;
-use super::{Builder, Built, Ctx, Hw, Module, Names, Sig};
+use super::{Builder, Built, Ctx, Hw, Lane, Module, Names, Sig};
 use crate::eval::{Env, Fault, Value};
 use crate::program::{FTy, HBin, HExpr, Place, Radix, SExpr, Scalar, Stmt, Ty};
 use num_bigint::BigInt;
@@ -221,21 +221,21 @@ impl Builder {
     /// Runs `f` with the hand tape as the tape, as `on_side` does with the
     /// side tape. A call inside `f` stays on the hand tape.
     pub(super) fn on_hand<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
-        if self.swapped {
+        if self.swapped.is_some() {
             return f(self);
         }
-        self.swapped = true;
+        self.swapped = Some(Lane::Hand);
         std::mem::swap(&mut self.tape, &mut self.hand);
         let out = f(self);
         std::mem::swap(&mut self.tape, &mut self.hand);
-        self.swapped = false;
+        self.swapped = None;
         out
     }
 
     /// A number below `n` from the hand tape, also while `on_hand` has
     /// swapped the tapes.
     pub(super) fn hand_below(&mut self, n: u32) -> u32 {
-        if self.swapped {
+        if self.swapped.is_some() {
             self.tape.below(n)
         } else {
             self.hand.below(n)

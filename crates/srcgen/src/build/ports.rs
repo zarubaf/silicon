@@ -39,7 +39,7 @@
 use super::hw::{Want, adapt};
 use super::inst::Child;
 use super::stat::{bin, int};
-use super::{Builder, Built, Ctx, Hw, Module, Names};
+use super::{Builder, Built, Ctx, Hw, Lane, Module, Names};
 use crate::eval::Fault;
 use crate::program::{
     FTy, HBin, HExpr, Item, PTy, Place, Port, SBin, SExpr, STy, Scalar, Stmt, Ty,
@@ -352,18 +352,36 @@ fn port(output: bool, name: &str, key: Option<SExpr>, public: Option<SExpr>, ty:
 }
 
 impl Builder {
-    /// Runs `f` with the port tape as the tape, as `on_hand` does with the
-    /// hand tape. A call inside `f` stays on the tape that is swapped in.
+    /// Runs `f` with the port tape as the tape. Unlike `on_hand`, it also
+    /// takes the port tape from the tape of another form that is swapped
+    /// in: a port draw never comes from another tape (tape isolation).
     pub(super) fn on_port<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
-        if self.swapped {
+        let outer = self.swapped;
+        if outer == Some(Lane::Port) {
             return f(self);
         }
-        self.swapped = true;
+        if let Some(lane) = outer {
+            self.exchange(lane);
+        }
+        self.swapped = Some(Lane::Port);
         std::mem::swap(&mut self.tape, &mut self.port);
         let out = f(self);
         std::mem::swap(&mut self.tape, &mut self.port);
-        self.swapped = false;
+        self.swapped = outer;
+        if let Some(lane) = outer {
+            self.exchange(lane);
+        }
         out
+    }
+
+    /// Swaps `tape` with the parked tape of `lane`.
+    fn exchange(&mut self, lane: Lane) {
+        let parked = match lane {
+            Lane::Side => &mut self.side,
+            Lane::Hand => &mut self.hand,
+            Lane::Port => &mut self.port,
+        };
+        std::mem::swap(&mut self.tape, parked);
     }
 
     /// The items of the helpers that declare a port.
