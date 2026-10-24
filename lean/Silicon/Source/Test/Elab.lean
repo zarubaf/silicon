@@ -3165,7 +3165,7 @@ def sel (ss : String) : String :=
 #guard fam "  input req[UInt[8](1)]: fn () -> Bool;\n" ==
   s!"S010 3:13 {keyType "a value of `UInt[8]`"}"
 #guard fam "  input req[true]: Bool;\n" == s!"S010 3:13 {keyType "a value of `Bool`"}"
-#guard fam "  input req[0 - 1]: fn () -> Bool;\n" == "S012 3:13 -1 is not a Nat"
+#guard fam "  input req[0 - 1]: fn () -> Bool;\n" == s!"S012 3:13 {keyRange "-1"}"
 #guard fam "  input req[1 << 32]: fn () -> Bool;\n" == s!"S012 3:13 {keyRange "4294967296"}"
 #guard fam "  input req[0]: Bool;\n  input req[0]: fn () -> Bool;\n" ==
   "S010 4:3 a port, a register, and a wire need a hardware data type, not `fn () -> Bool`; " ++
@@ -3181,7 +3181,7 @@ def sel (ss : String) : String :=
 #guard sel "  o := req[diagnostic(\"k\", 7)];\n" == s!"S016 5:12 {effect}"
 #guard sel "  let h = a;\n  o := req[h];\n" == s!"S010 6:8 {famValue "req"}"
 #guard sel "  o := req[UInt[4](7)];\n" == s!"S010 5:12 {keyType "a value of `UInt[4]`"}"
-#guard sel "  o := req[0 - 7];\n" == "S012 5:12 -7 is not a Nat"
+#guard sel "  o := req[0 - 7];\n" == s!"S012 5:12 {keyRange "-7"}"
 #guard sel "  o := req[1 << 40];\n" == s!"S012 5:12 {keyRange "1099511627776"}"
 #guard sel "  o := req[7];\n" == s!"S013 5:12 {undeclared "req" "7"}"
 
@@ -3268,7 +3268,7 @@ def kidBinds : String := "  u.req[0] := a;\n  u.req[1] := a;\n"
 #guard par (kidBinds ++ "  let h = a;\n  o := u.gnt[h];\n") == s!"S010 18:8 {famValue "gnt"}"
 #guard par (kidBinds ++ "  o := u.gnt[UInt[2](3)];\n") ==
   s!"S010 17:14 {keyType "a value of `UInt[2]`"}"
-#guard par (kidBinds ++ "  o := u.gnt[0 - 1];\n") == "S012 17:14 -1 is not a Nat"
+#guard par (kidBinds ++ "  o := u.gnt[0 - 1];\n") == s!"S012 17:14 {keyRange "-1"}"
 #guard par (kidBinds ++ "  o := u.gnt[1 << 33];\n") == s!"S012 17:14 {keyRange "8589934592"}"
 
 /-!
@@ -3284,7 +3284,7 @@ index step. The key passed check 1 (`S011`) before the walk, so a hardware key i
   s!"S011 18:9 {notStatic "a value of `Bool`"}"
 #guard par (kidBinds ++ "  u.req[UInt[2](0)] := a;\n  o := a;\n") ==
   s!"S010 17:9 {keyType "a value of `UInt[2]`"}"
-#guard par (kidBinds ++ "  u.req[0 - 1] := a;\n  o := a;\n") == "S012 17:9 -1 is not a Nat"
+#guard par (kidBinds ++ "  u.req[0 - 1] := a;\n  o := a;\n") == s!"S012 17:9 {keyRange "-1"}"
 #guard par (kidBinds ++ "  u.req[0, 1] := a;\n  o := a;\n") ==
   "S010 17:3 an index of a value has one argument"
 #guard par (kidBinds ++ "  o := a;\n  u.req[diagnostic(\"k\", 0)] := a;\n") ==
