@@ -29,8 +29,6 @@ rust | S012 Memory depth out of range | 314
 lean | S001 Query operand | 344
 rust | S001 Query operand | 344
 pin | S001 Query operand | 344
-lean | S001 `as` on an indexed port | 339
-rust | S001 `as` on an indexed port | 339
 lean | S010 `@typeInfo` of a value | 345
 rust | S010 `@typeInfo` of a value | 345
 pin | S010 `@typeInfo` of a value | 345
@@ -40,33 +38,9 @@ pin | S010 `@ports` of a non-instance | 346
 lean | S010 No public port | 344
 rust | S010 No public port | 344
 pin | S010 No public port | 344
-lean | S019 Public name twice | 339
-rust | S019 Public name twice | 339
-lean | S019 Public name twice in a helper | 339
-rust | S019 Public name twice in a helper | 339
-lean | S022 Name rule | 339
-rust | S022 Name rule | 339
-lean | S022 Keyword name | 339
-rust | S022 Keyword name | 339
 lean | S022 Second field name | 345
 rust | S022 Second field name | 345
 pin | S022 Second field name | 345
-lean | S022 Scalar key index | 339
-rust | S022 Scalar key index | 339
-lean | S010 Port key type | 339
-rust | S010 Port key type | 339
-lean | S016 Mutation in a port key | 339
-rust | S016 Mutation in a port key | 339
-lean | S016 Graph effect in a port key | 339
-rust | S016 Graph effect in a port key | 339
-lean | S019 Scalar port and port family | 339
-rust | S019 Scalar port and port family | 339
-lean | S019 Public family with two directions | 339
-rust | S019 Public family with two directions | 339
-lean | S019 Port name taken | 339
-rust | S019 Port name taken | 339
-lean | S018 No binding of a keyed port | 339
-rust | S018 No binding of a keyed port | 339
 unlisted | S001 a comparison does not chain | 354
 unlisted | S001 a comparison does not chain; use parentheses | 354
 unlisted | S001 a parameter of a function type has no `comptime` | 354
@@ -92,7 +66,6 @@ unlisted | S002 the field `{}` is already declared | 354
 unlisted | S002 the variant `{}` is already declared in this enu | 354
 unlisted | S003 `{}` is not {} | 354
 unlisted | S003 unscannable crates/resolve/src/walk.rs | 354
-unlisted | S004 a helper cannot declare a port; declare the port | 339
 unlisted | S004 {} is not supported yet | 354
 unlisted | S005 `{}` is {}; a static position needs a static val | 354
 unlisted | S006 a `comptime fn` has no memory port call | 354
@@ -349,7 +322,6 @@ unlisted | S019 the enum `{}` depends on itself | 354
 unlisted | S019 the instantiation of `{}` is not in the table | 354
 unlisted | S019 the parameter types of `{}` depend on `{}` | 354
 unlisted | S019 the specialization {} is in progress | 354
-unlisted | S019 two declarations have the core name `{}` | 339
 unlisted | S019 two instantiations have the emitted name `{}` | 354
 unlisted | S019 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
 unlisted | S020 the lowered design has a combinational cycle | 354
@@ -358,3 +330,4 @@ unlisted | S021 the `match` has no arm for its value | 354
 unlisted | S021 the `match` has no arm {} | 354
 unlisted | S001 brackets nest deeper than {} levels; raise --syn | 354
 unlisted | S001 invalid character in string | 354
+unlisted | S022 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
