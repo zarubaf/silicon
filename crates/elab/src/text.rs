@@ -105,10 +105,10 @@ impl<'a> Text<'a> {
                     self.work.push(Piece::Lits(inst.args()));
                 }
             }
-            Ty::Enum(e) => self.out.push_str(tys.enum_name(*e)),
+            Ty::Enum(e) => self.item_name(tys.enum_name(*e), false),
             Ty::Struct(s) => {
                 let spec = tys.spec(*s);
-                self.out.push_str(spec.name());
+                self.item_name(spec.name(), spec.prelude());
                 if !spec.args().is_empty() {
                     self.out.push('[');
                     self.work.push(Piece::Text("]"));
@@ -116,6 +116,15 @@ impl<'a> Text<'a> {
                 }
             }
         }
+    }
+
+    /// The name of a struct or enum item. A user item with the name of a prelude type is
+    /// `crate::X`, so it never reads as the prelude type (design section 5.6).
+    fn item_name(&mut self, name: &str, prelude: bool) {
+        if !prelude && resolve::TYPE_NAMES.contains(&name) {
+            self.out.push_str("crate::");
+        }
+        self.out.push_str(name);
     }
 
     /// A handle type with one part: `form`, the part, and `]`.

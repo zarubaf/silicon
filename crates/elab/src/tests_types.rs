@@ -642,3 +642,61 @@ fn the_reads_of_an_earlier_parameter_do_constant_work() {
     assert_eq!(steps(100, 200), base);
     assert!(steps(200, 100) <= 2 * base, "{base}");
 }
+
+/// The type of a message for `let a: Int = <expr>`, from the text `expected Int, but the value
+/// is <type>`.
+fn value_type(items: &str, expr: &str) -> String {
+    let text = message(
+        &format!("{items}\nfn f() -> Int {{ let a: Int = {expr}; return 0; }}"),
+        "f()",
+    );
+    text.strip_prefix("expected Int, but the value is ")
+        .unwrap_or(&text)
+        .to_owned()
+}
+
+/// A user struct or enum with a prelude type name prints as `crate::X` at each depth, and a
+/// prelude struct keeps its source form (design section 5.6, Lean `Test/Value.lean`).
+#[test]
+fn a_user_type_with_a_prelude_name_prints_as_crate() {
+    let user_bool = "struct Bool { a: UInt[1] }";
+    assert_eq!(value_type(user_bool, "Bool(1)"), "crate::Bool");
+    assert_eq!(
+        value_type("struct Reg(comptime n: Nat) { a: UInt[8] }", "Reg[3](1)"),
+        "crate::Reg[3]"
+    );
+    assert_eq!(
+        value_type("enum PortKey: UInt[1] { A = 0, B = 1 }", "PortKey::A"),
+        "crate::PortKey"
+    );
+    assert_eq!(
+        value_type(user_bool, "[Bool(1), Bool(0)]"),
+        "[crate::Bool; 2]"
+    );
+    assert_eq!(
+        value_type(user_bool, "(true, Bool(1))"),
+        "(Bool, crate::Bool)"
+    );
+    assert_eq!(value_type("", "PortKey(\"x\", false, 0)"), "PortKey");
+    assert_eq!(
+        value_type("struct Packet2 { a: Bool }", "Packet2(true)"),
+        "Packet2"
+    );
+}
+
+/// The cut at 1024 bytes keeps the first bytes of the full text, so the prefix is a part of the
+/// name: 1015 bytes before the name leave `crate::Bo` and `...`.
+#[test]
+fn the_cut_treats_the_crate_prefix_as_a_part_of_the_name() {
+    let wide = format!("({}, Bool)", vec!["UInt[65536]"; 78].join(", "));
+    let text = message(
+        &format!("struct Bool {{ a: UInt[1] }}\nfn f() -> Int {{ let a: {wide} = 0; return 0; }}"),
+        "f()",
+    );
+    let ty = text
+        .strip_prefix("expected ")
+        .and_then(|t| t.split(", but the value is").next())
+        .unwrap_or_default();
+    assert_eq!(ty.len(), 1024 + 3, "{text}");
+    assert!(ty.ends_with(", crate::Bo..."), "{text}");
+}

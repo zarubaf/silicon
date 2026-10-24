@@ -1,4 +1,5 @@
 const resolve::RESPONSE
+const resolve::TYPE_NAMES
 enum resolve::Code
 enum resolve::Failed
 enum resolve::Kind
