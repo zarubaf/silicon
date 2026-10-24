@@ -64,6 +64,9 @@ theorem keyed_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : V
     Follows cap (Elab.keyed p input b t kp v) (Elab.keyed p input b t kp v) := by
   unfold Elab.keyed; follows [symbolOf_f, port_f, entry_f, bindLocal_f]
 
+theorem hwCheck_f (p : Pos) (s : Resolve.Stmt) : Follows cap (hwCheck p s) (hwCheck p s) := by
+  unfold hwCheck; follows
+
 theorem familyKey_f (p : Pos) (v : Value) :
     Follows cap (Elab.familyKey p v) (Elab.familyKey p v) := by
   unfold Elab.familyKey; follows
@@ -193,7 +196,7 @@ theorem hwStmt_f (he : ∀ e, Follows m (eval k e) (eval m e))
 
 end walk
 
-set_option maxHeartbeats 800000 in
+set_option maxHeartbeats 400000 in
 /--
 Each function of the evaluator at any bound `n` is followed by the same function at the
 bound `n'`, with each fuel up to `n'`. The proof splits each branch of the evaluator, so it
@@ -257,13 +260,13 @@ theorem follows_all : ∀ n,
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he k) (ht k) (hb k)]
+          static_f, store_f, hold_f, release_f, shut_f, hwCheck_f, hwStmt_f (he k) (ht k) (hb k)]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he m) (ht m) (hb m)]
+          static_f, store_f, hold_f, release_f, shut_f, hwCheck_f, hwStmt_f (he m) (ht m) (hb m)]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)
