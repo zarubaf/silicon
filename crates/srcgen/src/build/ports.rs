@@ -47,15 +47,18 @@ use crate::program::{
 use crate::public::Public;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// The most families, keyed ports, and helper calls of one module.
+/// The most families and keyed ports of one module.
 const FAMILIES: usize = 3;
 const KEYED: u32 = 4;
-const CALLS: u32 = 2;
+/// The most calls of port helpers in one module: each call counts, a helper
+/// with a family is called two or three times.
+const CALLS: u32 = 4;
 /// The most helpers that declare a port.
 const PORT_HELPERS: u32 = 2;
 /// The most ports that the plans of one program declare.
 pub(super) const MAX_PORTS: usize = 24;
-/// The most entries of one family, and the least key that no form uses.
+/// The most entries that one top form declares. Joins and helper calls
+/// add more entries to a family. Then the least key that no form uses.
 const ENTRIES: u32 = 3;
 const KEY_LIMIT: u32 = 32;
 /// The depth of the values that the port forms draw: small, so that the
@@ -686,7 +689,8 @@ impl Builder {
     /// the keys `0..calls`, in this order, and once in a module, because its
     /// family is the family of the module.
     fn call_form(&mut self, led: &mut Ledger, forms: &mut Vec<Form>, family: bool) {
-        if led.calls >= CALLS {
+        // A helper with a family needs at least two calls.
+        if led.calls + if family { 2 } else { 1 } > CALLS {
             return;
         }
         let is_kind = |h: &PortHelper| matches!(h.kind, HelperKind::Family(_)) == family;
@@ -699,10 +703,10 @@ impl Builder {
             Some(&i) => i,
             None => return,
         };
-        led.calls += 1;
         led.used.insert(helper);
         if family {
-            let calls = self.tape.between(2, 3);
+            let calls = self.tape.between(2, 3.min(CALLS - led.calls));
+            led.calls += calls;
             forms.push(Form::Call {
                 helper,
                 first: 0,
@@ -710,6 +714,7 @@ impl Builder {
             });
         } else {
             let first = led.name();
+            led.calls += 1;
             forms.push(Form::Call {
                 helper,
                 first,

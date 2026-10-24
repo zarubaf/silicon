@@ -1123,8 +1123,8 @@ fn port_forms_do_not_follow_the_handle_forms() {
 
 /// The caps of the port forms hold for the plans of 256 programs: at most
 /// 3 families and 6 entries of a family, at most 4 keyed ports, and at most
-/// 2 calls of helpers that declare a port in a module, at most 24 ports in
-/// a program, and each key below 32.
+/// 4 calls of helpers that declare a port in a module (each call counts), at
+/// most 24 ports in a program, and each key below 32.
 #[test]
 fn port_forms_stay_in_caps() {
     use ports::Form;
@@ -1153,12 +1153,15 @@ fn port_forms_stay_in_caps() {
                     _ => 0,
                 })
                 .sum();
-            let calls = sig
+            let calls: usize = sig
                 .plan
                 .forms
                 .iter()
-                .filter(|f| matches!(f, Form::Call { .. }))
-                .count();
+                .map(|f| match f {
+                    Form::Call { calls, .. } => *calls as usize,
+                    _ => 0,
+                })
+                .sum();
             let families = sig
                 .plan
                 .forms
@@ -1166,7 +1169,7 @@ fn port_forms_stay_in_caps() {
                 .filter(|f| matches!(f, Form::Family { .. }))
                 .count();
             assert!(entries.values().all(|&n| n <= 6), "{entries:?}");
-            assert!(families <= 3 && keyed <= 4 && calls <= 2, "{:?}", sig.plan);
+            assert!(families <= 3 && keyed <= 4 && calls <= 4, "{:?}", sig.plan);
             most = (
                 most.0.max(families),
                 most.1.max(entries.values().copied().max().unwrap_or(0)),
@@ -1179,7 +1182,7 @@ fn port_forms_stay_in_caps() {
     }
     // The caps are in reach.
     assert!(
-        most.0 >= 2 && most.1 >= 3 && most.2 >= 2 && most.3 >= 2,
+        most.0 >= 2 && most.1 >= 3 && most.2 >= 2 && most.3 >= 4,
         "{most:?}"
     );
 }
