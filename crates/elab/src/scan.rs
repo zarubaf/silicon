@@ -81,6 +81,8 @@ impl Syms {
     /// The symbol of the text `x`. A text that has none takes the next free symbol, and its text
     /// goes into the table once. The caller of a computed name charges the size of `x` first.
     pub(crate) fn symbol_of(&mut self, x: &str) -> Sym {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Named, x.len() as u64);
         if let Some(&s) = self.table.get(x) {
             return s;
         }
@@ -92,6 +94,8 @@ impl Syms {
 
     /// The symbol of the text `x`, if a name of the file or of a computed key has it.
     pub(crate) fn find(&self, x: &str) -> Option<Sym> {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Named, x.len() as u64);
         self.table.get(x).copied()
     }
 }

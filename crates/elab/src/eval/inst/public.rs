@@ -35,6 +35,36 @@ pub(crate) enum Public {
     Family(bool),
 }
 
+/// The key of the table of public names. Every compare of two keys is one unit of work that the
+/// tests count, whatever structure holds the keys, so a table that searches a list counts its
+/// scan.
+#[derive(Clone, Copy)]
+pub(crate) struct PubKey(pub(crate) Sym);
+
+impl PartialEq for PubKey {
+    fn eq(&self, other: &PubKey) -> bool {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Publics, 1);
+        self.0 == other.0
+    }
+}
+
+impl Eq for PubKey {}
+
+impl PartialOrd for PubKey {
+    fn partial_cmp(&self, other: &PubKey) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for PubKey {
+    fn cmp(&self, other: &PubKey) -> std::cmp::Ordering {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Publics, 1);
+        self.0.cmp(&other.0)
+    }
+}
+
 /// The position `b` of an earlier declaration in a message.
 fn at_text(b: Pos) -> String {
     format!("{}:{}", b.line, b.col)
@@ -107,7 +137,10 @@ impl Evaluator<'_> {
     /// the owner. Its call frame is the current one.
     pub(in crate::eval) fn publish(&mut self, sym: Sym, form: Public, pos: Pos) {
         let call = self.call;
-        self.elab.work.publics.insert(sym, (form, pos, call));
+        self.elab
+            .work
+            .publics
+            .insert(PubKey(sym), (form, pos, call));
     }
 
     /// The public name `sym` in the table of the owner: its form, the position of its first
@@ -116,10 +149,8 @@ impl Evaluator<'_> {
     /// are in `Syms::families`, so the look-up reads the table and then them, with no copy for an
     /// instantiation.
     pub(in crate::eval) fn public_of(&self, sym: Sym) -> Option<(Public, Pos, usize)> {
-        #[cfg(test)]
-        crate::counters::add(crate::counters::Count::Publics, 1);
         let work = &self.elab.work;
-        if let Some(&e) = work.publics.get(&sym) {
+        if let Some(&e) = work.publics.get(&PubKey(sym)) {
             return Some(e);
         }
         let (input, pos) = *self.syms.families.get(work.owner)?.get(&sym)?;

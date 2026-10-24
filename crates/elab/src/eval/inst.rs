@@ -51,7 +51,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod family;
 mod public;
 pub(super) use family::{child_key, family_value};
-use public::Public;
+use public::{PubKey, Public};
 
 /// A port declaration. A port keeps its source name. A family entry has its key.
 pub(crate) struct PortDecl {
@@ -230,7 +230,7 @@ struct Work {
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, PortId), (u64, Here)>,
     entries: BTreeMap<(Sym, u32), (Val, Pos)>,
-    publics: BTreeMap<Sym, (Public, Pos, usize)>,
+    publics: BTreeMap<PubKey, (Public, Pos, usize)>,
     owner: usize,
     dup: Option<(Pos, Breach)>,
     spent: u64,
@@ -276,7 +276,7 @@ impl Iface {
         name: Name,
         b: &Body,
         item: usize,
-        publics: &BTreeMap<Sym, (Public, Pos, usize)>,
+        publics: &BTreeMap<PubKey, (Public, Pos, usize)>,
     ) -> Iface {
         let mut ports = BTreeMap::new();
         let mut inputs = 0;
@@ -303,7 +303,7 @@ impl Iface {
             families: publics
                 .iter()
                 .filter(|(_, (form, ..))| matches!(form, Public::Family(_)))
-                .map(|(&sym, _)| sym)
+                .map(|(k, _)| k.0)
                 .collect(),
         }
     }
