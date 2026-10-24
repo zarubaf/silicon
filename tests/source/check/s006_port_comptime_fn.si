@@ -1,0 +1,10 @@
+// S006: a port in a `comptime fn` stays `S006`, also with an `as` key.
+// TOP M()
+comptime fn f() -> Nat {
+    // expected-error S006 @+2
+    // expected-message: a `comptime fn` has no port
+    input a: Bool as "x";
+    return 1;
+}
+module M() {
+}

@@ -1,0 +1,9 @@
+// S018: a second binding of an own output with an `as` key. The text names the public name.
+// TOP M()
+module M() {
+    output o: Bool as "out";
+    o := true;
+    // expected-error S018 @+2
+    // expected-message: `out` has a second binding; the first binding is at 5:5, and the declaration is at 4:5; remove one of the two bindings
+    o := false;
+}

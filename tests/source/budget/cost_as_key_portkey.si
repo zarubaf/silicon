@@ -1,0 +1,11 @@
+// A `PortKey` key charges its call, its arguments, and the size of its name. The index check charges nothing. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 257
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..3 {
+        input p: UInt[8] as PortKey("req", true, i);
+    }
+    input q: UInt[8] as PortKey("sel", false, 0);
+    o := 0;
+}

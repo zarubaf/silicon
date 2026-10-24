@@ -1,0 +1,8 @@
+// S002: the binder of a keyed port is a name of the body, so it clashes with a family of that name.
+// TOP M()
+module M() {
+    input req: Bool as "x";
+    // expected-error S002 @+2
+    // expected-message: `req` is already declared in this scope
+    input req[0]: Bool;
+}

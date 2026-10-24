@@ -1,0 +1,12 @@
+// S019: an indexed port of a helper beside a scalar port of the module body with the basename.
+// TOP M()
+fn lane(i: Nat) -> Nat {
+    // expected-error S019 @+2
+    // expected-message: `req` names a scalar port and a port family, here and at 10:5; give one of them another key with `as`
+    input req[i]: Bool;
+    return i;
+}
+module M() {
+    input req: Bool;
+    let n = lane(0);
+}

@@ -1,0 +1,21 @@
+// A child port with a key is read through a temporary tuple of instances: a tuple literal and a tuple that a helper returns.
+// TOP M()
+module C() domains() {
+    input a: UInt[8] as "pin";
+    output q: UInt[8] as "res";
+    q := a +% 7;
+}
+fn wrap(h: Instance[C]) -> (Instance[C],) {
+    return (h,);
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: UInt[8];
+    instance u = C();
+    u.pin := x;
+    o := (u,).0.res;
+    p := wrap(u).0.res;
+}
+// STEP in=(x 1) out=(o 8 p 8)
+// STEP in=(x 250) out=(o 1 p 1)

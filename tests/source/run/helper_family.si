@@ -1,0 +1,14 @@
+// A helper declares an entry of the family `req`. Its entries are ports of the owner, so a later call sees the entry of an earlier call.
+// TOP M()
+fn lane(comptime i: Nat) -> UInt[4] {
+    input req[i]: UInt[4];
+    return if (i == 0) { req[0] } else { req[i] +% req[i - 1] };
+}
+module M() domains() {
+    output o: UInt[4];
+    let a = lane(0);
+    let b = lane(1);
+    o := a +% b;
+}
+// STEP in=(req[0] 1 req[1] 2) out=(o 4)
+// STEP in=(req[0] 15 req[1] 15) out=(o 13)

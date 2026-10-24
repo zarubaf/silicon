@@ -1,0 +1,13 @@
+// S019: an output family of a helper beside an input family of the module body with one basename.
+// TOP M()
+fn lane(i: Nat) -> Nat {
+    // expected-error S019 @+2
+    // expected-message: the port family `req` has an input entry and an output entry, here and at 11:5; give the entries of one direction another key with `as`
+    output req[i]: Bool;
+    req[i] := true;
+    return i;
+}
+module M() {
+    input req[0]: Bool;
+    let n = lane(1);
+}

@@ -1,0 +1,10 @@
+// S010: only the prelude struct `PortKey` is a port key. A user struct with this name is another type.
+// TOP M()
+struct PortKey {
+    name: String,
+}
+module M() {
+    // expected-error S010 @+2
+    // expected-message: an `as` key is a static `String` or `PortKey`, not a value of `PortKey`; write the public name as a string, for example `as "req_0"`
+    input a: Bool as PortKey("x");
+}

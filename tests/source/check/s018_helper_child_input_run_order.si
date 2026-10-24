@@ -1,0 +1,15 @@
+// S018: two calls of a helper declare inputs at one position. The first in run-time order is unbound first, not the first by name.
+// TOP M()
+fn lane(comptime n: String) -> Nat {
+    input p: Bool as n;
+    return 1;
+}
+module C() {
+    let a = lane("b");
+    let b = lane("a");
+}
+module M() {
+    instance u = C();
+    // expected-error S018 @-1
+    // expected-message: the input `b` of the instance `u` has no binding; bind it with `u.b := ...;`
+}

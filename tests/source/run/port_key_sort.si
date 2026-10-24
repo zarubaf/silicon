@@ -1,0 +1,13 @@
+// The ports sort by their public names, not by their binders. The vectors use the order x, y, z; the outputs sort the same way.
+// TOP M()
+module M() domains() {
+    input a: UInt[4] as "z";
+    input b: UInt[4] as "x";
+    input c: UInt[4] as "y";
+    output p: UInt[4] as "w";
+    output q: UInt[4] as "v";
+    p := a;
+    q := b -% c;
+}
+// STEP in=(x 5 y 2 z 9) out=(v 3 w 9)
+// STEP in=(x 1 y 2 z 0) out=(v 15 w 0)

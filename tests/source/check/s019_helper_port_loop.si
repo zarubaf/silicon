@@ -1,0 +1,13 @@
+// S019: one call of a helper that runs a loop with a fixed port name keeps the text "Public name twice".
+// TOP M()
+fn lane() -> Nat {
+    comptime for i in 0..2 {
+        // expected-error S019 @+2
+        // expected-message: the port name `a` is declared here and at 7:9; give one of them another key with `as`, for example from a parameter
+        input a: Bool;
+    }
+    return 1;
+}
+module M() {
+    let n = lane();
+}

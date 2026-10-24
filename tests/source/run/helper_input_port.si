@@ -1,0 +1,12 @@
+// A helper declares an input. The port belongs to the module that calls the helper.
+// TOP M()
+fn tap() -> UInt[8] {
+    input a: UInt[8];
+    return a;
+}
+module M() domains() {
+    output o: UInt[8];
+    o := tap() +% 1;
+}
+// STEP in=(a 1) out=(o 2)
+// STEP in=(a 255) out=(o 0)

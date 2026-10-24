@@ -1,0 +1,11 @@
+// A `PortKey` entry and a static entry join one family. The body selects each with `req[k]`.
+// TOP M(3)
+module M(comptime N: Nat) domains() {
+    input req[0]: UInt[4];
+    input a: UInt[4] as PortKey("req", true, 1);
+    input b: UInt[4] as PortKey("req", true, N);
+    output o: UInt[4];
+    o := req[0] +% req[1] +% req[N];
+}
+// STEP in=(req[0] 1 req[1] 2 req[3] 4) out=(o 7)
+// STEP in=(req[0] 15 req[1] 1 req[3] 2) out=(o 2)

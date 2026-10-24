@@ -31,7 +31,6 @@ rust | S001 Query operand | 344
 pin | S001 Query operand | 344
 lean | S001 `as` on an indexed port | 339
 rust | S001 `as` on an indexed port | 339
-pin | S001 `as` on an indexed port | 339
 lean | S010 `@typeInfo` of a value | 345
 rust | S010 `@typeInfo` of a value | 345
 pin | S010 `@typeInfo` of a value | 345
@@ -43,43 +42,31 @@ rust | S010 No public port | 344
 pin | S010 No public port | 344
 lean | S019 Public name twice | 339
 rust | S019 Public name twice | 339
-pin | S019 Public name twice | 339
 lean | S019 Public name twice in a helper | 339
 rust | S019 Public name twice in a helper | 339
-pin | S019 Public name twice in a helper | 339
 lean | S022 Name rule | 339
 rust | S022 Name rule | 339
-pin | S022 Name rule | 339
 lean | S022 Keyword name | 339
 rust | S022 Keyword name | 339
-pin | S022 Keyword name | 339
 lean | S022 Second field name | 345
 rust | S022 Second field name | 345
 pin | S022 Second field name | 345
 lean | S022 Scalar key index | 339
 rust | S022 Scalar key index | 339
-pin | S022 Scalar key index | 339
 lean | S010 Port key type | 339
 rust | S010 Port key type | 339
-pin | S010 Port key type | 339
 lean | S016 Mutation in a port key | 339
 rust | S016 Mutation in a port key | 339
-pin | S016 Mutation in a port key | 339
 lean | S016 Graph effect in a port key | 339
 rust | S016 Graph effect in a port key | 339
-pin | S016 Graph effect in a port key | 339
 lean | S019 Scalar port and port family | 339
 rust | S019 Scalar port and port family | 339
-pin | S019 Scalar port and port family | 339
 lean | S019 Public family with two directions | 339
 rust | S019 Public family with two directions | 339
-pin | S019 Public family with two directions | 339
 lean | S019 Port name taken | 339
 rust | S019 Port name taken | 339
-pin | S019 Port name taken | 339
 lean | S018 No binding of a keyed port | 339
 rust | S018 No binding of a keyed port | 339
-pin | S018 No binding of a keyed port | 339
 unlisted | S001 a comparison does not chain | 354
 unlisted | S001 a comparison does not chain; use parentheses | 354
 unlisted | S001 a parameter of a function type has no `comptime` | 354

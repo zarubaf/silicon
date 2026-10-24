@@ -1,0 +1,9 @@
+// The public name of a port with a `String` key is the string. The binder is a name of the body only.
+// TOP M()
+module M() domains() {
+    input a: UInt[8] as "req";
+    output o: UInt[8] as "resp";
+    o := a +% 3;
+}
+// STEP in=(req 1) out=(resp 4)
+// STEP in=(req 254) out=(resp 1)

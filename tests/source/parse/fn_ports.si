@@ -1,0 +1,14 @@
+// A plain `fn`, a `comptime fn`, and a module all parse a port statement, also with an `as` key.
+fn f(comptime N: Nat) -> Nat {
+    input a: Bool;
+    output b[N]: Bool;
+    input c: Bool as "c";
+    return 1;
+}
+comptime fn g() -> Nat {
+    input a: Bool;
+    return 1;
+}
+module M() {
+    input a: Bool;
+}

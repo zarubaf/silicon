@@ -1,0 +1,15 @@
+// A helper declares a port and returns its value in a tuple. The caller reads the tuple.
+// TOP M()
+fn mk() -> (UInt[8], UInt[8]) {
+    input a: UInt[8] as "k";
+    return (a, a +% 1);
+}
+module M() domains() {
+    output o: UInt[8];
+    output p: UInt[8];
+    let t = mk();
+    o := t.0;
+    p := t.1;
+}
+// STEP in=(k 1) out=(o 1 p 2)
+// STEP in=(k 255) out=(o 255 p 0)

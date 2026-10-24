@@ -1,0 +1,10 @@
+// S019: the family `req` comes in an arm that did not run, after the key.
+// TOP M()
+module M() {
+    // expected-error S019 @+2
+    // expected-message: `req` names a scalar port and a port family, here and at 8:9; give one of them another key with `as`
+    input x: Bool as "req";
+    comptime if (false) {
+        input req[0]: Bool;
+    }
+}

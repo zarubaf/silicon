@@ -1,0 +1,8 @@
+// S019: two scalar ports with one public name. The binders differ, the `as` keys do not.
+// TOP M()
+module M() {
+    input a: Bool as "x";
+    // expected-error S019 @+2
+    // expected-message: the port name `x` is declared here and at 4:5; give one of them another key with `as`, for example from a parameter
+    input b: Bool as "x";
+}

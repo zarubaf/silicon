@@ -1,0 +1,10 @@
+// S018: an input of a child with an `as` key has no binding. The text names the public name.
+// TOP M()
+module C() {
+    input a: Bool as "pin";
+}
+module M() {
+    instance u = C();
+    // expected-error S018 @-1
+    // expected-message: the input `pin` of the instance `u` has no binding; bind it with `u.pin := ...;`
+}

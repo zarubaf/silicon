@@ -1,0 +1,12 @@
+// S016: an `as` key cannot change a binding. A call with a `mut` actual does.
+// TOP M()
+comptime fn bump(mut n: Nat) -> String {
+    n = n + 1;
+    return "x";
+}
+module M() {
+    let mut n: Nat = 0;
+    // expected-error S016 @+2
+    // expected-message: an `as` key cannot change `n`; change `n` before this statement, keep the result in a `let`, and use that name in the key
+    input a: Bool as bump(n);
+}

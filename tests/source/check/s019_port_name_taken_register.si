@@ -1,0 +1,9 @@
+// S019: the key gives a port the core name of a register of the module body.
+// TOP M()
+module M() {
+    reg r: UInt[8] = 0;
+    // expected-error S019 @+2
+    // expected-message: the port name `r` is already the core name of a hardware `let`, a resource, or an instance of this module; rename that declaration or the port
+    input b: UInt[8] as "r";
+    r := b;
+}

@@ -1,0 +1,13 @@
+// A helper declares an output and drives it. The port belongs to the module that calls the helper.
+// TOP M()
+fn tee(v: UInt[8]) -> () {
+    output q: UInt[8];
+    q := v +% 1;
+    return ();
+}
+module M() domains() {
+    input x: UInt[8];
+    tee(x);
+}
+// STEP in=(x 1) out=(q 2)
+// STEP in=(x 255) out=(q 0)

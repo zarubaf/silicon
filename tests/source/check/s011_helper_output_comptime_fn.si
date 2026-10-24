@@ -1,0 +1,15 @@
+// S011: a comptime fn calls a helper that declares an output. The mode static makes no hardware.
+// TOP M()
+fn mk() -> Nat {
+    // expected-error S011 @+2
+    // expected-message: the `comptime fn` `cf` makes no hardware, but its call reaches this output in `mk`; call `mk` from a `fn` or a module body
+    output a: Bool;
+    return 1;
+}
+comptime fn cf() -> Nat {
+    return mk();
+}
+module M() {
+    output o: UInt[8];
+    o := cf();
+}

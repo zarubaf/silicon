@@ -1,0 +1,12 @@
+// S017: an output of a child with an `as` key is no `:=` target. The text names the public name.
+// TOP M()
+module C() {
+    output q: Bool as "gnt";
+    q := true;
+}
+module M() {
+    instance u = C();
+    // expected-error S017 @+2
+    // expected-message: `gnt` is an output of the child, not a target; the child drives its outputs, so bind an input of the child
+    u.gnt := true;
+}

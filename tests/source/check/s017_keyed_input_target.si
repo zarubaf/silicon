@@ -1,0 +1,8 @@
+// S017: an own input with an `as` key is no `:=` target. The text names the public name.
+// TOP M()
+module M() {
+    input a: Bool as "pin";
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a wire, a register, an own output, or a child input, not a value of `Bool`; select one of these, or assign a local with `=`
+    a := true;
+}

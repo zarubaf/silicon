@@ -1,0 +1,9 @@
+// A public name equal to a core keyword gets the field `0k` in the core name. The vectors use the public name.
+// TOP M()
+module M() domains() {
+    input a: UInt[4] as "add";
+    output o: UInt[4] as "sub";
+    o := a +% 1;
+}
+// STEP in=(add 3) out=(sub 4)
+// STEP in=(add 15) out=(sub 0)

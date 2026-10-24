@@ -1,0 +1,11 @@
+// S016: an `as` key has no graph effect. A function that runs a `diagnostic` has one.
+// TOP M()
+comptime fn name() -> String {
+    diagnostic("n", 1);
+    return "x";
+}
+module M() {
+    // expected-error S016 @-4
+    // expected-message: an `as` key has no graph effect such as `diagnostic`; call `diagnostic` before this statement, keep the result in a `let`, and use that name in the key
+    input a: Bool as name();
+}

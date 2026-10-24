@@ -1,0 +1,12 @@
+// A port that a helper declares costs what a port in a module costs, and the caller instantiation pays it. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 237
+// TOP M()
+fn lane(comptime n: String, x: UInt[8]) -> UInt[8] {
+    input a: UInt[8] as n;
+    return x +% a;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := lane("b", lane("a", x));
+}
