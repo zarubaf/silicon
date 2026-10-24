@@ -17,7 +17,7 @@ use super::{Elab, PortDecl, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
-use crate::hw::{Handle, Kind, Port, Seen, Val};
+use crate::hw::{Handle, Port, Seen, Val};
 use crate::names::{PathId, Step, Sym};
 use crate::ops::int_text;
 use crate::types::TyId;
@@ -211,17 +211,7 @@ impl Evaluator<'_> {
         });
         let outer = self.paths.child(None, sym);
         let path = self.paths.push(outer, Step::Family(k));
-        let v = if input {
-            // An input refers to its name as a scalar input does (`port`).
-            let r = Agg::Ref(Base::Name(path), tid);
-            if self.tys.meta(tid).leaves.is_zero() {
-                Val::Agg(Box::new(r))
-            } else {
-                self.normalize(pos, r)?
-            }
-        } else {
-            self.resource(Kind::Output, path, tid, pos, (sym, Some(k)))
-        };
+        let v = self.port_value(pos, input, path, tid, (sym, Some(k)))?;
         self.elab.work.entries.insert((id, k), (v, pos));
         Ok(())
     }

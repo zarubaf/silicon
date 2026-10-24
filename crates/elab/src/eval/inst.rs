@@ -878,17 +878,28 @@ impl Evaluator<'_> {
             pos,
         });
         let path = self.paths.child(None, sym);
-        if input {
-            // An input refers to its name. An empty one stays a reference, so only a read of it
-            // pays its zero (`name`).
-            let r = Agg::Ref(Base::Name(path), tid);
-            if self.tys.meta(tid).leaves.is_zero() {
-                Ok(Val::Agg(Box::new(r)))
-            } else {
-                self.normalize(pos, r)
-            }
+        self.port_value(pos, input, path, tid, (sym, None))
+    }
+
+    /// The value of the port at `path`, scalar or family entry (`key`). An input refers to its
+    /// name. An empty one stays a reference, so only a read of it pays its zero (`name`). An
+    /// output is a resource that needs one binding.
+    fn port_value(
+        &mut self,
+        pos: Pos,
+        input: bool,
+        path: PathId,
+        tid: TyId,
+        name: (Sym, Option<u32>),
+    ) -> Res<Val> {
+        if !input {
+            return Ok(self.resource(Kind::Output, path, tid, pos, name));
+        }
+        let r = Agg::Ref(Base::Name(path), tid);
+        if self.tys.meta(tid).leaves.is_zero() {
+            Ok(Val::Agg(Box::new(r)))
         } else {
-            Ok(self.resource(Kind::Output, path, tid, pos, (sym, None)))
+            self.normalize(pos, r)
         }
     }
 
