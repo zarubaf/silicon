@@ -72,6 +72,22 @@
 //!   The two tag kinds are certain where the top frame of a module uses
 //!   the enum.
 //!
+//! - A copy of an indexed declaration `req[k]` is `S019` ("Family key
+//!   twice", pass 5) where the copy always runs. A name gone with its last
+//!   indexed declaration is `S003` if the item still mentions it, as a
+//!   deleted declaration is; another indexed declaration of the name keeps
+//!   the family, so that case predicts nothing. `Rename` and the checks of
+//!   a mention see `req[k]` and `u.req[k]` as a mention of `req` and `u`.
+//! - A family key of `2^32` (`KeyRange`) is `S012` (pass 5). A family key
+//!   that is a `Bool` or a finite integer, and an `as` key that is an
+//!   integer (`KeyType`), are `S010`. A scalar port with the `as` key of a
+//!   family of the module body (`ScalarFamily`) is `S019`, also if the
+//!   body declares no entry of that family before the port, because the
+//!   table of public names holds each family of the body from the start. An
+//!   `as` key with a name that breaks the name rule, and a scalar `PortKey`
+//!   with the index 1 (`BadName`), are `S022`. The four kinds are certain
+//!   where the site always runs.
+//!
 //! Any other mutation can fail in pass 5 at a point that depends on the
 //! values, or pass, so its prediction is `None`.
 
@@ -161,9 +177,19 @@ enum Kind {
     PayloadOverflow,
     /// A binding statement or a binding call is copied right after itself.
     DuplicateBind,
+    /// A key of a family becomes `2^32`.
+    KeyRange,
+    /// A key of a family becomes a `Bool` or a finite integer, and an `as`
+    /// key an integer.
+    KeyType,
+    /// A scalar port gets the `as` key of a family of the module body.
+    ScalarFamily,
+    /// An `as` key breaks the name rule, or a scalar `PortKey` gets the
+    /// index 1.
+    BadName,
 }
 
-const KINDS: [Kind; 29] = [
+const KINDS: [Kind; 33] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -193,7 +219,16 @@ const KINDS: [Kind; 29] = [
     Kind::PatternFit,
     Kind::PayloadOverflow,
     Kind::DuplicateBind,
+    Kind::KeyRange,
+    Kind::KeyType,
+    Kind::ScalarFamily,
+    Kind::BadName,
 ];
+
+/// The kinds of ports at the end of `KINDS`, and the draws in `PORT_ODDS`
+/// that pick one of them.
+const PORT_KINDS: usize = 4;
+const PORT_ODDS: usize = 8;
 
 /// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that
 /// no value of the type `w` bits wide has. Three kinds use it: a tag, and a
@@ -236,7 +271,15 @@ impl Kind {
 /// pre-order of the items.
 #[must_use]
 pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
-    let first = kind as usize % KINDS.len();
+    // One draw in `PORT_ODDS` picks a kind of ports, the others keep their
+    // kinds. A program without a site of ports falls back to the earlier
+    // kinds.
+    let old_kinds = KINDS.len() - PORT_KINDS;
+    let first = if kind as usize % PORT_ODDS == PORT_ODDS - 1 {
+        old_kinds + (kind as usize / PORT_ODDS) % PORT_KINDS
+    } else {
+        kind as usize % old_kinds
+    };
     // A kind without a site falls back to the earlier kinds, as it did
     // before the kinds of `match`, so that a program without a `match`
     // does not give the next kind in the list all the draws of the new ones.

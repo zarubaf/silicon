@@ -237,7 +237,6 @@ pub(crate) enum FTy {
 /// entry, which has no leaf in the vectors.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PTy {
-    #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
     Data(Ty),
     Unit,
 }

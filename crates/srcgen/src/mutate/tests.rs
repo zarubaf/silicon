@@ -83,8 +83,21 @@ fn all(p: &Program, kind: Kind) -> Vec<Mutant> {
         .collect()
 }
 
+/// A draw that picks `kind`: the kinds of ports come from the draws that
+/// leave the remainder `PORT_ODDS - 1`, and the others from the draws that
+/// leave another remainder.
 fn index(kind: Kind) -> u32 {
-    u32::try_from(KINDS.iter().position(|&k| k == kind).unwrap()).unwrap()
+    let at = KINDS.iter().position(|&k| k == kind).unwrap();
+    let old = KINDS.len() - PORT_KINDS;
+    let draw = if at >= old {
+        (at - old) * PORT_ODDS + PORT_ODDS - 1
+    } else {
+        (0..PORT_ODDS)
+            .map(|t| at + old * t)
+            .find(|d| d % PORT_ODDS != PORT_ODDS - 1)
+            .unwrap()
+    };
+    u32::try_from(draw).unwrap()
 }
 
 fn programs() -> Vec<Program> {
@@ -446,7 +459,7 @@ fn predictions_are_frequent() {
     let mut codes = std::collections::BTreeSet::new();
     let ps = programs();
     for (n, p) in ps.iter().enumerate() {
-        let kind = u32::try_from(n % 8).unwrap();
+        let kind = index(KINDS[n % 8]);
         if sites(KINDS[n % 8], &p.items, &p.top) > 0 {
             applied[n % 8] += 1;
         }
@@ -1192,7 +1205,7 @@ fn the_fixed_set_of_mutants_reaches_s008_and_s016() {
             if count == 0 {
                 continue;
             }
-            let m = mutate(&p, u32::try_from(k).unwrap(), tape.wrapping_mul(7919));
+            let m = mutate(&p, index(*kind), tape.wrapping_mul(7919));
             if let Some(code) = m.expect {
                 *counts.entry(code).or_default() += 1;
                 *by_kind.entry(k).or_default() += 1;
@@ -1307,11 +1320,12 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
     let mut by_kind = std::collections::BTreeMap::<usize, usize>::new();
     for tape in 0..256u32 {
         let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
-        for (k, kind) in KINDS.iter().enumerate().skip(15) {
+        let own = KINDS.iter().enumerate().skip(15);
+        for (k, kind) in own.take(KINDS.len() - PORT_KINDS - 15) {
             if sites(*kind, &p.items, &p.top) == 0 {
                 continue;
             }
-            let m = mutate(&p, u32::try_from(k).unwrap(), tape.wrapping_mul(7919));
+            let m = mutate(&p, index(*kind), tape.wrapping_mul(7919));
             let lexed = syntax::lex(&m.text, usize::MAX);
             assert!(lexed.errors.is_empty(), "{:?} in\n{}", lexed.errors, m.text);
             if let Some(code) = m.expect {
@@ -1327,7 +1341,7 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
             "{code}: {counts:?}"
         );
     }
-    assert_eq!(by_kind.len(), KINDS.len() - 15, "{by_kind:?}");
+    assert_eq!(by_kind.len(), KINDS.len() - PORT_KINDS - 15, "{by_kind:?}");
 }
 
 /// `enum E0: UInt[2] { V0(UInt[4], Bool) = 1, V1 = 2 }`.
@@ -1740,4 +1754,207 @@ fn the_ci_seeds_delete_bindings_of_helper_declared_resources() {
         }
     }
     assert!(found >= 3, "{found} deleted bindings of declared resources");
+}
+
+fn port(output: bool, n: &str, key: Option<SExpr>, public: Option<SExpr>) -> Stmt {
+    Stmt::Port(super::super::program::Port {
+        output,
+        name: n.to_owned(),
+        key,
+        public,
+        ty: super::super::program::PTy::Data(u8()),
+    })
+}
+
+fn string(s: &str) -> SExpr {
+    SExpr::Str(s.to_owned())
+}
+
+fn entry(fam: &str, k: SExpr) -> HExpr {
+    HExpr::Entry(fam.to_owned(), k)
+}
+
+/// A module with an entry at the top, a family in a loop, a keyed port, and
+/// a scalar `PortKey`; the output reads the entry and the keyed port.
+fn with_ports() -> Program {
+    let body = vec![
+        Stmt::Input("i0".to_owned(), u8()),
+        Stmt::Output("o0".to_owned(), u8()),
+        port(false, "A0", Some(dec(1)), None),
+        Stmt::For(
+            "j0".to_owned(),
+            dec(0),
+            dec(2),
+            vec![port(
+                false,
+                "A0",
+                Some(SExpr::Binary(
+                    SBin::Add,
+                    Box::new(SExpr::Name("j0".to_owned())),
+                    Box::new(dec(5)),
+                )),
+                None,
+            )],
+        ),
+        port(false, "Y0", None, Some(string("c0"))),
+        port(
+            false,
+            "Y1",
+            None,
+            Some(SExpr::PortKey(
+                Box::new(string("c1")),
+                false,
+                Box::new(dec(0)),
+            )),
+        ),
+        connect(
+            "o0",
+            HExpr::Binary(
+                HBin::Xor,
+                Box::new(entry("A0", dec(1))),
+                Box::new(HExpr::Binary(
+                    HBin::Xor,
+                    Box::new(name("Y0")),
+                    Box::new(name("Y1")),
+                )),
+            ),
+        ),
+    ];
+    of(vec![module("M0", body)])
+}
+
+fn texts(ms: &[Mutant]) -> Vec<(&str, Option<&'static str>)> {
+    ms.iter().map(|m| (m.what.as_str(), m.expect)).collect()
+}
+
+/// An entry that always runs is `S019` at its copy. One in a loop predicts
+/// nothing, and a keyed port is a second binder (`S002`).
+#[test]
+fn a_copy_of_an_indexed_declaration_is_s019_where_it_runs() {
+    let p = with_ports();
+    let copies = all(&p, Kind::Duplicate);
+    let codes: Vec<Option<&str>> = copies
+        .iter()
+        .filter(|m| m.what.starts_with("duplicate statement"))
+        .map(|m| m.expect)
+        .collect();
+    // i0, o0, A0[1], the loop body (A0[j0 + 5]), Y0, Y1.
+    assert_eq!(
+        codes,
+        [
+            Some("S002"),
+            Some("S002"),
+            Some("S019"),
+            None,
+            Some("S002"),
+            Some("S002")
+        ]
+    );
+    let twice = copies.iter().find(|m| m.expect == Some("S019")).unwrap();
+    assert!(
+        twice
+            .text
+            .contains("input A0[1]: UInt[8];\n    input A0[1]: UInt[8];")
+    );
+}
+
+/// A deleted entry keeps the family while another indexed declaration of the
+/// name remains, so only the last one is `S003`, if the item mentions it.
+#[test]
+fn a_deleted_indexed_declaration_keeps_the_family_while_another_remains() {
+    let p = with_ports();
+    let deleted = all(&p, Kind::Delete);
+    let top = deleted
+        .iter()
+        .find(|m| m.text.contains("input A0[(j0 + 5)]") && !m.text.contains("input A0[1]"))
+        .unwrap();
+    assert_eq!(top.expect, None);
+    let looped = deleted
+        .iter()
+        .find(|m| m.text.contains("input A0[1]") && !m.text.contains("input A0[(j0 + 5)]"))
+        .unwrap();
+    assert_eq!(looped.expect, None);
+    // The only declaration of `A0`, which `o0` reads.
+    let body = vec![
+        Stmt::Output("o0".to_owned(), u8()),
+        port(false, "A0", Some(dec(1)), None),
+        connect("o0", entry("A0", dec(1))),
+    ];
+    let p = of(vec![module("M0", body)]);
+    let m = all(&p, Kind::Delete)
+        .into_iter()
+        .find(|m| !m.text.contains("input A0"))
+        .unwrap();
+    assert_eq!(m.expect, Some("S003"));
+    // A family that nothing reads leaves nothing to report.
+    let body = vec![
+        Stmt::Output("o0".to_owned(), u8()),
+        port(false, "A0", Some(dec(1)), None),
+        connect("o0", HExpr::Static(dec(0))),
+    ];
+    let p = of(vec![module("M0", body)]);
+    let m = all(&p, Kind::Delete)
+        .into_iter()
+        .find(|m| !m.text.contains("input A0"))
+        .unwrap();
+    assert_eq!(m.expect, None);
+}
+
+#[test]
+fn the_keys_of_entries_predict_where_they_always_run() {
+    let p = with_ports();
+    let range = all(&p, Kind::KeyRange);
+    // The declaration at the top, the declaration in the loop, and the read.
+    assert_eq!(range.len(), 3);
+    assert_eq!(
+        texts(&range).iter().map(|(_, c)| *c).collect::<Vec<_>>(),
+        [Some("S012"), None, Some("S012")]
+    );
+    assert!(range[0].text.contains("input A0[4294967296]: UInt[8];"));
+    assert!(range[2].text.contains("A0[4294967296]"));
+    let typed = all(&p, Kind::KeyType);
+    let by: Vec<(bool, Option<&str>)> = typed
+        .iter()
+        .map(|m| (m.what.contains("`as` key"), m.expect))
+        .collect();
+    // The two keys, the two `as` keys, and the read.
+    assert_eq!(
+        by,
+        [
+            (false, Some("S010")),
+            (false, None),
+            (true, Some("S010")),
+            (true, Some("S010")),
+            (false, Some("S010")),
+        ]
+    );
+    assert!(typed[2].text.contains("input Y0: UInt[8] as 3;"));
+}
+
+#[test]
+fn a_scalar_port_takes_the_key_of_a_family_of_its_module() {
+    let p = with_ports();
+    let m = all(&p, Kind::ScalarFamily);
+    // i0, o0, Y0, and Y1 are the scalar ports of the top frame.
+    assert_eq!(m.len(), 4);
+    assert!(m.iter().all(|m| m.expect == Some("S019")));
+    assert!(m[0].text.contains("input i0: UInt[8] as \"A0\";"));
+    assert!(m[2].text.contains("input Y0: UInt[8] as \"A0\";"));
+    // A module without a family offers no site.
+    assert!(all(&smallest(), Kind::ScalarFamily).is_empty());
+}
+
+#[test]
+fn a_bad_name_or_index_is_s022() {
+    let p = with_ports();
+    let m = all(&p, Kind::BadName);
+    assert_eq!(m.len(), 2);
+    assert!(m.iter().all(|m| m.expect == Some("S022")));
+    assert!(m[1].text.contains("PortKey(\"c1\", false, 1)"));
+    let bad = ["\"1c\"", "\"\"", "\"reg\""];
+    assert!(
+        bad.iter().any(|b| m[0].text.contains(&format!("as {b};"))),
+        "{}",
+        m[0].text
+    );
 }
