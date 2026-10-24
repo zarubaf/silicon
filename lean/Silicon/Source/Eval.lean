@@ -2237,39 +2237,34 @@ def matchHw (pos : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) : 
   | j => return (← armPart "match" pos leaf j xs).val
 
 /-!
+The port `q` at `p` of the child number `id` with the path `path`: an input gives its handle, and
+an output refers to it. An output entry has the field `<k>f` (section 7.2).
+-/
+def portPart (p : Pos) (id : Nat) (path : Path) (q : Port) : M Out := do
+  if q.input then return ⟨.handle (.input id path q), true, none⟩
+  -- A child output refers, unless it has no hardware leaf and is a new static value.
+  let r ← readRef p (.out path q.name (q.key.toList.map .family)) q.ty
+  return ⟨r, !(r matches .static _), none⟩
+
+/-!
 The part that the field `f` at `p` selects from the base `o`. On an `Instance` handle it is the
-child port: an input gives its handle, and an output refers to it. Another base gives its data
-field.
+child port (`portPart`). A family of the child without a key is `S010` "Family as a value"
+(section 5.6). Another base gives its data field.
 -/
 def fieldPart (p : Pos) (o : Out) (f : Ident) : M Out := do
   match o.value with
   | .handle (.inst id path iface _) =>
-    match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
-    | some q =>
-      if q.input then return ⟨.handle (.input id path q), true, none⟩
-      else
-        -- A child output refers, unless it has no hardware leaf and is a new static value.
-        let r ← readRef p (.out path q.name []) q.ty
-        return ⟨r, !(r matches .static _), none⟩
-    | none => fail .S010 p s!"the instance has no port `{f.name}`"
+    let y := (← read).field f.pos
+    match y >>= fun y => iface.ports[((y, none) : PortId)]? with
+    | some q => portPart p id path q
+    | none =>
+      if y.any iface.families.contains then fail .S010 p (Elab.familyValueText f.name)
+      fail .S010 p s!"the instance has no port `{f.name}`"
   | v => do
     -- A data field selection is a data context (section 9.2), so an input handle is S017.
     let w ← if v matches .handle (.res ..) | .handle (.input ..) then baseData p v
       else pure v
     return part o w (← field p f w)
-
-/-!
-The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A negative
-key is `S012`, a key of 2^32 or more is `S012` "Family key range", and a key of another type is
-`S010` "Family key type". A static `UInt` is such a type. The key fits 32 bits, so each later
-compare and name of it takes constant work.
--/
-def familyKey (p : Pos) : Value → M Nat
-  | .int i =>
-    if i < 0 then fail .S012 p (fitText .nat i)
-    else if i < 2 ^ 32 then pure i.toNat
-    else fail .S012 p (Elab.keyRangeText i)
-  | v => fail .S010 p (Elab.keyTypeText (Val.static v).about)
 
 /-!
 The key `v` at `p` of a selection of the family `x` with its name at `np` (section 6.2). A
@@ -2282,7 +2277,7 @@ def selectionKey (np p : Pos) (x : String) (v : Val) : M Nat := do
     | .agg a => !a.ty?.any (·.info.handles)
     | _ => false
   if hardware then fail .S010 np (Elab.familyValueText x)
-  familyKey p (← static p v)
+  Elab.familyKey p (← static p v)
 
 /-!
 The value of the entry `k` of the family `x` with the binder `id`, at the key `p`. A key that
@@ -2302,6 +2297,25 @@ def entryAt (p kp : Pos) (x : String) (id k : Nat) : M Out := do
   match ← entryVal kp x id k with
   | .agg (.ref b t) => return ⟨← readRef p b t, t.info.leaves != 0, none⟩
   | v => return ⟨v, true, none⟩
+
+/-!
+The selection `u.f[k]` at the index node `p` of the family `f` of the child behind the base `o`,
+with the field node at `q` (section 6.2). The index node and the field node charged 1, and `u`
+evaluated once. The result is `none` when `o` is no `Instance` handle or its interface holds no
+family `f`. Else the key evaluates by `ev` in a structural context, gets the checks of a
+selection key (`selectionKey`) with `S010` at `q`, and selects the entry of the child. A key that
+the child did not declare is `S013` "Child family key".
+-/
+def childSel (ev : Resolve.Expr → M (Option Out)) (p q : Pos) (o : Out) (f : Ident)
+    (k : Resolve.Expr) : M (Option Out) := do
+  unless ← Elab.childFamily o.value f do return none
+  let .handle (.inst id path iface ty) := o.value | return none
+  let v ← structural do return (← need k (← ev k)).value
+  let key ← selectionKey q k.pos f.name v
+  let y := ((← read).field f.pos).getD 0
+  match iface.ports[((y, some key) : PortId)]? with
+  | some port => return some (← portPart p id path port)
+  | none => fail .S013 k.pos (Elab.childKeyText ty.text f.name key)
 
 /-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
@@ -2346,7 +2360,7 @@ def familyTarget (ev : Resolve.Expr → M (Option Out)) (s rp : Pos) (x : String
     let v ← structural do return (← need i (← ev i)).value
     let k ← selectionKey rp i.pos x v
     let keys ← targetKeys ev rest
-    Elab.targetWalk s (← entryVal i.pos x id k) keys
+    Elab.targetWalk s (← entryVal i.pos x id k) none keys
   | sels => do
     let _ ← targetKeys ev sels
     fail .S010 rp (Elab.familyValueText x)
@@ -2368,7 +2382,7 @@ def targetPart (ev : Resolve.Expr → M (Option Out)) (e : Resolve.Expr) : M Val
   let v ← match early with
     | some v => pure v
     | none => targetRoot ev root
-  Elab.targetWalk e.pos v keys
+  Elab.targetWalk e.pos v none keys
 
 /-!
 The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
@@ -2507,7 +2521,8 @@ mutual
             return some ⟨.static (.type (← spec n p i xs)), false, none⟩
         let [x] := xs | fail .S010 p "an index of a value has one argument"
         if let .name bp y (.family id _) := b then return some (← familySel n p bp y id x)
-        let o ← indexBase n b
+        let (o, done) ← indexBase n p b x
+        if done then return some o
         let v ← baseData p o.value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
         let k ← changesOf o
@@ -2659,15 +2674,20 @@ mutual
   termination_by (n + 1, 0)
 
   /--
-  The base `b` of an index of a value. A field base charges its node, then its own base
-  evaluates, and `fieldPart` selects from it, as `eval` of the field does.
+  The base `b` of the index `x` at `p`. A field base charges its node, then its own base
+  evaluates once. A family of a child selects its entry with the key `x` (`childSel`), and the
+  flag of the result is then true: the selection is done. Else `fieldPart` selects from the base,
+  as `eval` of the field does.
   -/
-  def indexBase (n : Nat) (b : Resolve.Expr) : M Out :=
+  def indexBase (n : Nat) (p : Pos) (b x : Resolve.Expr) : M (Out × Bool) :=
     match b with
     | .field q c f => do
       charge q 1
-      fieldPart q (← need c (← eval n c)) f
-    | b => do need b (← eval n b)
+      let o ← need c (← eval n c)
+      match ← childSel (eval n) p q o f x with
+      | some r => return (r, true)
+      | none => return (← fieldPart q o f, false)
+    | b => do return (← need b (← eval n b), false)
   termination_by (n + 1, 0)
 
   /--
@@ -3099,7 +3119,7 @@ mutual
   def entryDecl (n : Nat) (p : Pos) (input : Bool) (x : Binder) (k : Resolve.Expr)
       (ty : Resolve.TypeExpr) : M Unit := do
     let v ← structural do return (← need k (← eval n k)).value
-    let key ← familyKey k.pos (← static k.pos v)
+    let key ← Elab.familyKey k.pos (← static k.pos v)
     Elab.entry p input x key (← Elab.dataType p (← typeExpr n ty))
   termination_by (n, 4)
 
@@ -3151,7 +3171,7 @@ mutual
         return made
       let w := (← get).inst.work
       let body := { w.body with lets := made.lets, mems := made.mems }
-      let c := Elab.iface name body
+      let c := Elab.iface name body (((← read).syms.families[i]?).getD {})
       let k := (← get).inst.done.size
       modify fun t => { t with
         inst.table := t.inst.table.insert key (.done k),
@@ -3168,6 +3188,7 @@ local numbers, and the field names with their positions.
 structure Scan where
   binders : List (Nat × String) := []
   fields : List (Pos × String) := []
+  families : List (Nat × Bool) := []
 
 abbrev ScanM := StateM Scan
 
@@ -3233,7 +3254,8 @@ mutual
     | .assign _ t v | .connect _ t v => do scanExpr t; scanExpr v
     | .reg _ b ty i => do scanType ty; scanExpr i; scanBinder b
     | .wire _ b ty => do scanType ty; scanBinder b
-    | .input _ b k ty | .output _ b k ty => do k.forM scanExpr; scanType ty; scanBinder b
+    | .input _ b k ty => scanPort b k ty true
+    | .output _ b k ty => scanPort b k ty false
     | .mem _ b w d => do scanType w; scanExpr d; scanBinder b
     | .inst _ b _ _ xs => do
       for x in xs do scanExpr x
@@ -3247,6 +3269,14 @@ mutual
     | .block _ b => scanStmts b
     | .expr _ v => scanExpr v
     | .alias _ b ty => do scanType ty; scanBinder b
+
+  /-- An indexed port of a module body has its family binder (section 5.6). -/
+  def scanPort (b : Binder) (k : Option Resolve.Expr) (ty : Resolve.TypeExpr) (input : Bool) :
+      ScanM Unit := do
+    k.forM scanExpr
+    scanType ty
+    scanBinder b
+    if k.isSome then modify fun t => { t with families := (b.id, input) :: t.families }
 
   def scanStmts (ss : List Resolve.Stmt) : ScanM Unit := do
     for s in ss do scanStmt s
@@ -3314,6 +3344,7 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
     names := names.push k
   let mut binders := #[]
   let mut fields := #[]
+  let mut families := #[]
   for sc in scans do
     let size := sc.binders.foldl (fun m (id, _) => max m (id + 1)) 0
     let mut arr := Array.replicate size 0
@@ -3328,6 +3359,8 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
       fm := fm.insert p k
     binders := binders.push arr
     fields := fields.push fm
+    families := families.push <|
+      sc.families.foldl (fun m (id, input) => m.insert (arr.getD id 0) input) {}
   for (sc, i) in rests.zipIdx do
     for (p, x) in sc.fields do
       let (t, k) := intern table x
@@ -3342,7 +3375,7 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
         table := t
         unless ms.contains k do ms := ms.insert k j
     members := members.push ms
-  return ⟨binders, fields, names, members⟩
+  return ⟨binders, fields, names, members, families⟩
 
 /-!
 The context and the state of an elaboration with the budget `budget`, and with the scan `top`

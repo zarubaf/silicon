@@ -3227,4 +3227,92 @@ def famNames : String :=
   some [["req$0f", "req$1f", "gnt$3f"]]
 #guard (cost famNames "M").startsWith "total"
 
+/-!
+The bindings of section 6.2. An `S018` text names an entry `{x}[{k}]`, and a child input entry
+`{u}.{x}[{k}]`.
+-/
+#guard fam "  output g[0]: Bool;\n" ==
+  "S018 3:3 `g[0]` has no binding; bind it with `g[0] := ...;`, or remove its declaration"
+#guard fam "  output g[0]: Bool;\n  g[0] := a;\n  g[0] := a;\n" ==
+  "S018 5:3 `g[0]` has a second binding; the first binding is at 4:3, and the declaration is " ++
+    "at 3:3; remove one of the two bindings"
+
+/-!
+Child selections (sections 5.6 and 6.2). The child `C` declares the input entries `req[0]` and
+`req[1]` in a loop, the output entry `gnt[3]`, and the family `idle` in an arm that does not run.
+A parent `M` makes `u = C()` on line 14 and runs `body` from line 15 on.
+-/
+def kid : String :=
+  "module C() {\n  comptime for i in 0..2 {\n    input req[i]: Bool;\n  }\n" ++
+  "  output gnt[3]: Bool;\n  gnt[3] := req[1];\n" ++
+  "  comptime if (false) {\n    output idle[0]: Bool;\n  }\n}\n"
+def par (body : String) : String :=
+  failure (kid ++ "module M() {\n  input a: Bool;\n  output o: Bool;\n  instance u = C();\n" ++
+    body ++ "}\n") 100000000
+def childKey (x k : String) : String :=
+  s!"the child `Instance[C]` has no entry `{x}[{k}]`; select a key that `Instance[C]` declares"
+def kidBinds : String := "  u.req[0] := a;\n  u.req[1] := a;\n"
+
+#guard par (kidBinds ++ "  o := u.gnt[3];\n") == "ok"
+#guard par (kidBinds ++ "  o := u.gnt[2];\n") == s!"S013 17:14 {childKey "gnt" "2"}"
+-- A family without an entry is part of the interface, so a missing key is `S013`.
+#guard par (kidBinds ++ "  o := u.idle[0];\n") == s!"S013 17:15 {childKey "idle" "0"}"
+#guard par (kidBinds ++ "  o := u.gnt;\n") == s!"S010 17:8 {famValue "gnt"}"
+#guard par (kidBinds ++ "  let x = u.gnt;\n  o := a;\n") == s!"S010 17:11 {famValue "gnt"}"
+#guard par (kidBinds ++ "  o := u.nope[0];\n") == "S010 17:8 the instance has no port `nope`"
+
+/-! The order of a child selection: the index arity, then the key checks, then `S013`. -/
+#guard par (kidBinds ++ "  o := u.gnt[3, diagnostic(\"k\", 3)];\n") ==
+  "S010 17:8 an index of a value has one argument"
+#guard par (kidBinds ++ "  o := u.gnt[diagnostic(\"k\", 3)];\n") == s!"S016 17:14 {effect}"
+#guard par (kidBinds ++ "  let h = a;\n  o := u.gnt[h];\n") == s!"S010 18:8 {famValue "gnt"}"
+#guard par (kidBinds ++ "  o := u.gnt[UInt[2](3)];\n") ==
+  s!"S010 17:14 {keyType "a value of `UInt[2]`"}"
+#guard par (kidBinds ++ "  o := u.gnt[0 - 1];\n") == "S012 17:14 -1 is not a Nat"
+#guard par (kidBinds ++ "  o := u.gnt[1 << 33];\n") == s!"S012 17:14 {keyRange "8589934592"}"
+
+/-!
+Child targets (section 5.2). A field that names a family of a child takes the key of the next
+index step. The key passed check 1 (`S011`) before the walk, so a hardware key is `S011` here.
+-/
+#guard par (kidBinds ++ "  u.req[2] := a;\n  o := a;\n") == s!"S013 17:9 {childKey "req" "2"}"
+#guard par (kidBinds ++ "  u.gnt[3] := a;\n  o := a;\n") ==
+  s!"S017 17:3 {Elab.outputText "gnt[3]"}"
+#guard par (kidBinds ++ "  u.req := a;\n  o := a;\n") == s!"S010 17:3 {famValue "req"}"
+#guard par (kidBinds ++ "  u.req.x := a;\n  o := a;\n") == s!"S010 17:3 {famValue "req"}"
+#guard par (kidBinds ++ "  let h = a;\n  u.req[h] := a;\n  o := a;\n") ==
+  s!"S011 18:9 {notStatic "a value of `Bool`"}"
+#guard par (kidBinds ++ "  u.req[UInt[2](0)] := a;\n  o := a;\n") ==
+  s!"S010 17:9 {keyType "a value of `UInt[2]`"}"
+#guard par (kidBinds ++ "  u.req[0 - 1] := a;\n  o := a;\n") == "S012 17:9 -1 is not a Nat"
+#guard par (kidBinds ++ "  u.req[0, 1] := a;\n  o := a;\n") ==
+  "S010 17:3 an index of a value has one argument"
+#guard par (kidBinds ++ "  o := a;\n  u.req[diagnostic(\"k\", 0)] := a;\n") ==
+  s!"S016 18:9 {effect}"
+
+/-! A container of instance handles selects a child with `us[i].req[k]`. -/
+#guard par ("  instance v = C();\n  let us = [u, v];\n  comptime for j in 0..2 {\n" ++
+    "    comptime for k in 0..2 {\n      us[j].req[k] := a;\n    }\n  }\n" ++
+    "  o := us[1].gnt[3];\n") == "ok"
+
+/-!
+The bindings of child input entries. The first free input of one declaration is the first entry
+in the declaration order at run time, here `req[3]` before `req[1]`.
+-/
+#guard par (kidBinds ++ "  u.req[0] := a;\n  o := a;\n") ==
+  "S018 17:3 `u.req[0]` has a second binding; the first binding is at 15:3, and the " ++
+    "declaration is at 14:3; remove one of the two bindings"
+#guard par "  u.req[0] := a;\n  o := a;\n" ==
+  "S018 14:3 the input `req[1]` of the instance `u` has no binding; bind it with " ++
+    "`u.req[1] := ...;`"
+def kidDown : String :=
+  "module C() {\n  comptime for i in 0..2 {\n    input req[3 - 2 * i]: Bool;\n  }\n}\n"
+#guard failure (kidDown ++ "module M() {\n  instance u = C();\n}\n") 100000000 ==
+  "S018 7:3 the input `req[3]` of the instance `u` has no binding; bind it with " ++
+    "`u.req[3] := ...;`"
+#guard failure (kidDown ++ "module M() {\n  input a: Bool;\n  instance u = C();\n" ++
+    "  u.req[3] := a;\n}\n") 100000000 ==
+  "S018 8:3 the input `req[1]` of the instance `u` has no binding; bind it with " ++
+    "`u.req[1] := ...;`"
+
 end Silicon.Source.Test.Elab

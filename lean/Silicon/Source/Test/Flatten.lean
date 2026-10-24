@@ -994,4 +994,50 @@ def arms65 : String :=
 #guard (enumLets arms65).contains
   ("    (let a$66t (bits 4) " ++ ors ((List.range 62).map term) ++ ")")
 
+/-!
+A child family entry (section 7.2): a connection and an output read carry the field `<k>f`, and
+the leaf fields follow it.
+-/
+#guard sil ("module C() {\n  input req[2]: (Bool, UInt[2]);\n  output gnt[1]: (Bool, Bool);\n" ++
+    "  gnt[1] := (req[2].0, req[2].0);\n}\n" ++
+    "module M() {\n  input a: Bool;\n  output o: Bool;\n  instance u = C();\n" ++
+    "  u.req[2] := (a, UInt[2](1));\n  o := u.gnt[1].1;\n}\n") "M" == text [
+  "(design M",
+  "  (module C",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input req$2f$0e (bits 1))",
+  "    (input req$2f$1e (bits 2))",
+  "    (output gnt$1f$0e (bits 1))",
+  "    (output gnt$1f$1e (bits 1))",
+  "    (assign gnt$1f$0e req$2f$0e)",
+  "    (assign gnt$1f$1e req$2f$0e))",
+  "  (module M",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input a (bits 1))",
+  "    (output o (bits 1))",
+  "    (inst u C (clock$0clk clock$0clk) (clock$0rst clock$0rst) (req$2f$0e a) " ++
+    "(req$2f$1e (const 2 1)))",
+  "    (assign o u.gnt$1f$1e)))"]
+#guard sil ("module C() {\n  comptime for i in 0..2 {\n    input req[i]: Bool;\n  }\n" ++
+    "  output gnt[3]: Bool;\n  gnt[3] := req[1];\n}\n" ++
+    "module M() {\n  input a: Bool;\n  output o: Bool;\n  instance u = C();\n" ++
+    "  u.req[0] := a;\n  u.req[1] := a;\n  o := u.gnt[3];\n}\n") "M" == text [
+  "(design M",
+  "  (module C",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input req$0f (bits 1))",
+  "    (input req$1f (bits 1))",
+  "    (output gnt$3f (bits 1))",
+  "    (assign gnt$3f req$1f))",
+  "  (module M",
+  "    (input clock$0clk clock)",
+  "    (input clock$0rst (bits 1))",
+  "    (input a (bits 1))",
+  "    (output o (bits 1))",
+  "    (inst u C (clock$0clk clock$0clk) (clock$0rst clock$0rst) (req$0f a) (req$1f a))",
+  "    (assign o u.gnt$3f)))"]
+
 end Silicon.Source.Test.Flatten

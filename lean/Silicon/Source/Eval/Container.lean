@@ -271,7 +271,7 @@ def readHint : Val → String
 
 /-! The `S017` text "`read` of an input" of the input `q` of the child at `path` (section 6.2). -/
 def inputText (path : Path) (q : Port) : String :=
-  s!"the input `{q.name}` of `{sourceOf path}` is a target only; read the value that you bind " ++
+  s!"the input `{q.text}` of `{sourceOf path}` is a target only; read the value that you bind " ++
     "to it"
 
 /-!
@@ -1154,7 +1154,7 @@ def Handle.render : Handle → String
     Print.node kind [t.serialize, encode path.name]
   | .mem _ path t k => Print.node "mem" [(Ty.array t k).serialize, encode path.name]
   | .inst _ path i _ => Print.node "instance" [encode i.name, encode path.name]
-  | .input _ path q => Print.node "input" [q.ty.serialize, encode path.name, q.name]
+  | .input _ path q => Print.node "input" [q.ty.serialize, encode path.name, q.text]
   | .domain d => Print.node "domain" [d]
 
 /-!

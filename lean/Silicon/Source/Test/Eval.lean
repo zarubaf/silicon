@@ -2060,7 +2060,7 @@ fields to the port name.
 def child (c : Eval.Ctx) (t : Ty) : Eval.Val :=
   let k := (c.field (stepArg 0)).getD 0
   let ports := ({} : Std.HashMap Eval.PortId Eval.Port).insert (k, none)
-    ⟨"q", k, none, false, t, ⟨1, 1⟩⟩
+    ⟨"q", k, none, false, t, ⟨1, 1⟩, 0⟩
   .handle (.inst 0 ⟨"u", []⟩ ⟨⟨"C", []⟩, ports, 0, none, {}⟩ (.inst 0 "C" #[]))
 #guard sel shapes "P" child [.fld "q"] == "ref P u.q 1099511627789 true 2"
 #guard sel shapes "P" child [.fld "q", .fld "t", .dot 1, .idx 2] ==
