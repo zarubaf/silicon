@@ -374,11 +374,17 @@ impl<'a> Lower<'a> {
             InputStmt => Some(Stmt::Input {
                 pos,
                 name: self.ident(node)?,
+                index: exprs
+                    .first()
+                    .map_or(Some(None), |e| self.expr(e).map(Some))?,
                 ty: ty()?,
             }),
             OutputStmt => Some(Stmt::Output {
                 pos,
                 name: self.ident(node)?,
+                index: exprs
+                    .first()
+                    .map_or(Some(None), |e| self.expr(e).map(Some))?,
                 ty: ty()?,
             }),
             _ => None,

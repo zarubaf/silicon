@@ -272,10 +272,19 @@ impl Walk<'_> {
                 self.expr(depth, d);
                 self.binder(name);
             }
-            Stmt::Wire { name, ty, .. }
-            | Stmt::Input { name, ty, .. }
-            | Stmt::Output { name, ty, .. }
-            | Stmt::Alias { name, ty, .. } => {
+            Stmt::Input {
+                name, index, ty, ..
+            }
+            | Stmt::Output {
+                name, index, ty, ..
+            } => {
+                if let Some(k) = index {
+                    self.expr(k, d);
+                }
+                self.ty(ty, d);
+                self.binder(name);
+            }
+            Stmt::Wire { name, ty, .. } | Stmt::Alias { name, ty, .. } => {
                 self.ty(ty, d);
                 self.binder(name);
             }

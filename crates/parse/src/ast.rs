@@ -347,11 +347,13 @@ pub enum Stmt {
     Input {
         pos: Pos,
         name: Ident,
+        index: Option<Expr>,
         ty: TypeExpr,
     },
     Output {
         pos: Pos,
         name: Ident,
+        index: Option<Expr>,
         ty: TypeExpr,
     },
     Inst {
