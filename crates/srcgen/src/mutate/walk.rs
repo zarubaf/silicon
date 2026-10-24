@@ -5,8 +5,8 @@ use super::super::program::hexpr as hexpr_text;
 use super::super::program::is_resource_helper;
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, Pattern, Place, Radix, SBin, SExpr, STy,
-    Scalar, Stmt, Ty, Un, Variant,
+    EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Radix, SBin, SExpr,
+    STy, Scalar, Stmt, Ty, Un, Variant,
 };
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
@@ -324,6 +324,7 @@ impl<'a> Walk<'a> {
         self.note_hardware(s);
         match s {
             Stmt::Input(_, t) | Stmt::Output(_, t) | Stmt::Wire(_, t) => self.ty(t),
+            Stmt::Port(p) => self.port_parts(p),
             Stmt::Reg(_, t, reset) => {
                 self.ty(t);
                 self.sexpr(reset);
@@ -363,10 +364,7 @@ impl<'a> Walk<'a> {
                 self.hexpr(v);
             }
             Stmt::Connect(place, v) => {
-                match place {
-                    Place::Name(n) | Place::Field(n, _) => self.rename(n),
-                    Place::Path(e) => self.hexpr(e),
-                }
+                self.place_parts(place);
                 self.hexpr(v);
             }
             Stmt::Instance(_, m, args) => {
@@ -417,6 +415,32 @@ impl<'a> Walk<'a> {
                 self.hexpr(addr);
                 self.hexpr(data);
                 self.hexpr(en);
+            }
+        }
+    }
+
+    /// The parts of a port declaration: its type and its keys.
+    fn port_parts(&mut self, p: &mut Port) {
+        if let PTy::Data(t) = &mut p.ty {
+            self.ty(t);
+        }
+        for k in p.key.iter_mut().chain(&mut p.public) {
+            self.sexpr(k);
+        }
+    }
+
+    /// The target of a `:=`.
+    fn place_parts(&mut self, place: &mut Place) {
+        match place {
+            Place::Name(n) | Place::Field(n, _) => self.rename(n),
+            Place::Path(e) => self.hexpr(e),
+            Place::Entry(fam, k) => {
+                self.rename(fam);
+                self.sexpr(k);
+            }
+            Place::ChildEntry(u, _, k) => {
+                self.rename(u);
+                self.sexpr(k);
             }
         }
     }
@@ -939,7 +963,7 @@ impl<'a> Walk<'a> {
             }
             FTy::Array(t, _) | FTy::List(t) => self.fty(t),
             FTy::Struct(name) => self.rename(name),
-            FTy::Unit => {}
+            FTy::Unit | FTy::Static(_) => {}
         }
     }
 
@@ -1056,7 +1080,7 @@ impl<'a> Walk<'a> {
                 self.sexpr(a);
                 self.lazily(|w| w.sexpr(b));
             }
-            SExpr::Index(a, b) | SExpr::Binary(_, a, b) => {
+            SExpr::Index(a, b) | SExpr::PortKey(a, _, b) | SExpr::Binary(_, a, b) => {
                 self.sexpr(a);
                 self.sexpr(b);
             }
@@ -1194,6 +1218,14 @@ impl<'a> Walk<'a> {
                 }
             }
             HExpr::Unit => {}
+            HExpr::Entry(fam, k) => {
+                self.rename(fam);
+                self.sexpr(k);
+            }
+            HExpr::ChildEntry(u, _, k) => {
+                self.rename(u);
+                self.sexpr(k);
+            }
             HExpr::Tuple(_)
             | HExpr::Array(_)
             | HExpr::Record(..)
