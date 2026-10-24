@@ -172,6 +172,31 @@ pub(crate) struct PreludeStruct {
 /// The name of the prelude struct that a port call finds.
 pub const RESPONSE: &str = "ReadResponse";
 
+/// The names of the prelude types: the builtin types, then the prelude structs (design section
+/// 5.6). A message names a user struct or enum with one of these names as `crate::X`.
+pub const TYPE_NAMES: [&str; 20] = [
+    "Bool",
+    "UInt",
+    "SInt",
+    "Nat",
+    "Int",
+    "Unit",
+    "Type",
+    "String",
+    "List",
+    "Reg",
+    "Wire",
+    "Input",
+    "Mem",
+    "Instance",
+    "ReadResponse",
+    "FieldInfo",
+    "TypeInfo",
+    "VariantInfo",
+    "PortKey",
+    "PortInfo",
+];
+
 /// The prelude structs, in the order of design section 5.6. They follow the user items. A field
 /// type refers to a prelude struct by its index here, never through the item scope.
 pub(crate) const STRUCTS: [PreludeStruct; 6] = [
@@ -357,3 +382,57 @@ pub(crate) const DOMAIN_TEXT: &str = "`Domain` is not supported yet; it comes wi
 /// The text of `S003` at a first argument of `Instance` that is not a module.
 pub(crate) const INSTANCE_TEXT: &str = "the first argument of `Instance` is not a module; write \
     the module first, for example `Instance[Counter, 8]`";
+
+#[cfg(test)]
+mod tests {
+    use super::{Prelude, STRUCTS, TYPE_NAMES};
+
+    /// Each name that `Prelude::of` knows, so that the test sees every prelude type.
+    const ALL: [&str; 28] = [
+        "Bool",
+        "Nat",
+        "Int",
+        "Unit",
+        "Type",
+        "UInt",
+        "SInt",
+        "resize",
+        "reinterpret",
+        "static_assert",
+        "error",
+        "len",
+        "data_bits",
+        "String",
+        "List",
+        "list",
+        "push",
+        "pop",
+        "str",
+        "read_port",
+        "write_port",
+        "diagnostic",
+        "Reg",
+        "Wire",
+        "Input",
+        "Mem",
+        "Instance",
+        "read",
+    ];
+
+    /// `TYPE_NAMES` holds the prelude types of the resolver, then its prelude structs, as the
+    /// Lean list `preludeTypeNames` does.
+    #[test]
+    fn the_type_names_are_the_prelude_types_and_structs() {
+        let mut expected: Vec<&str> = ALL
+            .iter()
+            .copied()
+            .filter(|n| Prelude::of(n).is_some_and(Prelude::is_type))
+            .collect();
+        expected.sort_unstable();
+        let mut builtin: Vec<&str> = TYPE_NAMES[..TYPE_NAMES.len() - STRUCTS.len()].to_vec();
+        builtin.sort_unstable();
+        assert_eq!(builtin, expected);
+        let structs: Vec<&str> = STRUCTS.iter().map(|s| s.name).collect();
+        assert_eq!(TYPE_NAMES[TYPE_NAMES.len() - STRUCTS.len()..], structs[..]);
+    }
+}
