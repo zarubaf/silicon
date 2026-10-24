@@ -68,6 +68,7 @@ mod lines;
 mod lists;
 mod matches;
 mod mutcalls;
+mod ports;
 mod record;
 mod stat;
 mod strings;
@@ -90,9 +91,11 @@ use std::fmt;
 
 /// The name prefixes of the static kinds: `P` parameter, `C` const, `f`
 /// `comptime fn`, `s` static `let`, `j` loop binder, `B` binder of a static
-/// `match`, `G` list of handles, `H` helper that takes resources. A static
-/// name is one of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGH";
+/// `match`, `G` list of handles, `H` helper that takes resources. The port
+/// forms add `A`, `Z`, and `K` for a family and `Y` for the binder of a keyed
+/// port: the twin names an entry `A0_3` and a keyed port by its public name.
+/// A static name is one of them and digits; the twin must have none.
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGHAZKY";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -260,6 +263,10 @@ struct Ctx {
     called: BTreeSet<usize>,
     /// Whether the frame is the body of a loop with a second iteration.
     looped: bool,
+    /// The entries and the keyed ports of the module, readable by the port
+    /// tape only, so that a program without port forms is the program of
+    /// the other tapes alone; they reach the outputs through `mix_port`.
+    port: Vec<Hw>,
 }
 
 impl Ctx {
@@ -317,6 +324,17 @@ impl Ctx {
             local: self.local,
             called: BTreeSet::new(),
             looped: self.looped,
+            port: self
+                .port
+                .iter()
+                .map(|h| Hw {
+                    types: parents
+                        .iter()
+                        .filter_map(|&p| h.types.get(p).copied())
+                        .collect(),
+                    ..h.clone()
+                })
+                .collect(),
         }
     }
 
@@ -335,6 +353,14 @@ impl Ctx {
     fn view(&self) -> Ctx {
         let mut ctx = self.clone();
         ctx.hw.append(&mut ctx.hand);
+        ctx
+    }
+
+    /// The scope with the names of `port` among the others, for an
+    /// expression that the port tape draws.
+    fn port_view(&self) -> Ctx {
+        let mut ctx = self.clone();
+        ctx.hw.append(&mut ctx.port);
         ctx
     }
 }
@@ -363,6 +389,8 @@ struct Sig {
     /// The enum ports of the module.
     enum_inputs: Vec<(String, EnumDef)>,
     enum_outputs: Vec<(String, EnumDef)>,
+    /// The families, keyed ports, and port helper calls of the module.
+    plan: ports::PortPlan,
 }
 
 /// The module whose body is under construction.
@@ -475,6 +503,26 @@ struct Stats {
     mixed_container_reads: u32,
     mixed_explicit_reads: u32,
     list_input_groups: u32,
+    fam_loops: u32,
+    fam_arms: u32,
+    fam_tops: u32,
+    skipped_families: u32,
+    empty_entries: u32,
+    own_selects: u32,
+    own_targets: u32,
+    second_loops: u32,
+    child_binds: u32,
+    child_reads: u32,
+    as_strings: u32,
+    as_core: u32,
+    as_portkeys: u32,
+    as_joins: u32,
+    as_computed: u32,
+    helper_names: u32,
+    helper_families: u32,
+    helper_chains: u32,
+    port_reaches: u32,
+    port_lost: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -490,7 +538,12 @@ struct Builder {
     /// from it, so that a program without them is the program of the other
     /// tapes alone, enums included.
     hand: Tape,
-    /// Whether `on_side` or `on_hand` has swapped `tape` with another.
+    /// The same numbers from the end, mixed with another constant. The forms
+    /// of ports draw from it, so that a program without them is the program
+    /// of the other tapes alone.
+    port: Tape,
+    /// Whether `on_side`, `on_hand`, or `on_port` has swapped `tape` with
+    /// another.
     swapped: bool,
     /// The binders `B<n>` of static matches made so far.
     binders: u32,
@@ -515,6 +568,12 @@ struct Builder {
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
     shapes: BTreeSet<usize>,
+    /// The helpers that declare a port, from the port tape.
+    port_helpers: Vec<ports::PortHelper>,
+    /// The helpers that the bodies of reached modules call.
+    port_helper_used: BTreeSet<usize>,
+    /// The ports that the plans of the signatures declare so far.
+    port_count: usize,
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
@@ -547,6 +606,17 @@ impl Builder {
                     .collect::<Vec<_>>()
                     .into_iter(),
             },
+            port: Tape {
+                numbers: tape
+                    .iter()
+                    .rev()
+                    .map(|n| {
+                        let m = n.wrapping_mul(0x9E37_79B1);
+                        m ^ (m >> 15)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            },
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -565,6 +635,9 @@ impl Builder {
             max_decls: handles::MAX_DECLS,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
+            port_helpers: Vec::new(),
+            port_helper_used: BTreeSet::new(),
+            port_count: 0,
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
             hw_values: Vec::new(),
@@ -692,6 +765,7 @@ impl Builder {
             .chain(self.hstructs.iter().cloned().map(Item::Struct))
             .chain(helpers)
             .chain(res)
+            .chain(self.port_helper_items())
             .chain(self.hw_value_items())
             .chain(modules)
             .collect()

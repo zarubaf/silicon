@@ -229,7 +229,6 @@ pub(crate) enum FTy {
     List(Box<FTy>),
     /// A `comptime` formal of a helper that declares a port: its name or
     /// its key. Only `String` and `Nat` occur.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the port helpers make it"))]
     Static(STy),
 }
 
@@ -384,7 +383,6 @@ pub(crate) enum SExpr {
     Match(Match<SExpr, SExpr>),
     /// `PortKey(name, indexed, index)`, the key of a port. The evaluator
     /// knows no `PortKey`: the twin reads the three parts.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the keyed ports make it"))]
     PortKey(Box<SExpr>, bool, Box<SExpr>),
 }
 
@@ -433,10 +431,8 @@ pub(crate) enum HExpr {
     /// `read(h)` of a register or a wire.
     Read(Box<HExpr>),
     /// An input entry `fam[key]` of a family of the module.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the families make it"))]
     Entry(String, SExpr),
     /// An output entry `u.fam[key]` of a child.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the child families make it"))]
     ChildEntry(String, String, SExpr),
 }
 
@@ -451,10 +447,8 @@ pub(crate) enum Place {
     /// `rs[1]`.
     Path(HExpr),
     /// An output entry `fam[key]` of the module.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the families make it"))]
     Entry(String, SExpr),
     /// An input entry `u.fam[key]` of a child.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the child families make it"))]
     ChildEntry(String, String, SExpr),
 }
 
