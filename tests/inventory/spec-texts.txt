@@ -57,6 +57,14 @@ rust | S013 Child family key | 338
 pin | S013 Child family key | 338
 rust | S019 Family key twice | 338
 pin | S019 Family key twice | 338
+rust | S016 Mutation in a family key | 338
+pin | S016 Mutation in a family key | 338
+rust | S016 Graph effect in a family key | 338
+pin | S016 Graph effect in a family key | 338
+rust | S016 Mutation in a target index | 338
+pin | S016 Mutation in a target index | 338
+rust | S016 Graph effect in a target index | 338
+pin | S016 Graph effect in a target index | 338
 lean | S019 Public name twice | 339
 rust | S019 Public name twice | 339
 pin | S019 Public name twice | 339
