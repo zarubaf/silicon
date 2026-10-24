@@ -9,7 +9,7 @@
 //! reads it as a local. A first use then charges the size of the struct type, evaluates the
 //! field types, and charges the metadata. A later use finds the entry and charges nothing more.
 
-use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, family_text, need, type_pos};
+use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, type_pos};
 use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
@@ -30,6 +30,75 @@ const PAYLOAD_LIMIT: u64 = 65536;
 /// The most bits of a memory word, and the most words of a memory (spec section 6.2).
 const MEM_MAX_BITS: u64 = 65536;
 const MEM_MAX_DEPTH: u64 = 16_777_216;
+
+/// A scalar type of the prelude without its index.
+pub(super) fn prim(pos: Pos, name: &str, k: Prelude) -> Res<Ty> {
+    match k {
+        Prelude::Bool => Ok(Ty::Bool),
+        Prelude::Nat => Ok(Ty::Nat),
+        Prelude::Int => Ok(Ty::Int),
+        Prelude::Unit => Ok(Ty::Unit),
+        Prelude::Type => Ok(Ty::Type),
+        Prelude::String => Ok(Ty::String),
+        k => {
+            let (want, signature) = family_signature(k);
+            fail(
+                Code::S007,
+                pos,
+                format!("`{name}` takes {want} argument(s), but it has 0; write `{signature}`"),
+            )
+        }
+    }
+}
+
+/// A handle type family for a message (Lean `familyText`): its name, its signature, an example
+/// of a use, and its number of index arguments.
+pub(crate) struct Family {
+    pub name: &'static str,
+    pub signature: &'static str,
+    pub example: &'static str,
+    pub args: usize,
+}
+
+/// The text of the handle type family `k`, or `None` for another name.
+pub(crate) fn family_text(k: Prelude) -> Option<Family> {
+    let (name, signature, example, args) = match k {
+        Prelude::Reg => ("Reg", "Reg[T]", "Reg[UInt[8]]", 1),
+        Prelude::Wire => ("Wire", "Wire[T]", "Wire[UInt[8]]", 1),
+        Prelude::Input => ("Input", "Input[T]", "Input[UInt[8]]", 1),
+        Prelude::Mem => ("Mem", "Mem[T, N]", "Mem[UInt[8], 16]", 2),
+        Prelude::Instance => ("Instance", "Instance[M, args]", "Instance[Counter, 8]", 1),
+        _ => return None,
+    };
+    Some(Family {
+        name,
+        signature,
+        example,
+        args,
+    })
+}
+
+impl Family {
+    /// The `S007` text of a use with `got` arguments, where `want` are right (Lean
+    /// `familyArity`).
+    pub(crate) fn arity(&self, want: usize, got: usize) -> String {
+        format!(
+            "`{}` takes {want} argument(s), but it has {got}; write `{}`",
+            self.name, self.signature
+        )
+    }
+}
+
+/// The number of arguments of a type family and its signature, for the fix of its `S007`.
+pub(super) fn family_signature(k: Prelude) -> (usize, &'static str) {
+    match (k, family_text(k)) {
+        (_, Some(f)) => (f.args, f.signature),
+        (Prelude::UInt, _) => (1, "UInt[W]"),
+        (Prelude::SInt, _) => (1, "SInt[W]"),
+        (Prelude::List, _) => (1, "List[T]"),
+        _ => (1, ""),
+    }
+}
 
 impl Evaluator<'_> {
     /// The index of the struct item that the name node `id` refers to.
