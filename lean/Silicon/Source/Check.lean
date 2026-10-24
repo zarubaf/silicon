@@ -590,8 +590,9 @@ mutual
       declare b (.resource .mem)
     | .input p b k ty | .output p b k ty => do
       placement o p "port"
-      if let some k := k then expr true k
+      if let .indexed k := k then expr true k
       typeExpr ty
+      if let .keyed k := k then expr true k
       declare b (.resource .port)
     | .inst p b m i xs => do
       placement o p "instance"

@@ -796,7 +796,8 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have g : Lexes D .any "input ".toList [.keyword "input"] := Lexes.glue (by decide)
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1.2 h.1.2 h.2).append
+    have hk := (PortForm.printable_index h.1.2).1
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1.2 hk h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
   | case8 p n k ty =>
@@ -804,7 +805,8 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have g : Lexes D .any "output ".toList [.keyword "output"] := Lexes.glue (by decide)
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1.2 h.1.2 h.2).append
+    have hk := (PortForm.printable_index h.1.2).1
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1.2 hk h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
   | case9 p n m xs =>

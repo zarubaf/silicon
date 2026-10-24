@@ -778,8 +778,9 @@ def familyLoops : String :=
     "comptime for j in 0..2 {\no := req[j];\n}")
 
 #guard match users familyLoops with
-  | some #[.module _ _ _ _ [.ctFor _ ⟨_, 3⟩ _ _ [.input _ ⟨_, 2⟩ (some (.name _ _ (.local 3))) _],
-      .output _ ⟨_, 4⟩ none _,
+  | some #[.module _ _ _ _
+      [.ctFor _ ⟨_, 3⟩ _ _ [.input _ ⟨_, 2⟩ (.indexed (.name _ _ (.local 3))) _],
+      .output _ ⟨_, 4⟩ .scalar _,
       .ctFor _ ⟨_, 5⟩ _ _ [.connect _ _ (.index _ (.name _ _ (.family 2 true)) _)]]] => true
   | _ => false
 
@@ -807,7 +808,7 @@ Outside a module body, an indexed port declares a local at its statement. A plai
 port is `S004` in the parser, and a `comptime fn` is `S006` in `Check`.
 -/
 #guard match users "comptime fn f(p: Bool) -> Bool {\ninput req[0]: Bool;\nreturn p;\n}" with
-  | some #[.fn _ _ _ _ _ [.input _ ⟨_, 1⟩ (some _) _, _]] => true
+  | some #[.fn _ _ _ _ _ [.input _ ⟨_, 1⟩ (.indexed _) _, _]] => true
   | _ => false
 
 /-! `S002` "Family and scalar port", at the later name, at any depth, in each order. -/
