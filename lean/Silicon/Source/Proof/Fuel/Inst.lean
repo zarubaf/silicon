@@ -55,6 +55,14 @@ theorem targetStep_f (s : Pos) (v : Val) (step : Sel × Option Value) :
     Follows cap (Elab.targetStep s v step) (Elab.targetStep s v step) := by
   unfold Elab.targetStep; follows [pickKey_f, selectKey_f, fieldKey_f]
 
+theorem targetWalk_f (s : Pos) :
+    ∀ (v : Val) (steps : List (Sel × Option Value)),
+      Follows cap (Elab.targetWalk s v steps) (Elab.targetWalk s v steps)
+  | v, [] => by rw [Elab.targetWalk]; follows
+  | v, step :: rest => by
+    rw [Elab.targetWalk]
+    exact Follows.bind (targetStep_f s v step) fun w => targetWalk_f s w rest
+
 theorem sinkValue_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (sinkValue p t v) (sinkValue p t v) := by
   unfold sinkValue; follows [lit_f]
@@ -72,7 +80,7 @@ theorem targetRoot_f {ev ev' : Resolve.Expr → M (Option Out)}
 theorem targetPart_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (e : Resolve.Expr) :
     Follows cap (targetPart ev e) (targetPart ev' e) := by
-  unfold targetPart; follows [targetRoot_f he, targetKeys_f he, targetStep_f]
+  unfold targetPart; follows [targetRoot_f he, targetKeys_f he, targetWalk_f]
 
 theorem target_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (e : Resolve.Expr) :
@@ -131,7 +139,8 @@ theorem follows_all : ∀ n,
           call_f (he k) (ht k) (hb k), spec_f (he k) (ht k), need_f, data_f, baseData_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he k) (ht k), variantOf_f,
+          changesOf_f, normalize_f, readRef_f, aggEq_f, fieldPart_f, indexBase_f (he k),
+          enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
@@ -141,7 +150,8 @@ theorem follows_all : ∀ n,
           call_f (he m) (ht m) (hb m), spec_f (he m) (ht m), need_f, data_f, baseData_f, apply_f,
           hwUnary_f, test_f, hwBinary_f, unify_f, mux_f, static_f, pick_f, element_f, tupleOf_f,
           arrayOf_f, select_f, containerOp_f, arrayTy_f, field_f, strAt_f, hold_f, release_f,
-          changesOf_f, normalize_f, readRef_f, aggEq_f, enumUse_f (he m) (ht m), variantOf_f,
+          changesOf_f, normalize_f, readRef_f, aggEq_f, fieldPart_f, indexBase_f (he m),
+          enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f]
     · rcases n' with _ | m

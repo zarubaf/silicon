@@ -1008,6 +1008,10 @@ theorem second_f (p : Pos) (r : Res) (b : Pos × Nat) (d : Pos) :
     Follows cap (Elab.second p r b d) (Elab.second p r b d) := by
   unfold Elab.second; follows [again_f]
 
+theorem fieldPart_f (p : Pos) (o : Out) (f : Ident) :
+    Follows cap (fieldPart p o f) (fieldPart p o f) := by
+  unfold fieldPart; follows [readRef_f, baseData_f, field_f]
+
 theorem portCall_f {u u' : Ty → M Ty} (h : ∀ t, Follows cap (u t) (u' t)) (p : Pos) (g : String)
     (f : PrimFn) (vs : List Val) : Follows cap (portCall p g f vs u) (portCall p g f vs u') := by
   unfold portCall; follows [h, requestPart_f, bounded_f, again_f, breach_f]
@@ -1045,6 +1049,11 @@ theorem enumUse_f (he : ∀ e, Follows m (eval k e) (eval m e))
     Follows m (enumUse k p i) (enumUse m p i) := by
   rw [enumUse.eq_def k, enumUse.eq_def m]
   follows [enumOf_f ht (fun e => by follows [he, need_f]), structural_f]
+
+theorem indexBase_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Resolve.Expr) :
+    Follows m (indexBase k b) (indexBase m b) := by
+  rw [indexBase.eq_def k, indexBase.eq_def m]
+  follows [he, need_f, fieldPart_f]
 
 theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
     (ps : List Resolve.FnParam) : Follows m (params k ps) (params m ps) := by
