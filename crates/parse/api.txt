@@ -7,6 +7,7 @@ enum parse::ast::Expr
 enum parse::ast::Item
 enum parse::ast::ParamMode
 enum parse::ast::Pattern
+enum parse::ast::PortForm
 enum parse::ast::Stmt
 enum parse::ast::TypeExpr
 enum parse::ast::UnOp

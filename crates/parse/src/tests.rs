@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::ast::{Expr, FnParam, Item, ParamMode, Pos, Stmt, TypeExpr};
+use crate::ast::{Expr, FnParam, Item, ParamMode, PortForm, Pos, Stmt, TypeExpr};
 use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse};
 use proptest::prelude::*;
 
@@ -1608,8 +1608,16 @@ fn a_port_family_entry_has_a_key() {
         "(module \"M\" () none ((output \"g\" (some (num 2)) (name \"Bool\"))))"
     );
     let body = body("input req[i]: T; output g[1]: T;");
-    let (Stmt::Input { index: Some(i), .. }, Stmt::Output { index: Some(g), .. }) =
-        (&body[0], &body[1])
+    let (
+        Stmt::Input {
+            form: PortForm::Indexed(i),
+            ..
+        },
+        Stmt::Output {
+            form: PortForm::Indexed(g),
+            ..
+        },
+    ) = (&body[0], &body[1])
     else {
         panic!("expected two indexed ports");
     };

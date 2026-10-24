@@ -4,7 +4,8 @@
 
 use crate::{Code, Error};
 use parse::ast::{
-    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, Pos, Stmt, TypeExpr,
+    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, PortForm, Pos, Stmt,
+    TypeExpr,
 };
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
@@ -886,12 +887,15 @@ impl<'a> Walker<'a> {
                 self.type_expr(word);
                 self.expr(true, depth);
             }
-            Stmt::Input { pos, index, ty, .. } | Stmt::Output { pos, index, ty, .. } => {
+            Stmt::Input { pos, form, ty, .. } | Stmt::Output { pos, form, ty, .. } => {
                 self.placement(owner, *pos, "port");
-                if let Some(key) = index {
+                if let PortForm::Indexed(key) = form {
                     self.expr(true, key);
                 }
                 self.type_expr(ty);
+                if let PortForm::Keyed(key) = form {
+                    self.expr(true, key);
+                }
             }
             Stmt::Inst {
                 pos, module, args, ..
