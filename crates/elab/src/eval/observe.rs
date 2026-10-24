@@ -41,8 +41,8 @@ enum Piece<'a> {
     Instance(Option<&'a Name>),
     /// The name of a path, encoded into the sink.
     Path(PathId),
-    /// A port name and the closing bracket, ` <name>)`.
-    Port(&'a str),
+    /// A port name, the key of a family entry, and the closing bracket, ` <name>[<k>])`.
+    Port(&'a str, Option<u32>),
     /// A frame `(call <name> <line> <col>)`, written from the borrowed name.
     Frame(&'a str, Pos),
     /// A domain `(domain <name>)`, written from the shared name.
@@ -313,7 +313,8 @@ impl Evaluator<'_> {
                     .paths
                     .write_name(p, &self.syms.texts, out)
                     .unwrap_or_default(),
-                Piece::Port(n) => write!(out, " {n})").unwrap_or_default(),
+                Piece::Port(n, None) => write!(out, " {n})").unwrap_or_default(),
+                Piece::Port(n, Some(k)) => write!(out, " {n}[{k}])").unwrap_or_default(),
                 Piece::Domain(d) => write!(out, "(domain {d})").unwrap_or_default(),
                 Piece::Quoted(s) => out.quoted(s),
                 Piece::Value(v) => serial::write(&self.tys, Item::Value(v), out),
@@ -502,22 +503,16 @@ impl Evaluator<'_> {
                 let module = self.elab.interface(*inst).map(|i| &i.name);
                 vec![Piece::Instance(module), name(*path), Piece::Text(")")]
             }
-            Handle::Input { path, port, .. } => {
-                let mut pieces = vec![
-                    Piece::Text("(input "),
-                    Piece::Node(self.tys.get(port.ty)),
-                    Piece::Text(" "),
-                    name(*path),
-                ];
-                match port.key {
-                    // An entry renders as `x[k]`.
-                    Some(_) => pieces.push(Piece::Owned(format!(" {})", self.port_text(port)))),
-                    None => pieces.push(Piece::Port(
-                        self.syms.texts.get(port.sym).map_or("", String::as_str),
-                    )),
-                }
-                pieces
-            }
+            Handle::Input { path, port, .. } => vec![
+                Piece::Text("(input "),
+                Piece::Node(self.tys.get(port.ty)),
+                Piece::Text(" "),
+                name(*path),
+                Piece::Port(
+                    self.syms.texts.get(port.sym).map_or("", String::as_str),
+                    port.key,
+                ),
+            ],
             Handle::Domain(d) => vec![Piece::Domain(self.domain_name(*d))],
         };
         push_all(work, pieces);
