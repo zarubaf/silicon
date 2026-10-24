@@ -10,7 +10,7 @@
 //! type with the handle flag charge 1, then the step gets the checks of a selection. The target
 //! is an identity, so it opens no window and charges no held root.
 
-use super::inst::{FamKey, child_key, family_value};
+use super::inst::{child_key, family_value};
 use super::place::{Key, Sel, chain, key_pos};
 use super::{Evaluator, GuardKind, Out, Res, fail, need};
 use crate::Code;
@@ -59,10 +59,12 @@ impl Evaluator<'_> {
 
     /// The index of each step of a target, in source order (Lean `targetKeys`). An index step
     /// charges 1, then its index evaluates in a structural context and is static (`S011`).
-    fn target_keys<'e>(&mut self, steps: &[Sel<'e>]) -> Res<(Vec<Key<'e>>, Vec<Option<FamKey>>)> {
+    fn target_keys<'e>(&mut self, steps: &[Sel<'e>]) -> Res<(Vec<Key<'e>>, Vec<Option<Out>>)> {
         let mut keys = Vec::with_capacity(steps.len());
         let mut fams = Vec::with_capacity(steps.len());
+        let mut after_field = false;
         for step in steps {
+            let named = std::mem::replace(&mut after_field, matches!(step, Sel::Field(..)));
             if matches!(step, Sel::Index(..)) {
                 self.charge(step.pos(), 1)?;
             }
@@ -84,7 +86,9 @@ impl Evaluator<'_> {
             })?;
             self.check_static(i.pos(), &o)?;
             keys.push(Key::Index(q, i.pos(), self.index_of(&o)));
-            fams.push(Some(self.fam_key(self.store.value(&o))));
+            // The key after a field can be the key of a family entry of a child. The guard keeps
+            // the value in place, so `child_target` reads it from there.
+            fams.push(named.then_some(o));
         }
         Ok((keys, fams))
     }
@@ -120,19 +124,19 @@ impl Evaluator<'_> {
         &mut self,
         start: Pos,
         mut cur: Out,
-        (keys, fams): (&[Key<'_>], &[Option<FamKey>]),
+        (keys, fams): (&[Key<'_>], &[Option<Out>]),
     ) -> Res<Out> {
         let mut at = 0;
         while let Some(key) = keys.get(at) {
             if let Key::Field(_, f) = key
                 && self.child_family(&cur, f)
             {
-                let (Some(Key::Index(_, xp, _)), Some(Some(fk))) =
+                let (Some(Key::Index(_, xp, _)), Some(Some(ko))) =
                     (keys.get(at + 1), fams.get(at + 1))
                 else {
                     return family_value(start, &f.name);
                 };
-                cur = self.child_target(start, &cur, f, (*xp, fk))?;
+                cur = self.child_target(start, &cur, f, (*xp, ko))?;
                 at += 2;
                 continue;
             }
@@ -258,9 +262,9 @@ impl Evaluator<'_> {
         start: Pos,
         cur: &Out,
         f: &Ident,
-        (xp, fk): (Pos, &FamKey),
+        (xp, ko): (Pos, &Out),
     ) -> Res<Out> {
-        let key = fk.key(xp)?;
+        let key = self.fam_key(self.store.value(ko)).key(xp)?;
         let Seen::Handle(Handle::Inst { id, path, inst, ty }) = self.store.seen(cur) else {
             return fail(Code::S017, start, PART_TEXT.to_owned());
         };
