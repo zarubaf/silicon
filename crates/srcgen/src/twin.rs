@@ -2191,6 +2191,56 @@ mod tests {
         );
     }
 
+    /// An entry of an enum type has two leaves, the tag and the payload.
+    /// They stay together, in this order, and the entries `a0[10]` and
+    /// `a0[2]` swap places between the layouts.
+    #[test]
+    fn the_vector_maps_keep_the_leaves_of_an_enum_entry_together() {
+        use super::super::program::Variant;
+        use num_bigint::BigUint;
+        let def = EnumDef {
+            name: "E0".to_owned(),
+            tag_width: 1,
+            variants: vec![
+                Variant {
+                    name: "V0".to_owned(),
+                    tag: BigUint::from(0u8),
+                    payload: vec![Scalar::UInt(4)],
+                },
+                Variant {
+                    name: "V1".to_owned(),
+                    tag: BigUint::from(1u8),
+                    payload: vec![],
+                },
+            ],
+        };
+        let e0 = || Ty::Enum("E0".to_owned());
+        let body = vec![
+            port(false, "a0", Some(int(10)), None, PTy::Data(e0())),
+            port(false, "a0", Some(int(2)), None, PTy::Data(e0())),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            connect("o0", HExpr::Make(uint(4), int(0))),
+        ];
+        let p = program(
+            vec![Item::Enum(def), module("M0", &[], false, body)],
+            Vec::new(),
+        );
+        let t = twin(&p);
+        let Ok(listed) = ports(&p.items, "M0", &p.args) else {
+            panic!("the ports fault");
+        };
+        let names: Vec<&str> = listed.inputs.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            names,
+            ["a0[2].tag", "a0[2].payload", "a0[10].tag", "a0[10].payload"]
+        );
+        assert_eq!(
+            t.input_line("in=(a0[2].tag 1 a0[2].payload 2 a0[10].tag 3 a0[10].payload 4)")
+                .as_deref(),
+            Ok("in=(a0_10.tag 3 a0_10.payload 4 a0_2.tag 1 a0_2.payload 2)")
+        );
+    }
+
     /// `fn H0(comptime x0: String) -> UInt[4]` declares `input y0 as x0`, and
     /// `fn H1(comptime x0: Nat) -> UInt[4]` declares `input a1[x0]` and reads
     /// the entry of the call before.
