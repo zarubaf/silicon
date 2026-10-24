@@ -1943,6 +1943,30 @@ fn a_scalar_port_takes_the_key_of_a_family_of_its_module() {
     assert!(all(&smallest(), Kind::ScalarFamily).is_empty());
 }
 
+/// A family that only an arm that does not run declares is offered too:
+/// the table of public names holds it from the start.
+#[test]
+fn a_scalar_port_takes_a_family_of_an_untaken_arm() {
+    let body = vec![
+        Stmt::Input("i0".to_owned(), u8()),
+        Stmt::Output("o0".to_owned(), u8()),
+        Stmt::If(
+            SExpr::Bool(true),
+            vec![port(false, "A0", Some(dec(1)), None)],
+            Some(vec![port(false, "B0", Some(dec(2)), None)]),
+        ),
+        connect("o0", name("i0")),
+    ];
+    let p = of(vec![module("M0", body)]);
+    let m = all(&p, Kind::ScalarFamily);
+    assert_eq!(m.len(), 2);
+    assert!(m.iter().all(|m| m.expect == Some("S019")));
+    assert!(m[0].text.contains("input i0: UInt[8] as \"A0\";"));
+    assert!(m[1].text.contains("output o0: UInt[8] as \"B0\";"));
+    assert!(!no_entry_runs(&p, &m[0]));
+    assert!(no_entry_runs(&p, &m[1]));
+}
+
 #[test]
 fn a_bad_name_or_index_is_s022() {
     let p = with_ports();
@@ -1956,6 +1980,39 @@ fn a_bad_name_or_index_is_s022() {
         "{}",
         m[0].text
     );
+}
+
+/// Whether a statement of `body` that runs declares an entry of `family`: a
+/// `comptime if` runs one arm.
+fn declares_running(body: &[Stmt], family: &str) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::Port(p) => p.key.is_some() && p.name == family,
+        Stmt::If(SExpr::Bool(c), then, els) => declares_running(
+            if *c {
+                then
+            } else {
+                els.as_deref().unwrap_or_default()
+            },
+            family,
+        ),
+        Stmt::For(_, _, _, inner) | Stmt::Block(inner) => declares_running(inner, family),
+        _ => false,
+    })
+}
+
+/// Whether the family of a `ScalarFamily` mutant has no declaration that
+/// runs in its module: only an arm that does not run declares it.
+fn no_entry_runs(p: &Program, m: &Mutant) -> bool {
+    let Some((head, item)) = m.what.rsplit_once(" in ") else {
+        return false;
+    };
+    let Some(family) = head.rsplit(" the key of the family ").next() else {
+        return false;
+    };
+    p.items.iter().any(|i| {
+        matches!(i, Item::Module { name, body, .. }
+            if name == item && !declares_running(body, family))
+    })
 }
 
 /// What the mutants of the ports predict, by the text of the mutation.
@@ -1982,14 +2039,14 @@ fn kind_of_prediction(m: &Mutant) -> Option<&'static str> {
 }
 
 /// A fixed set of 256 programs has at least 5 predictions of each kind of
-/// ports, and at least 5 `ScalarFamily` predictions whose family has no entry
-/// before the port: the table holds the family from the start.
+/// ports, and at least 5 `ScalarFamily` predictions whose family has no
+/// declaration that runs: the table holds the family from the start.
 #[test]
 fn the_fixed_set_of_mutants_reaches_the_codes_of_ports() {
     let mut runner = TestRunner::deterministic();
     let mut counts = std::collections::BTreeMap::<&str, usize>::new();
     let mut codes = std::collections::BTreeMap::<&str, usize>::new();
-    let mut first = 0;
+    let mut untaken = 0;
     for _ in 0..256 {
         let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
         for kind in [
@@ -2007,17 +2064,8 @@ fn the_fixed_set_of_mutants_reaches_the_codes_of_ports() {
                 };
                 *counts.entry(what).or_default() += 1;
                 *codes.entry(m.expect.unwrap_or_default()).or_default() += 1;
-                if what == "ScalarFamily" {
-                    let family = m.what.split(" the key of the family ").nth(1);
-                    let family = family.and_then(|f| f.split(" in ").next()).unwrap_or("");
-                    let at = m.text.find(&format!(" as \"{family}\";"));
-                    let entry = m
-                        .text
-                        .find(&format!("put {family}["))
-                        .or_else(|| m.text.find(&format!("tput {family}[")));
-                    if matches!((at, entry), (Some(a), Some(e)) if a < e) {
-                        first += 1;
-                    }
+                if what == "ScalarFamily" && no_entry_runs(&p, &m) {
+                    untaken += 1;
                 }
             }
         }
@@ -2042,7 +2090,7 @@ fn the_fixed_set_of_mutants_reaches_the_codes_of_ports() {
         );
     }
     assert!(
-        first >= 5,
-        "{first} families with no entry before the port: {counts:?}"
+        untaken >= 5,
+        "{untaken} families with no declaration that runs: {counts:?}"
     );
 }
