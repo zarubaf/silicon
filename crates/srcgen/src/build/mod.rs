@@ -79,6 +79,7 @@ use super::program::{
     ComptimeFn, EnumDef, FTy, HExpr, Item, ListFn, MutFn, Ports, Program, SExpr, STy, Scalar, Stmt,
     StructDef, Ty, render_items,
 };
+use super::public::Public;
 use super::records::records;
 use proptest::collection::vec;
 use proptest::prelude::*;
@@ -168,8 +169,8 @@ fn build(tape: Vec<u32>) -> Result<Program, BuildFault> {
 }
 
 /// The ports of the module `top` at the arguments `args`. Each list follows
-/// the port layout of front-end spec 7.5: the ports by byte order of their
-/// source names, then the leaves of one port in packing order.
+/// the port layout of front-end spec 7.5: the ports by public name, then the
+/// leaves of one port in packing order.
 pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, Fault> {
     let scope = Scope::new(items)?;
     let Some(Item::Module {
@@ -191,8 +192,12 @@ pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, 
     let mut outputs = Vec::new();
     for s in body {
         match s {
-            Stmt::Input(n, t) => inputs.push((n.clone(), leaves(n, t, &env, &scope)?)),
-            Stmt::Output(n, t) => outputs.push((n.clone(), leaves(n, t, &env, &scope)?)),
+            Stmt::Input(n, t) => {
+                inputs.push((Public::scalar(n), leaves(n, t, &env, &scope)?));
+            }
+            Stmt::Output(n, t) => {
+                outputs.push((Public::scalar(n), leaves(n, t, &env, &scope)?));
+            }
             _ => {}
         }
     }
@@ -203,8 +208,8 @@ pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, 
     })
 }
 
-/// The entries of the ports, sorted by port name before the leaves expand.
-fn flatten(mut ports: Vec<(String, Vec<(String, Scalar)>)>) -> Vec<(String, Scalar)> {
+/// The entries of the ports, sorted by public name before the leaves expand.
+fn flatten(mut ports: Vec<(Public, Vec<(String, Scalar)>)>) -> Vec<(String, Scalar)> {
     ports.sort_by(|a, b| a.0.cmp(&b.0));
     ports.into_iter().flat_map(|(_, leaves)| leaves).collect()
 }

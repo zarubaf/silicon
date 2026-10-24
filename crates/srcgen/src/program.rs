@@ -631,7 +631,8 @@ pub enum Scalar {
     SInt(u32),
 }
 
-/// The ports of the top instantiation, each list byte-sorted by name.
+/// The ports of the top instantiation, each list in the port layout: sorted
+/// by public name, then the leaves of one port in packing order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Ports {
     pub clocked: bool,
