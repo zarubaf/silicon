@@ -51,8 +51,14 @@ with that name in that block is `S002`, in each order. These are the other colli
 - One family with an input entry and an output entry is `S002` "Family with two directions". It
   is at the name of the first entry of the second direction.
 - A family and another name of the body scope is the ordinary `S002`, at the later name.
+- A port with an `as` key is no port name of the walk. Its binder is a name of the body only, so
+  a family with the name of its binder is the ordinary `S002`.
 
-Outside a module body, an indexed port declares a local at its statement, and `Check` reports it.
+The walk also runs on the body of each `fn` without `comptime`. Thus a family of a helper has the
+scope of the helper body, and its entries are ports of the owner (section 5.6). The module body
+cannot select a family that only a helper declares. There, the name has no declaration, so it is
+`S003`. In a `comptime fn`, an indexed port declares a local at its statement, and `Check`
+reports it (`S006`).
 
 The resolver does not look up the name after a `.`. The selection of a field or a port is a
 later check. A selector `.N` holds a number, so it has no name. The container forms of slice 2,
@@ -140,8 +146,8 @@ The declaration of a name. An `item` holds the index of the item in the file. A 
 the number of the local declaration in its item. The numbers start at 0 in each item, in the
 order of the declarations: the implicit `clock`, the parameters, the domain names, and then the
 statements. A binder of a pattern takes its number when its arm starts. A `family` holds the
-local number of its family binder, which the module body takes before its statements, and whether
-its first entry is an input.
+local number of its family binder, which the body takes before its statements, and whether its
+first entry is an input.
 -/
 inductive Ref where
   | type (t : PrimType)
@@ -480,7 +486,7 @@ structure Binding where
   pos : Pos
 
 /-!
-What the family walk of a module body knows of one port name. `family` holds its first indexed
+What the family walk of a body knows of one port name. `family` holds its first indexed
 declaration: the position of its name, the number of its family binder, and whether it is an
 input. `scalar` holds the position of the name of its first scalar port.
 -/
@@ -493,7 +499,7 @@ structure PortName where
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
 number of the current item, and `sites` its next call site. `ports` holds the port names of the
-current module body (`PortName`). `dup` holds the first `S002`, and `unknown` the first `S003`.
+current body (`PortName`). `dup` holds the first `S002`, and `unknown` the first `S003`.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
@@ -590,8 +596,9 @@ def famPort (n : Ident) (k : PortForm α) (input : Bool) : M Unit :=
   | .keyed _ => pure ()
 
 /-!
-The family walk of a module body (section 5.6): one pre-order walk of each statement at each
-block depth, before the statements resolve.
+The family walk of a body (section 5.6). It walks a module body and the body of a `fn` without
+`comptime`. It visits each statement at each block depth in pre-order, before the statements
+resolve.
 -/
 mutual
   def famStmt : Source.Stmt → M Unit
@@ -611,7 +618,7 @@ mutual
 end
 
 /-!
-The binder of the port `n`. An indexed declaration of a module body takes its family binder, and
+The binder of the port `n`. An indexed declaration of a walked body takes its family binder, and
 it binds the name in its own block too (section 5.6). Another port declares a local.
 -/
 def port (n : Ident) (k : PortForm Expr) : M Binder := do
@@ -935,8 +942,8 @@ def variants (vs : List Source.Variant) : M (List Variant) := do
   return out.toList
 
 /-!
-The parameters, the domain names, and the body of an item share one new scope. Only a module body
-has port names (`families`).
+The parameters, the domain names, and the body of an item share one new scope. A module body and
+the body of a `fn` without `comptime` have port names (`ports`).
 -/
 def body (act : M α) : M α := do
   modify fun s => { s with locals := 0, ports := {} }
@@ -952,6 +959,7 @@ def item : Source.Item → M Item
   | .fn p c n ps r b => body do
     let ps ← ps.mapM param
     let r ← typeExpr r
+    unless c do famStmts b
     return .fn p c n ps r (← bodyStmts b)
   | .module p n ps ds b => body do
     -- The implicit `clock` has no token, so it comes before the parameters.
