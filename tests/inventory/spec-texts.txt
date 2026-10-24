@@ -44,6 +44,9 @@ pin | S010 No public port | 344
 lean | S019 Public name twice | 339
 rust | S019 Public name twice | 339
 pin | S019 Public name twice | 339
+lean | S019 Public name twice in a helper | 339
+rust | S019 Public name twice in a helper | 339
+pin | S019 Public name twice in a helper | 339
 lean | S022 Name rule | 339
 rust | S022 Name rule | 339
 pin | S022 Name rule | 339
