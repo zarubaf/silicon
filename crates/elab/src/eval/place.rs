@@ -4,9 +4,10 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
+use super::handle::same_form;
 use super::store::Mark;
 use super::typed::Whole;
-use super::{Evaluator, Opnd, Out, Res, fail, need, same_form};
+use super::{Evaluator, Opnd, Out, Res, fail, need};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
