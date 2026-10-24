@@ -224,7 +224,7 @@ abbrev PortId := Nat × Option Nat
 
 /-!
 A port of an instantiation, as its parent sees it. `sym` is the symbol of its name, and `key`
-the key of a family entry.
+the key of a family entry. `order` is its number in the declaration order at run time.
 -/
 structure Port where
   name : String
@@ -233,14 +233,32 @@ structure Port where
   input : Bool
   ty : Ty
   pos : Pos
+  order : Nat
   deriving Repr, Inhabited
 
 def Port.id (q : Port) : PortId := (q.sym, q.key)
 
 /-!
+The public name of the port `x` with the key `k` in a message: `x`, or the entry `x[k]` (section
+6.2). Only an error renders it.
+-/
+def entryText (x : String) : Option Nat → String
+  | some k => s!"{x}[{k}]"
+  | none => x
+
+def Port.text (q : Port) : String := entryText q.name q.key
+
+/-! The core name of the port `q`: its name, and the field `<k>f` of an entry (section 7.2). -/
+def Port.core (q : Port) : Name :=
+  match q.key with
+  | some k => ⟨q.name, [.family k]⟩
+  | none => portName q.name
+
+/-!
 The interface of a done instantiation: its emitted name, its ports by their identity, its
 number of inputs, and its domain. A combinational module has no domain. `families` gives the
-direction of each port family by the symbol of its name, `true` for an input.
+direction of each port family of the module by the symbol of its name, `true` for an input. It
+comes from the resolver, so it holds a family also without an entry (section 5.6).
 -/
 structure Iface where
   name : Names.Name
@@ -600,13 +618,15 @@ The symbols of a file. Each distinct identifier gets one number, so a lookup or 
 numbers and not text. `binders` gives the symbol of each local number of each item. `fields`
 gives the symbol of each field name by its position in each item, and the last entry is the
 top expression. `items` gives the symbol of each item name. `members` gives the number of each
-field of each struct item by the symbol of its name.
+field of each struct item by the symbol of its name. `families` gives the port families of each
+module item by the symbol of the name, `true` for an input (section 5.6).
 -/
 structure Syms where
   binders : Array (Array Nat)
   fields : Array (Std.TreeMap Pos Nat Pos.compare)
   items : Array Nat
   members : Array (Std.TreeMap Nat Nat compare)
+  families : Array (Std.HashMap Nat Bool)
 
 /-! The kind of a guard (section 9.4): a hardware arm or a structural context. -/
 inductive GuardKind where
@@ -721,15 +741,15 @@ def Ctx.helper (c : Ctx) : Option Nat :=
 
 /-!
 A resource in an `S018` text (section 6.2): an own resource by its source name, or the input `p`
-of the instance `u`, which renders as `u.p`.
+of the instance `u`, which renders as `u.p`. The key `k` of a family entry renders as `x[k]`.
 -/
 inductive Res where
-  | own (r : String)
-  | input (u p : String)
+  | own (r : String) (k : Option Nat)
+  | input (u p : String) (k : Option Nat)
 
 def Res.text : Res → String
-  | .own r => r
-  | .input u p => s!"{u}.{p}"
+  | .own r k => entryText r k
+  | .input u p k => s!"{u}.{entryText p k}"
 
 /-!
 The data of an `S018` text of section 6.2. A binding or a port call records it with no walk.
@@ -739,8 +759,8 @@ that wins. `w` is true for `write_port`.
 inductive Breach where
   | second (r : Res) (b d : Pos)
   | secondIn (r : Res) (h : Nat)
-  | unbound (r : String)
-  | input (u p : String)
+  | unbound (r : String) (k : Option Nat)
+  | input (u p : String) (k : Option Nat)
   | noPort (r : String) (w : Bool)
   | port (r : String) (w : Bool) (b : Pos)
   | portIn (r : String) (w : Bool) (h : Nat)
@@ -756,8 +776,11 @@ def Breach.text (name : Nat → String) (x : Breach) : String :=
   | .secondIn r h =>
     s!"`{r.text}` has a second binding, because the `:=` in `{name h}` runs again for it; " ++
       s!"run the `:=` once for each resource, for example with one call of `{name h}` for each"
-  | .unbound r => s!"`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
-  | .input u p =>
+  | .unbound r k =>
+    let r := entryText r k
+    s!"`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
+  | .input u p k =>
+    let p := entryText p k
     s!"the input `{p}` of the instance `{u}` has no binding; bind it with `{u}.{p} := ...;`"
   | .noPort r w =>
     s!"the memory `{r}` has no `{call w}`; call `{call w}` on it once, or remove the memory"

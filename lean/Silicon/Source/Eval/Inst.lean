@@ -156,6 +156,26 @@ def undeclaredText (x : String) (k : Nat) : String :=
   s!"the port family `{x}` has no key {k} here; declare `{x}[{k}]` before this use"
 
 /-!
+The `S013` text "Child family key" of section 6.2, for the key `k` of the family `x` of a child
+of the instance type `m`.
+-/
+def childKeyText (m x : String) (k : Nat) : String :=
+  s!"the child `{m}` has no entry `{x}[{k}]`; select a key that `{m}` declares"
+
+/-!
+The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A negative
+key is `S012`, a key of 2^32 or more is `S012` "Family key range", and a key of another type is
+`S010` "Family key type". A static `UInt` is such a type. The key fits 32 bits, so each later
+compare and name of it takes constant work.
+-/
+def familyKey (p : Pos) : Value → Eval.M Nat
+  | .int i =>
+    if i < 0 then fail .S012 p (fitText .nat i)
+    else if i < 2 ^ 32 then pure i.toNat
+    else fail .S012 p (keyRangeText i)
+  | v => fail .S010 p (keyTypeText (Val.static v).about)
+
+/-!
 The `S019` text "Family key twice" of section 6.2, for the key `k` of the family `x` with the
 earlier declaration at `b`.
 -/
@@ -197,7 +217,10 @@ def kindText (a : String) : String :=
   s!"a `:=` target is a wire, a register, an own output, or a child input, not {a}; select one " ++
     "of these, or assign a local with `=`"
 
-/-! The `S017` text "Child output as a `:=` target" of section 6.2, for the output `f`. -/
+/-!
+The `S017` text "Child output as a `:=` target" of section 6.2, for the output `f`. An entry is
+`f` with its key, for example `req[3]`.
+-/
 def outputText (f : String) : String :=
   s!"`{f}` is an output of the child, not a target; the child drives its outputs, so bind an " ++
     "input of the child"
@@ -217,7 +240,7 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := 
     match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
     | some port =>
       if port.input then return .handle (.input k path port)
-      else fail .S017 s (outputText f.name)
+      else fail .S017 s (outputText port.text)
     | none => fail .S010 q s!"the instance has no port `{f.name}`"
   | .agg a, sel =>
     unless a.ty?.any (·.info.handles) do fail .S017 s partText
@@ -233,12 +256,60 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := 
   | _, _ => fail .S017 s partText
 
 /-!
-The walk of the steps `steps` of a `:=` target that starts at `s`, from the base `v` outward.
-Each step selects in `targetStep`.
+The family of the child that the field `f` of the base `v` names, when `v` is an `Instance`
+handle (section 5.6). The interface of the child holds its families.
 -/
-def targetWalk (s : Pos) (v : Val) : List (Sel × Option Value) → Eval.M Val
-  | [] => pure v
-  | step :: rest => do targetWalk s (← targetStep s v step) rest
+def childFamily (v : Val) (f : Ident) : Eval.M Bool := do
+  let .handle (.inst _ _ iface _) := v | return false
+  match (← read).field f.pos with
+  | some y => return iface.families.contains y
+  | none => return false
+
+/-!
+The entry of the family `f` of the child behind the `Instance` handle `v`, with the static key
+`k` at `kp`, in a `:=` target that starts at `s` (section 5.2). The key gets the type and range
+checks of a family selection (`familyKey`). A key that the child did not declare is `S013`
+"Child family key". An input entry gives its handle, and an output entry is `S017`.
+-/
+def childTarget (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) : Eval.M Val := do
+  let key ← familyKey kp k
+  let .handle (.inst id path iface ty) := v | fail .S017 s partText
+  let y := ((← read).field f.pos).getD 0
+  match iface.ports[((y, some key) : PortId)]? with
+  | some port =>
+    if port.input then return .handle (.input id path port)
+    else fail .S017 s (outputText port.text)
+  | none => fail .S013 kp (childKeyText ty.text f.name key)
+
+/-!
+One step of the walk of a `:=` target that starts at `s`, on the base `v` (section 5.2). `fam`
+holds a family of the child behind `v` that the step before named. A field that names a family
+of a child keeps it for the next step, so the walk does not start again from the root. That step
+is an index, and its key selects the entry (`childTarget`). Else it is `S010` "Family as a
+value" at `s`. Each other step selects in `targetStep`.
+-/
+def walkStep (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
+    Eval.M (Val × Option Ident) := do
+  match fam, step with
+  | some f, (.index _ [i], some k) => return (← childTarget s v f i.pos k, none)
+  | some f, _ => fail .S010 s (familyValueText f.name)
+  | none, (.field _ f, _) =>
+    if ← childFamily v f then return (v, some f) else return (← targetStep s v step, none)
+  | none, _ => return (← targetStep s v step, none)
+
+/-!
+The walk of the steps `steps` of a `:=` target that starts at `s`, from the base `v` outward,
+with a pending family `fam` of a child (`walkStep`). A family without its key at the end is
+`S010` "Family as a value" at `s`.
+-/
+def targetWalk (s : Pos) (v : Val) (fam : Option Ident) :
+    List (Sel × Option Value) → Eval.M Val
+  | [] => match fam with
+    | some f => fail .S010 s (familyValueText f.name)
+    | none => pure v
+  | step :: rest => do
+    let (w, fam) ← walkStep s v fam step
+    targetWalk s w fam rest
 
 /-! Records the `S018` data `x` at `p`. The first by position wins (section 6.2). -/
 def breach (p : Pos) (x : Breach) : Eval.M Unit :=
@@ -273,7 +344,7 @@ def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
   match t with
   | .own r k t path =>
     if let some n := w.needs[k]? then
-      if n.count == 1 then breach p (← second p (.own n.name) (n.first.getD here) n.pos)
+      if n.count == 1 then breach p (← second p (.own n.name n.key) (n.first.getD here) n.pos)
       modify fun s => { s with inst.work.needs := s.inst.work.needs.modify k fun r =>
         { r with count := n.count + 1, first := r.first <|> some here } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
@@ -283,10 +354,10 @@ def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
       modify fun s => { s with inst.work.bound := s.inst.work.bound.modify k (· + 1) }
     if c == 1 then
       let (u, d) := ((w.body.children[k]?).map fun c => (c.name, c.pos)).getD ("", p)
-      breach p (← second p (.input u q.name) b d)
+      breach p (← second p (.input u q.name q.key) b d)
     modify fun s => { s with inst.work.inputs := s.inst.work.inputs.insert (k, q.id) (c + 1, b) }
     modifyBody fun b =>
-      { b with binds := b.binds.push ⟨.child k path (portName q.name) q.ty, h, p⟩ }
+      { b with binds := b.binds.push ⟨.child k path q.core q.ty, h, p⟩ }
 
 /-!
 The binding rule at the end of a body. A missing binding of an own resource is at its
@@ -300,7 +371,7 @@ def bindings : Eval.M Unit := do
   let mems := (← get).naming.mems
   let mut err := w.dup
   for r in w.needs do
-    if r.count == 0 then err := firstBreach err r.pos (.unbound r.name)
+    if r.count == 0 then err := firstBreach err r.pos (.unbound r.name r.key)
   for m in mems do
     if m.read.isNone then err := firstBreach err m.pos (.noPort m.name false)
     else if m.write.isNone then err := firstBreach err m.pos (.noPort m.name true)
@@ -309,17 +380,24 @@ def bindings : Eval.M Unit := do
     if w.bound.getD k 0 < c.iface.inputs then
       if first.all fun (d, _) => before c.pos d.pos then first := some (c, k)
   if let some (c, k) := first then
+    -- Entries of one declaration have one position, so the declaration order decides.
+    let earlier (q f : Port) := before q.pos f.pos || (q.pos == f.pos && q.order < f.order)
     let free := c.iface.ports.fold (init := none) fun f _ q =>
-      if q.input && !w.inputs.contains (k, q.id) && f.all (before q.pos ·.pos) then some q else f
-    err := firstBreach err c.pos (.input c.name ((free.map (·.name)).getD ""))
+      if q.input && !w.inputs.contains (k, q.id) && f.all (earlier q ·) then some q else f
+    err := firstBreach err c.pos <| match free with
+      | some q => .input c.name q.name q.key
+      | none => .input c.name "" none
   if let some (p, x) := err then fail .S018 p (x.text (← read).itemName)
 
-/-! The interface of a done instantiation. -/
-def iface (name : Name) (b : Body) : Iface :=
+/-!
+The interface of a done instantiation with the port families `fams` of its module (section 5.6).
+It holds the entries that the body declared at run time.
+-/
+def iface (name : Name) (b : Body) (fams : Std.HashMap Nat Bool) : Iface :=
   ⟨name,
-   b.ports.foldl (fun m q => m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos⟩)
-     {},
-   (b.ports.filter (·.input)).size, b.domain, {}⟩
+   b.ports.zipIdx.foldl (fun m (q, j) =>
+     m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos, j⟩) {},
+   (b.ports.filter (·.input)).size, b.domain, fams⟩
 
 /-!
 The serialization of an `InstantiationId` at the statement `pos`. It charges the walk that

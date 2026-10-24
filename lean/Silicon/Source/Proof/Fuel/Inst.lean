@@ -48,8 +48,9 @@ theorem entry_f (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) :
     Follows cap (Elab.entry p input b k t) (Elab.entry p input b k t) := by
   unfold Elab.entry; follows [resource_f, modifyBody_f, normalize_f]
 
-theorem familyKey_f (p : Pos) (v : Value) : Follows cap (familyKey p v) (familyKey p v) := by
-  unfold familyKey; follows
+theorem familyKey_f (p : Pos) (v : Value) :
+    Follows cap (Elab.familyKey p v) (Elab.familyKey p v) := by
+  unfold Elab.familyKey; follows
 
 theorem selectionKey_f (np p : Pos) (x : String) (v : Val) :
     Follows cap (selectionKey np p x v) (selectionKey np p x v) := by
@@ -75,13 +76,26 @@ theorem targetStep_f (s : Pos) (v : Val) (step : Sel × Option Value) :
     Follows cap (Elab.targetStep s v step) (Elab.targetStep s v step) := by
   unfold Elab.targetStep; follows [pickKey_f, selectKey_f, fieldKey_f]
 
+theorem childFamily_f (v : Val) (f : Ident) :
+    Follows cap (Elab.childFamily v f) (Elab.childFamily v f) := by
+  unfold Elab.childFamily; follows
+
+theorem childTarget_f (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) :
+    Follows cap (Elab.childTarget s v f kp k) (Elab.childTarget s v f kp k) := by
+  unfold Elab.childTarget; follows [familyKey_f]
+
+theorem walkStep_f (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
+    Follows cap (Elab.walkStep s v fam step) (Elab.walkStep s v fam step) := by
+  unfold Elab.walkStep; follows [targetStep_f, childFamily_f, childTarget_f]
+
 theorem targetWalk_f (s : Pos) :
-    ∀ (v : Val) (steps : List (Sel × Option Value)),
-      Follows cap (Elab.targetWalk s v steps) (Elab.targetWalk s v steps)
-  | v, [] => by rw [Elab.targetWalk]; follows
-  | v, step :: rest => by
+    ∀ (v : Val) (fam : Option Ident) (steps : List (Sel × Option Value)),
+      Follows cap (Elab.targetWalk s v fam steps) (Elab.targetWalk s v fam steps)
+  | v, none, [] => by rw [Elab.targetWalk]; follows
+  | v, some f, [] => by rw [Elab.targetWalk]; follows
+  | v, fam, step :: rest => by
     rw [Elab.targetWalk]
-    exact Follows.bind (targetStep_f s v step) fun w => targetWalk_f s w rest
+    exact Follows.bind (walkStep_f s v fam step) fun (w, g) => targetWalk_f s w g rest
 
 theorem sinkValue_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (sinkValue p t v) (sinkValue p t v) := by
@@ -127,6 +141,16 @@ theorem instantiate_f (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (
     Follows m (instantiate k pos i tvs) (instantiate m pos i tvs) := by
   rw [instantiate.eq_def k, instantiate.eq_def m]
   follows [hb, serialize_f, bindings_f, nested_f, inFrame_f, Follows.measure, bindLocal_f]
+
+theorem childSel_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows m (ev e) (ev' e)) (p q : Pos) (o : Out) (f : Ident) (x : Resolve.Expr) :
+    Follows m (childSel ev p q o f x) (childSel ev' p q o f x) := by
+  unfold childSel; follows [he, childFamily_f, need_f, structural_f, selectionKey_f, portPart_f]
+
+theorem indexBase_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos)
+    (b x : Resolve.Expr) : Follows m (indexBase k p b x) (indexBase m p b x) := by
+  rw [indexBase.eq_def k, indexBase.eq_def m]
+  follows [he, need_f, fieldPart_f, childSel_f he]
 
 theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (x : String)
     (id : Nat) (e : Resolve.Expr) :
