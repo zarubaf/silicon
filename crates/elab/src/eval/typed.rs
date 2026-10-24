@@ -6,10 +6,13 @@
 
 use super::container::Piece;
 use super::list::Typed;
-use super::{Evaluator, Out, Res};
+use super::{Evaluator, Opnd, Out, Res, at, fail, no_type};
+use crate::Code;
 use crate::agg::Agg;
-use crate::hw::Val;
+use crate::hw::{Seen, Val};
+use crate::ops;
 use crate::types::TyId;
+use crate::value::Value;
 use parse::ast::Pos;
 
 /// The position of a typed use, and the form of its result.
@@ -112,5 +115,88 @@ impl Evaluator<'_> {
             self.charge(pos, self.size(&out))?;
         }
         site.site_use(self, pos, t, copies, out)
+    }
+
+    /// The check of a static position, before the value is taken. A literal that waits for
+    /// its type is `S010` at its first `[]`.
+    pub(super) fn check_static(&self, pos: Pos, out: &Out) -> Res<()> {
+        match self.store.seen(out) {
+            Seen::Static(_) => Ok(()),
+            Seen::Pending(q, _) => no_type(q),
+            s => fail(Code::S011, pos, self.not_static(s)),
+        }
+    }
+
+    /// The text of a value `{a}` at a static position (section 6.2, "Value not static").
+    pub(super) fn not_static(&self, s: Seen<'_>) -> String {
+        format!(
+            "a static position needs a static value, not {}; compute the value from static \
+             values, for example from constants and `comptime` parameters",
+            self.about(s)
+        )
+    }
+
+    /// The value of a static position at the node `pos`. Another value there is `S011`.
+    pub(super) fn static_value(&self, pos: Pos, out: Out) -> Res<Value> {
+        self.check_static(pos, &out)?;
+        match self.store.take(out) {
+            Val::Static(v) => Ok(v),
+            v => fail(Code::S011, pos, self.not_static(v.seen())),
+        }
+    }
+
+    /// A typed use of a static result at the type `t`. Another value is `S011`.
+    pub(super) fn conform(&mut self, pos: Pos, t: TyId, out: Out) -> Res<Value> {
+        self.check_static(pos, &out)?;
+        let converted =
+            ops::convert(t, self.store.value(&out), &mut self.fuel, &self.tys).map_err(at(pos))?;
+        match converted {
+            Some(v) => Ok(v),
+            None => self.static_value(pos, out),
+        }
+    }
+
+    /// The typed use of the data `d` at the type `t`.
+    pub(super) fn conform_data(&mut self, pos: Pos, t: TyId, d: Opnd) -> Res<Val> {
+        match d {
+            Opnd::Static(o) if self.is_handle(&o) => self.handle_wrong(pos, t, self.store.seen(&o)),
+            Opnd::Static(o) if self.is_agg(&o) => Ok(self.typed_agg(pos, t, o)?.into_val()),
+            Opnd::Static(o) => {
+                let v = self.conform(pos, t, o)?;
+                Ok(Agg::typed(&mut self.tys, t, v).into_val())
+            }
+            Opnd::Hw(h) => {
+                let ty = self.graph.ty(h);
+                if ty == *self.tys.get(t) {
+                    Ok(Val::Hw(h))
+                } else {
+                    fail(
+                        Code::S010,
+                        pos,
+                        format!(
+                            "expected {}, but the value is {}",
+                            self.tys.text(t),
+                            self.tys.text_of(&ty)
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /// The typed use of `out` at `t` after its copy charged. A read of a handle that gives an
+    /// aggregate charges the size of the reference when `copies`.
+    pub(super) fn read_use(&mut self, pos: Pos, t: TyId, copies: bool, out: Out) -> Res<Val> {
+        let out = self.settle(pos, t, out)?;
+        let handle = self.is_handle(&out);
+        let d = self.data_at(pos, t, out)?;
+        if copies
+            && handle
+            && let Opnd::Static(o) = &d
+            && self.is_agg(o)
+        {
+            self.charge(pos, self.size(o))?;
+        }
+        self.conform_data(pos, t, d)
     }
 }
