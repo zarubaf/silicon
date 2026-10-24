@@ -723,6 +723,30 @@ def portFnText : String :=
   "a helper cannot declare a port; declare the port in the module body and pass its value to " ++
     "the helper"
 
+/-! The head of a port declaration: the keyword and the name. -/
+def portHead : P Ident := do
+  bump
+  let n ← ident
+  let u ← peek
+  if isSym "[" u then later u "a port family"
+  return n
+
+/-! The tail of a port declaration: the type, the domain check, and `;`. -/
+def portTail (f : Nat) (p : Pos) (n : Ident) (make : Pos → Ident → TypeExpr → Stmt) :
+    P Stmt := do
+  let ty ← typeAnnotation f
+  noDomain
+  let u ← peek
+  if isKw "as" u then later u "a port key"
+  sym ";"
+  return make p n ty
+
+def port : Nat → Token → (Pos → Ident → TypeExpr → Stmt) → P Stmt
+  | 0, _, _ => exhausted
+  | f + 1, t, make => do
+    let n ← portHead
+    portTail f t.pos n make
+
 mutual
   def stmt : Nat → P Stmt
     | 0 => exhausted
@@ -816,20 +840,6 @@ mutual
         let e ← value f
         sym ";"
         return .expr t.pos e
-
-  def port : Nat → Token → (Pos → Ident → TypeExpr → Stmt) → P Stmt
-    | 0, _, _ => exhausted
-    | f + 1, t, make => do
-      bump
-      let n ← ident
-      let u ← peek
-      if isSym "[" u then later u "a port family"
-      let ty ← typeAnnotation f
-      noDomain
-      let u ← peek
-      if isKw "as" u then later u "a port key"
-      sym ";"
-      return make t.pos n ty
 
   def block : Nat → P (List Stmt)
     | 0 => exhausted
