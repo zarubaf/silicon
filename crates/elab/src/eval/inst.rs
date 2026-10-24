@@ -39,7 +39,7 @@ use super::{Evaluator, Out, ROOT, Res, Slot, fail};
 use crate::hw::{Port, PortId, Val};
 use crate::int::Int;
 pub(super) use crate::names::entry_text;
-use crate::names::{Sym, encode, module_name};
+use crate::names::{encode, module_name};
 use crate::scan::Scan;
 use crate::types::TyId;
 use crate::value::{InstantiationId, Value, int_size};
@@ -53,50 +53,12 @@ mod design;
 mod family;
 mod public;
 mod stmt;
-use bind::{Breach, Need};
+mod work;
 pub use design::Design;
 pub(crate) use design::{Bind, Inst, Mem, Sink};
-use design::{Body, Here, Iface, PortDecl};
+use design::{Iface, PortDecl};
 pub(super) use family::{child_key, family_value};
-use public::{PubKey, Public};
-
-/// The work of the current instantiation. The resource number indexes `needs`, and the instance
-/// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
-/// `inputs` counts the bindings of each child input, with the position and the call frame number of the first one. `dup`
-/// holds the first `S018` of a second binding or a second port call by position. `spent` is the
-/// fuel of the new children. `entries` holds the declared family entries by the symbol of the
-/// public name and the key: the value of each entry and the position of its declaration. A family
-/// binder has no frame slot. `publics` is the table of the public names of the owner. It holds the
-/// form of each name by its symbol, with the position and the call frame number of its first
-/// declaration. `owner` is the module item of the instantiation, whose static families the table
-/// does not copy (`public_of`).
-struct Work {
-    body: Body,
-    needs: Vec<Need>,
-    bound: Vec<usize>,
-    inputs: BTreeMap<(usize, PortId), (u64, Here)>,
-    entries: BTreeMap<(Sym, u32), (Val, Pos)>,
-    publics: BTreeMap<PubKey, (Public, Pos, usize)>,
-    owner: usize,
-    dup: Option<(Pos, Breach)>,
-    spent: u64,
-}
-
-impl Work {
-    fn new(domain: Option<Sym>, owner: usize) -> Work {
-        Work {
-            body: Body::new(domain),
-            needs: Vec::new(),
-            bound: Vec::new(),
-            inputs: BTreeMap::new(),
-            entries: BTreeMap::new(),
-            publics: BTreeMap::new(),
-            owner,
-            dup: None,
-            spent: 0,
-        }
-    }
-}
+use work::Work;
 
 /// The state of an `InstantiationId` in the table of instantiations.
 enum Status {
