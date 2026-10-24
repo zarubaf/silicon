@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use crate::{Code, Decl, Failed, Kind, Prelude, Resolved, Target, VariantRef, resolve};
 use parse::ast::{
-    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, Pos, Stmt, TypeExpr,
+    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, PortForm, Pos, Stmt, TypeExpr,
 };
 use std::collections::BTreeMap;
 
@@ -124,11 +124,15 @@ impl Ids {
                     self.ty(ty);
                     self.expr(init);
                 }
-                Stmt::Wire { name, ty, .. }
-                | Stmt::Input { name, ty, .. }
-                | Stmt::Output { name, ty, .. }
-                | Stmt::Alias { name, ty, .. } => {
+                Stmt::Wire { name, ty, .. } | Stmt::Alias { name, ty, .. } => {
                     self.ident(name);
+                    self.ty(ty);
+                }
+                Stmt::Input { name, form, ty, .. } | Stmt::Output { name, form, ty, .. } => {
+                    self.ident(name);
+                    if let PortForm::Indexed(key) | PortForm::Keyed(key) = form {
+                        self.expr(key);
+                    }
                     self.ty(ty);
                 }
                 Stmt::Mem {
@@ -2127,6 +2131,87 @@ fn an_indexed_port_of_a_comptime_fn_declares_a_local() {
     let src = "comptime fn f(p: Bool) -> Bool {\ninput req[0]: Bool;\nreturn p;\n}";
     let r = ok(src);
     assert_eq!(decl_at_use(&r, find(src, "req[0]")), Kind::Input);
+}
+
+/// The family walk also runs on the body of a `fn` without `comptime` (section 5.6). A family
+/// of a helper has the scope of the helper body.
+#[test]
+fn a_helper_body_has_the_scope_of_its_port_families() {
+    let src = fn_body("comptime for i in 0..2 {\ninput req[i]: Bool;\n}\nreturn req[0];");
+    let r = ok(&src);
+    assert_eq!(
+        decl_at_use(&r, find(&src, "req[0]")),
+        Kind::Family { input: true }
+    );
+    assert_eq!(
+        target_at(&r, find(&src, "req[0]")),
+        target_at(&r, find(&src, "req[i]"))
+    );
+    // A use before the first declaration resolves in a helper too.
+    let src = fn_body("let x = req[0];\ninput req[0]: Bool;\nreturn p;");
+    let r = ok(&src);
+    assert_eq!(
+        decl_at_use(&r, find(&src, "req[0];")),
+        Kind::Family { input: true }
+    );
+}
+
+#[test]
+fn a_helper_body_has_the_collisions_of_a_module_body() {
+    let plain = "`req` is already declared in this scope";
+    let scalar =
+        "`req` names a port family and a scalar port, here and at 2:7; use one form for the name";
+    let src = fn_body("input req: Bool;\n{\ninput req[0]: Bool;\n}\nreturn p;");
+    assert_eq!(errors(&src)[0], (S002, 4, 7));
+    assert_eq!(message(&src), scalar);
+    let src = fn_body("input req[0]: Bool;\noutput req[1]: Bool;\nreturn p;");
+    assert_eq!(errors(&src)[0], (S002, 3, 8));
+    for (src, line, col) in [
+        (
+            fn_body("let req = 1;\ninput req[0]: Bool;\nreturn p;"),
+            3,
+            7,
+        ),
+        (
+            "fn f(req: Bool) -> Bool {\ninput req[0]: Bool;\nreturn req;\n}".to_owned(),
+            2,
+            7,
+        ),
+    ] {
+        assert_eq!(errors(&src)[0], (S002, line, col), "{src}");
+        assert_eq!(message(&src), plain, "{src}");
+    }
+}
+
+#[test]
+fn the_module_body_cannot_select_a_family_that_only_a_helper_declares() {
+    let src = "fn lane() -> Nat {\ninput req[0]: Bool;\nreturn 0;\n}\n\
+               module M() {\nlet x = lane();\nlet y = req[0];\n}";
+    assert_eq!(errors(src), [(S003, 7, 9)]);
+}
+
+#[test]
+fn a_keyed_port_is_no_port_name_of_the_family_walk() {
+    let plain = "`req` is already declared in this scope";
+    for (src, line, col) in [
+        (
+            mod_body("input req: Bool as \"x\";\ninput req[0]: Bool;"),
+            3,
+            7,
+        ),
+        (
+            fn_body("input req[0]: Bool;\noutput req: Bool as \"x\";\nreturn p;"),
+            3,
+            8,
+        ),
+    ] {
+        assert_eq!(errors(&src)[0], (S002, line, col), "{src}");
+        assert_eq!(message(&src), plain, "{src}");
+    }
+    // The key resolves after the type, and its names are ordinary uses.
+    let src = mod_body("input a: Bool as \"x\" + str(W);");
+    let r = ok(&src);
+    assert_eq!(decl_at_use(&r, find(&src, "W)")), Kind::Param);
 }
 
 #[test]

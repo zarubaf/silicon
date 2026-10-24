@@ -113,7 +113,8 @@ struct Walker {
     param_uses: usize,
     /// The declaration of each prelude struct, in the order of `STRUCTS`.
     prelude: Vec<DeclId>,
-    /// The port names of the module body that the walk is in (`families`). A `fn` has none.
+    /// The port names of the module body or the `fn` body that the walk is in (`families`). A
+    /// `comptime fn` has none.
     ports: BTreeMap<String, PortName>,
 }
 
@@ -262,6 +263,7 @@ impl Walker {
                 self.expr(value);
             }
             Item::Fn {
+                comptime,
                 name,
                 params,
                 ret,
@@ -282,6 +284,11 @@ impl Walker {
                 }
                 self.next_site = 0;
                 self.ports.clear();
+                // A helper has the scope of its own family names, as a module body has. In a
+                // `comptime fn`, `typeck` rejects a port (`S006`).
+                if !comptime {
+                    self.families(body);
+                }
                 self.stmts(body);
                 self.scopes.close();
             }
@@ -368,7 +375,8 @@ impl Walker {
         }
     }
 
-    /// The family walk of a module body (section 5.6): one pre-order walk of each statement at
+    /// The family walk of a module body or of the body of a `fn` without `comptime` (section
+    /// 5.6): one pre-order walk of each statement at
     /// each block depth, before the statements resolve. It enters a block, both arms of a
     /// `comptime if`, and the body of a `comptime for`, and no nested item. An explicit stack
     /// holds the open lists, so a deep nest of blocks needs no recursion.
@@ -380,12 +388,8 @@ impl Walker {
                 continue;
             };
             match stmt {
-                Stmt::Input { name, form, .. } => {
-                    self.see_port(name, matches!(form, PortForm::Indexed(_)), true);
-                }
-                Stmt::Output { name, form, .. } => {
-                    self.see_port(name, matches!(form, PortForm::Indexed(_)), false);
-                }
+                Stmt::Input { name, form, .. } => self.see_form(name, form, true),
+                Stmt::Output { name, form, .. } => self.see_form(name, form, false),
                 Stmt::CtIf { yes, no, .. } => {
                     if let Some(no) = no {
                         open.push(no.iter());
@@ -395,6 +399,16 @@ impl Walker {
                 Stmt::CtFor { body, .. } | Stmt::Block { body, .. } => open.push(body.iter()),
                 _ => {}
             }
+        }
+    }
+
+    /// The family walk sees a port of the form `form`. A port with an `as` key is no port name of
+    /// the walk: its binder is a name of the body only.
+    fn see_form(&mut self, name: &Ident, form: &PortForm, input: bool) {
+        match form {
+            PortForm::Scalar => self.see_port(name, false, input),
+            PortForm::Indexed(_) => self.see_port(name, true, input),
+            PortForm::Keyed(_) => {}
         }
     }
 
