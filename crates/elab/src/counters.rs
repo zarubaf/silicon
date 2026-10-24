@@ -111,8 +111,10 @@ pub(crate) struct Counts {
     pub texted: u64,
     /// The parts that the read of a container of handles visited, and the types that it made.
     pub read: u64,
-    /// The names that the look-ups of the table of public names read: one for each look-up.
+    /// The compares of two keys of the table of public names.
     pub publics: u64,
+    /// The bytes of a name that a look-up in the table of symbols hashes and compares.
+    pub named: u64,
 }
 
 impl Counts {
@@ -165,6 +167,7 @@ impl Counts {
             texted,
             read,
             publics,
+            named,
         } = *self;
         [
             scanned,
@@ -212,6 +215,7 @@ impl Counts {
             texted,
             read,
             publics,
+            named,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -266,6 +270,7 @@ pub(crate) enum Count {
     Texted,
     Read,
     Publics,
+    Named,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -349,6 +354,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Texted => &mut c.texted,
             Count::Read => &mut c.read,
             Count::Publics => &mut c.publics,
+            Count::Named => &mut c.named,
         };
         *field += n;
     }

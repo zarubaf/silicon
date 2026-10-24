@@ -405,6 +405,13 @@ impl Paths {
     /// The source name of a resource at the path `p`: the innermost user field of the path, else
     /// its outer name (Lean `sourceOf`).
     pub(crate) fn source(&self, p: PathId, texts: &[String]) -> String {
+        let out = self.source_text(p, texts);
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::TextBytes, out.len() as u64);
+        out
+    }
+
+    fn source_text(&self, p: PathId, texts: &[String]) -> String {
         let text = |s: Sym| texts.get(s).cloned().unwrap_or_default();
         let mut first = None;
         let mut at = p;
