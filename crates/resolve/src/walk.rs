@@ -113,6 +113,17 @@ struct Walker {
     param_uses: usize,
     /// The declaration of each prelude struct, in the order of `STRUCTS`.
     prelude: Vec<DeclId>,
+    /// The port names of the module body that the walk is in (`families`). A `fn` has none.
+    ports: BTreeMap<String, PortName>,
+}
+
+/// What the family walk of a module body knows of one port name: its family, as the position
+/// of its first indexed declaration, its binder, and whether that declaration is an input, and
+/// the position of its first scalar port.
+#[derive(Default)]
+struct PortName {
+    family: Option<(Pos, DeclId, bool)>,
+    scalar: Option<Pos>,
 }
 
 impl Walker {
@@ -130,11 +141,28 @@ impl Walker {
     }
 
     fn duplicate(&mut self, name: &Ident) {
+        self.duplicate_at(name, name.pos);
+    }
+
+    /// `S002` for the name at `pos`.
+    fn duplicate_at(&mut self, name: &Ident, pos: Pos) {
         self.duplicates.push(Error {
             code: Code::S002,
-            pos: name.pos,
+            pos,
             message: format!("`{}` is already declared in this scope", name.name),
         });
+    }
+
+    /// `S002` for a name that the innermost scope has. The error is at the later of the two
+    /// names: the family walk declares a family before the statements, so the earlier name in
+    /// the source can be the one that fails.
+    fn duplicate_here(&mut self, name: &Ident) {
+        let at = self
+            .scopes
+            .here(&name.name)
+            .and_then(|other| self.decls.get(other.0))
+            .map_or(name.pos, |other| name.pos.max(other.pos));
+        self.duplicate_at(name, at);
     }
 
     fn declare_item(&mut self, item: &Item) {
@@ -209,7 +237,7 @@ impl Walker {
     fn declare(&mut self, name: &Ident, kind: Kind) {
         let id = self.new_decl(name, kind, None);
         if !self.scopes.declare_local(&name.name, id) {
-            self.duplicate(name);
+            self.duplicate_here(name);
         }
     }
 
@@ -253,6 +281,7 @@ impl Walker {
                     self.decls[id.0].generic = generic;
                 }
                 self.next_site = 0;
+                self.ports.clear();
                 self.stmts(body);
                 self.scopes.close();
             }
@@ -274,6 +303,8 @@ impl Walker {
                     self.declare(domain, Kind::Domain);
                 }
                 self.next_site = 0;
+                self.ports.clear();
+                self.families(body);
                 self.stmts(body);
                 self.scopes.close();
             }
@@ -337,6 +368,119 @@ impl Walker {
         }
     }
 
+    /// The family walk of a module body (section 5.6): one pre-order walk of each statement at
+    /// each block depth, before the statements resolve. It enters a block, both arms of a
+    /// `comptime if`, and the body of a `comptime for`, and no nested item. An explicit stack
+    /// holds the open lists, so a deep nest of blocks needs no recursion.
+    fn families(&mut self, body: &[Stmt]) {
+        let mut open = vec![body.iter()];
+        while let Some(list) = open.last_mut() {
+            let Some(stmt) = list.next() else {
+                open.pop();
+                continue;
+            };
+            match stmt {
+                Stmt::Input { name, index, .. } => self.see_port(name, index.is_some(), true),
+                Stmt::Output { name, index, .. } => self.see_port(name, index.is_some(), false),
+                Stmt::CtIf { yes, no, .. } => {
+                    if let Some(no) = no {
+                        open.push(no.iter());
+                    }
+                    open.push(yes.iter());
+                }
+                Stmt::CtFor { body, .. } | Stmt::Block { body, .. } => open.push(body.iter()),
+                _ => {}
+            }
+        }
+    }
+
+    /// The family walk sees the port name `name`, with a key if `indexed`, as an input if
+    /// `input`. The walk runs in source order, so each `S002` is at the later name. The first
+    /// indexed declaration of a name takes a declaration and binds the family in the scope of
+    /// the body.
+    fn see_port(&mut self, name: &Ident, indexed: bool, input: bool) {
+        let seen = self.ports.get(name.name.as_str());
+        let (family, scalar) = seen.map_or((None, None), |e| (e.family, e.scalar));
+        let clash = match (indexed, family, scalar) {
+            (false, Some((b, ..)), _) | (true, _, Some(b)) => Some((false, b)),
+            (true, Some((b, _, first)), None) if first != input => Some((true, b)),
+            _ => None,
+        };
+        if let Some((directions, b)) = clash {
+            let x = &name.name;
+            let (line, col) = (b.line, b.col);
+            self.duplicates.push(if directions {
+                Error {
+                    code: Code::S002,
+                    pos: name.pos,
+                    message: format!(
+                        "the port family `{x}` has an input entry and an output entry, here and \
+                         at {line}:{col}; give the entries of one direction another name"
+                    ),
+                }
+            } else {
+                Error {
+                    code: Code::S002,
+                    pos: name.pos,
+                    message: format!(
+                        "`{x}` names a port family and a scalar port, here and at {line}:{col}; \
+                         use one form for the name"
+                    ),
+                }
+            });
+        }
+        if !indexed {
+            if scalar.is_none() {
+                self.note(&name.name, |e| e.scalar = Some(name.pos));
+            }
+            return;
+        }
+        if family.is_none() {
+            let id = self.new_decl(name, Kind::Family { input }, None);
+            if !self.scopes.declare_local(&name.name, id) {
+                self.duplicate_here(name);
+            }
+            self.note(&name.name, |e| e.family = Some((name.pos, id, input)));
+        }
+    }
+
+    /// Changes the entry of the port name. The first sight of the name makes the entry, so a
+    /// name is copied once, not once for each use.
+    fn note(&mut self, name: &str, change: impl FnOnce(&mut PortName)) {
+        if let Some(entry) = self.ports.get_mut(name) {
+            change(entry);
+        } else {
+            let mut entry = PortName::default();
+            change(&mut entry);
+            self.ports.insert(name.to_owned(), entry);
+        }
+    }
+
+    /// The statement `input name[k]: T;` or `output name[k]: T;`, and the same without a key.
+    /// An indexed declaration of a module body takes its family, and binds the name in its own
+    /// block too (section 5.6). Another port declares a local.
+    fn port(&mut self, name: &Ident, index: Option<&Expr>, ty: &TypeExpr, kind: Kind) {
+        if let Some(key) = index {
+            self.expr(key);
+        }
+        self.ty(ty);
+        let family = index
+            .and(self.ports.get(name.name.as_str()))
+            .and_then(|e| e.family);
+        let Some((_, id, _)) = family else {
+            self.declare(name, kind);
+            return;
+        };
+        self.names.insert(name.id, Target::Decl(id));
+        match self.scopes.here(&name.name) {
+            Some(bound) if bound == id => {}
+            Some(_) => self.duplicate_here(name),
+            None => {
+                let _ = self.scopes.declare_local(&name.name, id);
+            }
+        }
+    }
+
     fn stmts(&mut self, stmts: &[Stmt]) {
         for stmt in stmts {
             self.stmt(stmt);
@@ -381,14 +525,12 @@ impl Walker {
                 self.expr(depth);
                 self.declare(name, Kind::Mem);
             }
-            Stmt::Input { name, ty, .. } => {
-                self.ty(ty);
-                self.declare(name, Kind::Input);
-            }
-            Stmt::Output { name, ty, .. } => {
-                self.ty(ty);
-                self.declare(name, Kind::Output);
-            }
+            Stmt::Input {
+                name, index, ty, ..
+            } => self.port(name, index.as_ref(), ty, Kind::Input),
+            Stmt::Output {
+                name, index, ty, ..
+            } => self.port(name, index.as_ref(), ty, Kind::Output),
             Stmt::Inst {
                 name, module, args, ..
             } => {
