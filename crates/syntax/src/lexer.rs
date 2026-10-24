@@ -92,7 +92,6 @@ struct Lexer<'a> {
     too_deep: bool,
 }
 
-/// Operators, longest first within the same first character.
 fn ident_start(c: char) -> bool {
     c.is_ascii_alphabetic() || c == '_'
 }
@@ -109,6 +108,7 @@ pub fn is_identifier(text: &str) -> bool {
     chars.next().is_some_and(ident_start) && chars.all(ident_char)
 }
 
+/// Operators, longest first within the same first character.
 const OPERATORS: &[(&str, SyntaxKind)] = &[
     (":=", SyntaxKind::ColonEq),
     ("::", SyntaxKind::ColonColon),
