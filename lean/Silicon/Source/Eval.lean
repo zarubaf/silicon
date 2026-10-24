@@ -2280,11 +2280,12 @@ def selectionKey (np p : Pos) (x : String) (v : Val) : M Nat := do
   Elab.familyKey p (← static p v)
 
 /-!
-The value of the entry `k` of the family `x` with the binder `id`, at the key `p`. A key that
-the body did not declare before is `S013` "Undeclared family key" (section 6.2).
+The value of the entry `k` of the family `x` with the binder `id`, at the key `p`. The table of
+entries holds it by the symbol of its public name. A key that the body did not declare before is
+`S013` "Undeclared family key" (section 6.2).
 -/
 def entryVal (p : Pos) (x : String) (id k : Nat) : M Val := do
-  match (← get).inst.work.entries[(id, k)]? with
+  match (← get).inst.work.entries[((← read).binder id, k)]? with
   | some (v, _) => pure v
   | none => fail .S013 p (Elab.undeclaredText x k)
 
@@ -3171,7 +3172,7 @@ mutual
         return made
       let w := (← get).inst.work
       let body := { w.body with lets := made.lets, mems := made.mems }
-      let c := Elab.iface name body (((← read).syms.families[i]?).getD {})
+      let c := Elab.iface name body (((← read).syms.families[i]?).getD {}) w.publics
       let k := (← get).inst.done.size
       modify fun t => { t with
         inst.table := t.inst.table.insert key (.done k),
@@ -3375,7 +3376,7 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
         table := t
         unless ms.contains k do ms := ms.insert k j
     members := members.push ms
-  return ⟨binders, fields, names, members, families⟩
+  return ⟨table, binders, fields, names, members, families⟩
 
 /-!
 The context and the state of an elaboration with the budget `budget`, and with the scan `top`
@@ -3385,7 +3386,7 @@ def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × S
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
   (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, none, "-", [], 0,
     Names.sha16⟩,
-   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, {}, #[]⟩)
+   ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, {}, #[], {}⟩)
 
 /-!
 Runs `act` with the budget. The result has the used fuel. The records come with both outcomes:

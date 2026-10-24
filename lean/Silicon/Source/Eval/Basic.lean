@@ -624,9 +624,12 @@ numbers and not text. `binders` gives the symbol of each local number of each it
 gives the symbol of each field name by its position in each item, and the last entry is the
 top expression. `items` gives the symbol of each item name. `members` gives the number of each
 field of each struct item by the symbol of its name. `families` gives the port families of each
-module item by the symbol of the name, `true` for an input (section 5.6).
+module item by the symbol of the name, `true` for an input (section 5.6). `table` gives the
+symbol of each text of the scan, so a name that the run computes finds its symbol
+(`Eval.symbolOf`).
 -/
 structure Syms where
+  table : Std.HashMap String Nat
   binders : Array (Array Nat)
   fields : Array (Std.TreeMap Pos Nat Pos.compare)
   items : Array Nat
@@ -932,6 +935,14 @@ structure Body where
   binds : Array Bind := #[]
 
 /-!
+The form of a public name of an owner (section 5.6): a scalar port, or a port family with its
+direction, `true` for an input.
+-/
+inductive Public where
+  | scalar
+  | family (input : Bool)
+
+/-!
 A resource that needs one binding, by its number: its declaration, its bindings, and its first
 binding. The first binding holds its position and the number of its call frame (`Ctx.call`).
 An output entry of a family has its key.
@@ -949,8 +960,10 @@ number indexes `bound`. The memories are in the names of the instantiation (`Nam
 `inputs` counts the bindings of each child input, by the instance number and the port identity.
 It also holds the position and the call frame number of the first binding. `dup` holds the
 first `S018` of a second binding or a second port call by position. `spent` is the fuel of the
-new children. `entries` holds the declared family entries by the family binder and the key: the
-value of each entry and the position of its declaration. A family binder has no frame slot.
+new children. `entries` holds the declared family entries by the symbol of the public name and
+the key. It holds the value of each entry and the position of its declaration. A family binder
+has no frame slot. `publics` is the table of public names of the owner (section 5.6). It holds
+the form of each public name by its symbol, and the position of its first declaration.
 -/
 structure Work where
   body : Body
@@ -958,6 +971,7 @@ structure Work where
   bound : Array Nat := #[]
   inputs : Std.HashMap (Nat × PortId) (Nat × Pos × Nat) := {}
   entries : Std.HashMap (Nat × Nat) (Val × Pos) := {}
+  publics : Std.HashMap Nat (Public × Pos) := {}
   dup : Option (Pos × Breach) := none
   spent : Nat := 0
 
@@ -1004,7 +1018,8 @@ instantiation. `holds` counts the waiting results that hold each local of the fr
 5.4). `changes` counts the mutations of each local of the frame, so an index finds that it
 changed its root (section 5.4). `pending` counts the open windows of each root of the frame
 (section 9.1). `inst` holds the tables of the instantiations. `records` holds the observation
-records of the elaboration in their order (section 8.2).
+records of the elaboration in their order (section 8.2). `names` extends the text table of the
+symbols (`Syms.table`) by the names that the run computes (`symbolOf`).
 -/
 structure St where
   fuel : Nat
@@ -1017,6 +1032,7 @@ structure St where
   naming : Naming
   inst : Elab.Insts
   records : Array Record
+  names : Std.HashMap String Nat
 
 /-!
 The stop of a run: its first error and the records before it. An error keeps the records before
@@ -1076,6 +1092,21 @@ def measure (act : M α) : M (α × Nat) := do
   let start := (← get).fuel
   let a ← act
   return (a, start - (← get).fuel)
+
+/-!
+The symbol of the name `x` that the run computes. A text of the scan has its symbol in the text
+table (`Syms.table`). Another text takes the next free symbol once, in the run-time extension
+(`St.names`), so each text has one symbol and the symbols stay distinct. The caller charges the
+size of `x` first (section 5.4).
+-/
+def symbolOf (x : String) : M Nat := do
+  let table := (← read).syms.table
+  if let some k := table[x]? then return k
+  let s ← get
+  if let some k := s.names[x]? then return k
+  let k := table.size + s.names.size
+  set { s with names := s.names.insert x k }
+  return k
 
 /-!
 Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The level reports its

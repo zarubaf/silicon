@@ -34,19 +34,24 @@ theorem resource_f (k : Kind) (path : Names.Path) (t : Ty) (p : Pos) (x : String
     Follows cap (Elab.resource k path t p x key) (Elab.resource k path t p x key) := by
   unfold Elab.resource; follows
 
+theorem publish_f (y : Nat) (f : Elab.Public) (p : Pos) :
+    Follows cap (Elab.publish y f p) (Elab.publish y f p) := by
+  unfold Elab.publish; follows
+
+theorem reserve_f (y : Nat) : Follows cap (Elab.reserve y) (Elab.reserve y) := by
+  refine Follows.of_frame ?_
+  intro c s a s' h
+  simp only [Elab.reserve, bind_apply, get_apply, set_apply, pure_apply] at h ⊢
+  cases h
+  exact ⟨rfl, fun _ => rfl⟩
+
 theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
     Follows cap (Elab.port p input b t) (Elab.port p input b t) := by
-  unfold Elab.port
-  refine Follows.bind Follows.readThe fun c => Follows.bind (Follows.of_frame ?_) fun _ => ?_
-  · intro c s a s' h
-    simp only [bind_apply, get_apply, set_apply, pure_apply] at h ⊢
-    cases h
-    exact ⟨rfl, fun _ => rfl⟩
-  · follows [resource_f, modifyBody_f, normalize_f]
+  unfold Elab.port; follows [publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
 
 theorem entry_f (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) :
     Follows cap (Elab.entry p input b k t) (Elab.entry p input b k t) := by
-  unfold Elab.entry; follows [resource_f, modifyBody_f, normalize_f]
+  unfold Elab.entry; follows [publish_f, resource_f, modifyBody_f, normalize_f]
 
 theorem familyKey_f (p : Pos) (v : Value) :
     Follows cap (Elab.familyKey p v) (Elab.familyKey p v) := by

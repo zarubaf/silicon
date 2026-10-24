@@ -118,19 +118,33 @@ def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) (key : Opt
   return .handle (.res k id t path)
 
 /-!
-The port `x`. Its core name is its source name. The root frame counts it with the bindings of
-its name, so a name that is taken is `S019`.
+Inserts the public name with the symbol `y` and the form `f`, declared at `p`, into the table of
+public names of the owner (section 5.6). The first declaration of a name keeps its position.
+-/
+def publish (y : Nat) (f : Public) (p : Pos) : Eval.M Unit :=
+  modify fun s => { s with inst.work.publics := s.inst.work.publics.insertIfNew y (f, p) }
+
+/-!
+Reserves the core name with the symbol `y` in the root frame, as the bindings of the name count
+it. The result is `true` when a declaration took the name before.
+-/
+def reserve (y : Nat) : Eval.M Bool := do
+  let s ← get
+  let key := (0, Tag.sym y)
+  let v := s.naming.versions.getD key 0
+  set { s with naming.versions := s.naming.versions.insert key (v + 1) }
+  return v != 0
+
+/-!
+The port `x`. Its public name and its core name are its source name. The port enters the table
+of public names. Then the root frame counts it with the bindings of its name, so a name that is
+taken is `S019`.
 -/
 def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
   let x := b.name.name
   let sym := (← readThe Ctx).binder b.id
-  let taken ← (do
-    let s ← get
-    let key := (0, Tag.sym sym)
-    let v := s.naming.versions.getD key 0
-    set { s with naming.versions := s.naming.versions.insert key (v + 1) }
-    return v != 0 : Eval.M Bool)
-  if taken then fail .S019 p s!"two declarations have the core name `{x}`"
+  publish sym .scalar p
+  if ← reserve sym then fail .S019 p s!"two declarations have the core name `{x}`"
   modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, none, input, t, p⟩ }
   -- An input refers to its name: a scalar is hardware, and an aggregate a lazy reference. An
   -- empty input stays a reference too, so only a read of it pays its zero (`Eval.name`).
@@ -184,22 +198,24 @@ def keyTwiceText (x : String) (k : Nat) (b : Pos) : String :=
 
 /-!
 The entry `k` of the family with the binder `b`, of the type `t`, declared at `p` (section 5.6).
-A key that the family has already is `S019`. The entry is one whole port with the core name
-`<x>$<k>f`, and it goes into the table of entries (`Work.entries`), not into a frame slot. The
-field `<k>f` keeps its name apart from each other name (section 7.2), so it takes no version.
+The family enters the table of public names. A key that the family has already is `S019`. The
+entry is one whole port with the core name `<x>$<k>f`. It goes into the table of entries
+(`Work.entries`) by its public identity, not into a frame slot. The field `<k>f` keeps its name
+apart from each other name (section 7.2), so it takes no version.
 -/
 def entry (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) : Eval.M Unit := do
   let x := b.name.name
-  if let some (_, q) := (← get).inst.work.entries[(b.id, k)]? then
-    fail .S019 p (keyTwiceText x k q)
   let sym := (← readThe Ctx).binder b.id
+  publish sym (.family input) p
+  if let some (_, q) := (← get).inst.work.entries[(sym, k)]? then
+    fail .S019 p (keyTwiceText x k q)
   modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, some k, input, t, p⟩ }
   let path : Path := ⟨x, [.family k]⟩
   -- An input entry refers to its name as a scalar input does (`port`).
   let v ← if !input then resource .output path t p x (some k)
     else if t.info.leaves = 0 then pure (.agg (.ref (.name path) t))
     else normalize p (.ref (.name path) t)
-  modify fun s => { s with inst.work.entries := s.inst.work.entries.insert (b.id, k) (v, p) }
+  modify fun s => { s with inst.work.entries := s.inst.work.entries.insert (sym, k) (v, p) }
 
 /-! The target of a `:=` binding: an own resource, or the input `port` of the child `inst`. -/
 inductive Target where
@@ -389,14 +405,19 @@ def bindings : Eval.M Unit := do
   if let some (p, x) := err then fail .S018 p (x.text (← read).itemName)
 
 /-!
-The interface of a done instantiation with the port families `fams` of its module (section 5.6).
-It holds the entries that the body declared at run time.
+The interface of a done instantiation with the port families `fams` of its module and the table
+of public names `pub` of its body (section 5.6). It holds the entries that the body declared at
+run time, and each family of `fams` or of `pub`.
 -/
-def iface (name : Name) (b : Body) (fams : Std.HashMap Nat Bool) : Iface :=
+def iface (name : Name) (b : Body) (fams : Std.HashMap Nat Bool)
+    (pub : Std.HashMap Nat (Public × Pos)) : Iface :=
   ⟨name,
    b.ports.zipIdx.foldl (fun m (q, j) =>
      m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos, j⟩) {},
-   (b.ports.filter (·.input)).size, b.domain, fams⟩
+   (b.ports.filter (·.input)).size, b.domain,
+   pub.fold (init := fams) fun m y (f, _) => match f with
+     | .family i => if m.contains y then m else m.insert y i
+     | .scalar => m⟩
 
 /-!
 The serialization of an `InstantiationId` at the statement `pos`. It charges the walk that
