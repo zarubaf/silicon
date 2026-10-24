@@ -225,7 +225,21 @@ pub(super) fn report(
     let steps: Vec<(String, String)> = input.iter().cloned().zip(trace.lines).collect();
     print!("{}", reproducer(&source, &top, &steps));
     let twin = twin(program);
-    let twin_input = twin_lines(&twin, input)?;
+    // A run error of the twin keeps the twin text and the repeat command.
+    let (section, failed) = match twin_section(tools, dir, &twin, input) {
+        Ok(section) => (section, None),
+        Err(error) => (twin_unrun(&twin), Some(error)),
+    };
+    print!("{section}");
+    let (expr, value) = program.probe();
+    println!("// probe: eval `{expr}` gives `{value}` in the generator");
+    println!("Run `{}` to repeat it.", repeat(Mode::Typed, seed));
+    failed.map_or(Ok(()), Err)
+}
+
+/// The twin section of a report: the twin with the `STEP` lines of its run.
+fn twin_section(tools: &Tools, dir: &Path, twin: &Twin, input: &[String]) -> Result<String> {
+    let twin_input = twin_lines(twin, input)?;
     let twin_file = write(dir, "report-twin.si", &twin.text)?;
     let twin_trace = run_trace(
         "lean twin",
@@ -243,14 +257,18 @@ pub(super) fn report(
         );
     }
     let twin_steps: Vec<(String, String)> = twin_input.into_iter().zip(twin_trace.lines).collect();
-    print!(
+    Ok(format!(
         "// twin\n{}",
         reproducer(&twin.text, &twin.top, &twin_steps)
-    );
-    let (expr, value) = program.probe();
-    println!("// probe: eval `{expr}` gives `{value}` in the generator");
-    println!("Run `{}` to repeat it.", repeat(Mode::Typed, seed));
-    Ok(())
+    ))
+}
+
+/// The twin section when its run failed: the twin with no `STEP` line.
+fn twin_unrun(twin: &Twin) -> String {
+    format!(
+        "// twin (its run failed)\n{}",
+        reproducer(&twin.text, &twin.top, &[])
+    )
 }
 
 #[cfg(test)]
@@ -274,6 +292,19 @@ mod tests {
         };
         let error = report(&tools, dir.path(), 7, &case(7), "x").unwrap_err();
         assert!(format!("{error:#}").contains("no-such-tool"), "{error:#}");
+    }
+
+    #[test]
+    fn a_failed_twin_run_keeps_the_twin_text() {
+        let (program, _) = case(7);
+        let twin = twin(&program.unwrap());
+        let section = twin_unrun(&twin);
+        assert!(section.contains(&twin.text), "{section}");
+        assert!(
+            section.contains(&format!("// TOP {}", twin.top)),
+            "{section}"
+        );
+        assert!(!section.contains("// STEP"), "{section}");
     }
 
     #[test]
