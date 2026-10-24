@@ -505,7 +505,6 @@ fn later_slice_syntax_is_s004() {
         ("module M() { @field(x, \"f\") = 1; }", 1, 14),
         ("module M() { reg r: T in d = 0; }", 1, 23),
         ("module M() { wire w: T in d; }", 1, 24),
-        ("module M() { input i[2]: T; }", 1, 21),
         ("module M() { input i: T as 1; }", 1, 25),
         ("module M() { instance u = A() with { }; }", 1, 31),
         ("module M() { instance u = a::A(); }", 1, 28),
@@ -1593,6 +1592,75 @@ fn the_depth_65536_works_at_the_cap() {
     assert!(parsed.dump().unwrap().is_some());
     let high = format!("const X: T = {}1;", "-".repeat(max));
     assert_eq!(first(&high), at(14));
+}
+
+#[test]
+fn a_port_family_entry_has_a_key() {
+    let dump = |input: &str| parse(input).dump().unwrap().unwrap().trim_end().to_owned();
+    assert_eq!(
+        dump("module M(comptime N: Nat) { input req[N + 1]: UInt[8]; output o: Bool; }"),
+        "(module \"M\" ((param comptime \"N\" (name \"Nat\"))) none \
+         ((input \"req\" (some (binary add (name \"N\") (num 1))) \
+         (index (name \"UInt\") ((num 8)))) (output \"o\" none (name \"Bool\"))))"
+    );
+    assert_eq!(
+        dump("module M() { output g[2]: Bool; }"),
+        "(module \"M\" () none ((output \"g\" (some (num 2)) (name \"Bool\"))))"
+    );
+    let body = body("input req[i]: T; output g[1]: T;");
+    let (Stmt::Input { index: Some(i), .. }, Stmt::Output { index: Some(g), .. }) =
+        (&body[0], &body[1])
+    else {
+        panic!("expected two indexed ports");
+    };
+    assert_eq!((sx(i), sx(g)), ("i".to_owned(), "1".to_owned()));
+}
+
+#[test]
+fn the_key_of_a_port_family_is_one_expression() {
+    for (input, line, col) in [
+        ("module M() { input i[]: T; }", 1, 22),
+        ("module M() { input i[a, b]: T; }", 1, 23),
+        ("module M() { output o[1: T; }", 1, 24),
+        ("module M() { input i[1] T; }", 1, 25),
+    ] {
+        assert_eq!(first_error(input), Some((Code::S001, line, col)), "{input}");
+    }
+    // The key with `as` of a later slice stays S004, after the key.
+    assert_eq!(
+        first_error("module M() { input i[1]: T as 1; }"),
+        Some((Code::S004, 1, 28))
+    );
+}
+
+#[test]
+fn a_key_at_the_syntax_depth_limit_parses_dumps_and_drops() {
+    let max = DEFAULT_SYNTAX_DEPTH;
+    let key = |n: usize| format!("{}1{}", "(".repeat(n), ")".repeat(n));
+    // The module and the key share the depth, as a bracket of `[ ]` counts too.
+    let at = format!("module M() {{ input r[{}]: T; }}", key(max - 3));
+    let parsed = parse(&at);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    assert!(parsed.ast.is_some());
+    assert!(
+        parsed
+            .dump()
+            .unwrap()
+            .is_some_and(|d| d.contains("(some (num 1))"))
+    );
+    drop(parsed);
+    let over = format!("module M() {{ input r[{}]: T; }}", key(max));
+    let parsed = parse(&over);
+    assert_eq!(parsed.errors.first().map(|e| e.code), Some(Code::S001));
+    assert!(parsed.ast.is_none());
+    // A chain at the height limit is a key as well.
+    let chain = format!(
+        "module M() {{ output r[{}]: T; }}",
+        vec!["a"; max - 2].join(" + ")
+    );
+    let parsed = parse(&chain);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    assert!(parsed.dump().unwrap().is_some());
 }
 
 #[test]

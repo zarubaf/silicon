@@ -566,7 +566,25 @@ impl Evaluator<'_> {
     /// A statement of a module body that makes hardware. Its statement charge is paid.
     pub(super) fn module_stmt(&mut self, s: &Stmt) -> Res<()> {
         match s {
-            Stmt::Input { pos, name, ty } | Stmt::Output { pos, name, ty } => {
+            Stmt::Input {
+                pos,
+                name,
+                index,
+                ty,
+            }
+            | Stmt::Output {
+                pos,
+                name,
+                index,
+                ty,
+            } => {
+                if let Some(k) = index {
+                    return fail(
+                        Code::S004,
+                        k.pos(),
+                        "a port family is not supported yet".to_owned(),
+                    );
+                }
                 let tid = self.type_expr(ty)?;
                 let t = self.data_type(*pos, tid)?;
                 let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, (t, tid))?;

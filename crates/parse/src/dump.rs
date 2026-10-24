@@ -319,11 +319,15 @@ fn stmt(s: &Stmt, out: &mut String) {
         } => node("mem", out, |out| {
             fields!(out; ident(name, out), type_expr(word, out), expr(depth, out));
         }),
-        Stmt::Input { name, ty, .. } => node("input", out, |out| {
-            fields!(out; ident(name, out), type_expr(ty, out));
+        Stmt::Input {
+            name, index, ty, ..
+        } => node("input", out, |out| {
+            fields!(out; ident(name, out), option(index.as_ref(), out, expr), type_expr(ty, out));
         }),
-        Stmt::Output { name, ty, .. } => node("output", out, |out| {
-            fields!(out; ident(name, out), type_expr(ty, out));
+        Stmt::Output {
+            name, index, ty, ..
+        } => node("output", out, |out| {
+            fields!(out; ident(name, out), option(index.as_ref(), out, expr), type_expr(ty, out));
         }),
         Stmt::Inst {
             name, module, args, ..
@@ -564,8 +568,8 @@ mod tests {
             stmt_of("mem m: [T; 4];"),
             "(mem \"m\" (name \"T\") (num 4))"
         );
-        assert_eq!(stmt_of("input i: T;"), "(input \"i\" (name \"T\"))");
-        assert_eq!(stmt_of("output o: T;"), "(output \"o\" (name \"T\"))");
+        assert_eq!(stmt_of("input i: T;"), "(input \"i\" none (name \"T\"))");
+        assert_eq!(stmt_of("output o: T;"), "(output \"o\" none (name \"T\"))");
         assert_eq!(
             stmt_of("instance u = Child(1);"),
             "(inst \"u\" \"Child\" ((num 1)))"

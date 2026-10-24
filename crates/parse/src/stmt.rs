@@ -157,13 +157,14 @@ impl Parser<'_> {
         self.port_tail()
     }
 
-    /// The keyword and the name of a port declaration.
+    /// The keyword, the name, and the key of a family entry in brackets. The key is one
+    /// expression, so `[]` and `[a, b]` are `S001`.
     fn port_head(&mut self) -> Res {
         self.bump();
         self.expect(Ident, "a name")?;
-        if self.is(LBracket) {
-            self.later_slice(self.offset(), "a port family");
-            return None;
+        if self.eat(LBracket) {
+            self.expr()?;
+            self.expect(RBracket, "`]`")?;
         }
         Some(())
     }
