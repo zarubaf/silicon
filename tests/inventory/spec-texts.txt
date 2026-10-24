@@ -219,10 +219,9 @@ unlisted | S010 the value of `{}` needs a type; {} | 354
 unlisted | S010 the variant has no entry | 354
 unlisted | S010 the variant has {} payload type(s) here | 354
 unlisted | S010 the variant path has no target | 354
-unlisted | S010 unscannable crates/elab/src/eval.rs | 354
 unlisted | S010 unscannable crates/elab/src/eval/agg.rs | 354
-unlisted | S010 unscannable crates/elab/src/eval/container.rs | 354
 unlisted | S010 unscannable crates/elab/src/eval/data.rs | 354
+unlisted | S010 unscannable crates/elab/src/eval/handle.rs | 354
 unlisted | S010 unscannable crates/elab/src/eval/hwops.rs | 354
 unlisted | S010 unscannable crates/elab/src/eval/matching.rs | 354
 unlisted | S010 unscannable crates/elab/src/eval/mem.rs | 354
@@ -261,7 +260,7 @@ unlisted | S011 a static condition needs a static Bool, not {} | 354
 unlisted | S011 the arms of a hardware `{}` differ in a static p | 354
 unlisted | S011 the message of `{}` is a static String, not hard | 354
 unlisted | S011 the message of `{}` is a static String, not {} | 354
-unlisted | S011 unscannable crates/elab/src/eval.rs | 354
+unlisted | S011 unscannable crates/elab/src/eval/typed.rs | 354
 unlisted | S011 unscannable crates/elab/src/eval/types.rs | 354
 unlisted | S011 unscannable lean/Silicon/Source/Eval.lean | 354
 unlisted | S011 unscannable lean/Silicon/Source/Eval/Types.lean | 354
@@ -302,20 +301,19 @@ unlisted | S015 unscannable lean/Silicon/Source/Eval.lean | 354
 unlisted | S015 unscannable lean/Silicon/Source/Eval/Basic.lean | 354
 unlisted | S015 unscannable lean/Silicon/Source/Eval/Container.lean | 354
 unlisted | S015 unscannable lean/Silicon/Source/Eval/Types.lean | 354
-unlisted | S016 unscannable crates/elab/src/eval/inst.rs | 354
+unlisted | S016 unscannable crates/elab/src/eval/inst/stmt.rs | 354
 unlisted | S016 unscannable crates/elab/src/eval/mem.rs | 354
 unlisted | S016 unscannable crates/elab/src/eval/observe.rs | 354
 unlisted | S016 unscannable crates/elab/src/eval/place.rs | 354
 unlisted | S016 unscannable lean/Silicon/Source/Eval.lean | 354
 unlisted | S016 unscannable lean/Silicon/Source/Eval/Basic.lean | 354
-unlisted | S017 unscannable crates/elab/src/eval.rs | 354
 unlisted | S017 unscannable crates/elab/src/eval/data.rs | 354
-unlisted | S017 unscannable crates/elab/src/eval/inst.rs | 354
+unlisted | S017 unscannable crates/elab/src/eval/inst/stmt.rs | 354
 unlisted | S017 unscannable crates/elab/src/eval/target.rs | 354
 unlisted | S017 unscannable lean/Silicon/Source/Eval.lean | 354
 unlisted | S017 unscannable lean/Silicon/Source/Eval/Container.lean | 354
 unlisted | S017 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
-unlisted | S018 unscannable crates/elab/src/eval/inst.rs | 354
+unlisted | S018 unscannable crates/elab/src/eval/inst/bind.rs | 354
 unlisted | S018 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
 unlisted | S019 the constant `{}` depends on itself | 354
 unlisted | S019 the enum `{}` depends on itself | 354
