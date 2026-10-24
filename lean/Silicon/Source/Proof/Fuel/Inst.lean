@@ -49,6 +49,10 @@ theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
     Follows cap (Elab.port p input b t) (Elab.port p input b t) := by
   unfold Elab.port; follows [publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
 
+theorem portKeyLater_f (p : Pos) :
+    Follows cap (Elab.portKeyLater p) (Elab.portKeyLater p) := by
+  unfold Elab.portKeyLater; follows
+
 theorem entry_f (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) :
     Follows cap (Elab.entry p input b k t) (Elab.entry p input b k t) := by
   unfold Elab.entry; follows [publish_f, resource_f, modifyBody_f, normalize_f]
@@ -178,7 +182,7 @@ theorem hwStmt_f (he : ∀ e, Follows m (eval k e) (eval m e))
   follows [he, ht, instantiate_f hb, arguments_f he ht, need_f, copy_f, conform_f, static_f,
     lit_f, fresh_f, bindLocal_f, dataType_f, memWord_f, memDepth_f, port_f, resource_f,
     modifyBody_f, target_f he, bindTarget_f, sinkValue_f, typedUse_f, settle_f, structural_f,
-    entryDecl_f he ht]
+    entryDecl_f he ht, portKeyLater_f]
 
 end walk
 

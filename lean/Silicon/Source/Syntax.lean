@@ -104,6 +104,32 @@ end
 deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
 
 /-!
+The name form of a port (section 5.6). A `scalar` port has a name only. An `indexed` port has its
+family key in `[ ]` after the name. A `keyed` port has an `as` key after the type. A port has one
+form, so no port has both an index and an `as` key.
+-/
+inductive PortForm (α : Type) where
+  | scalar
+  | indexed (key : α)
+  | keyed (key : α)
+  deriving Repr, BEq, Inhabited
+
+/-! The form of a port with the family key `k`, if it has one, and no `as` key. -/
+def PortForm.ofIndex : Option α → PortForm α
+  | some k => .indexed k
+  | none => .scalar
+
+/-! The family key of an indexed port. -/
+def PortForm.index? : PortForm α → Option α
+  | .indexed k => some k
+  | _ => none
+
+def PortForm.map (f : α → β) : PortForm α → PortForm β
+  | .scalar => .scalar
+  | .indexed k => .indexed (f k)
+  | .keyed k => .keyed (f k)
+
+/-!
 A statement. A target of `assign` or `connect` is a `name` or a `field` expression. An `alias` is
 the statement `type N = T;`.
 -/
@@ -114,8 +140,8 @@ inductive Stmt where
   | reg (pos : Pos) (name : Ident) (ty : TypeExpr) (init : Expr)
   | wire (pos : Pos) (name : Ident) (ty : TypeExpr)
   | mem (pos : Pos) (name : Ident) (word : TypeExpr) (depth : Expr)
-  | input (pos : Pos) (name : Ident) (index : Option Expr) (ty : TypeExpr)
-  | output (pos : Pos) (name : Ident) (index : Option Expr) (ty : TypeExpr)
+  | input (pos : Pos) (name : Ident) (form : PortForm Expr) (ty : TypeExpr)
+  | output (pos : Pos) (name : Ident) (form : PortForm Expr) (ty : TypeExpr)
   | inst (pos : Pos) (name module : Ident) (args : List Expr)
   | ret (pos : Pos) (value : Option Expr)
   | ctIf (pos : Pos) (cond : Expr) (yes : List Stmt) (no : Option (List Stmt))

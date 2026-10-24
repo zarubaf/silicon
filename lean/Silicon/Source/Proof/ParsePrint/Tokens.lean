@@ -110,10 +110,10 @@ mutual
       [.keyword "mem", .ident n.name, .symbol ":", .symbol "["] ++ ty.toks
         ++ .symbol ";" :: d.toks 0 ++ [.symbol "]", .symbol ";"]
     | .input _ n k ty =>
-      [.keyword "input", .ident n.name] ++ ((k.map fun e => .symbol "[" :: e.toks 0
+      [.keyword "input", .ident n.name] ++ ((k.index?.map fun e => .symbol "[" :: e.toks 0
         ++ [.symbol "]"]).getD []) ++ .symbol ":" :: ty.toks ++ [.symbol ";"]
     | .output _ n k ty =>
-      [.keyword "output", .ident n.name] ++ ((k.map fun e => .symbol "[" :: e.toks 0
+      [.keyword "output", .ident n.name] ++ ((k.index?.map fun e => .symbol "[" :: e.toks 0
         ++ [.symbol "]"]).getD []) ++ .symbol ":" :: ty.toks ++ [.symbol ";"]
     | .inst _ n m xs =>
       [.keyword "instance", .ident n.name, .symbol "=", .ident m.name, .symbol "("]

@@ -738,15 +738,15 @@ def portHead (f : Nat) : P (Ident × Option Expr) := do
 
 /-! The tail of a port declaration: the type, the domain check, and `;`. -/
 def portTail (f : Nat) (p : Pos) (n : Ident) (k : Option Expr)
-    (make : Pos → Ident → Option Expr → TypeExpr → Stmt) : P Stmt := do
+    (make : Pos → Ident → PortForm Expr → TypeExpr → Stmt) : P Stmt := do
   let ty ← typeAnnotation f
   noDomain
   let u ← peek
   if isKw "as" u then later u "a port key"
   sym ";"
-  return make p n k ty
+  return make p n (.ofIndex k) ty
 
-def port : Nat → Token → (Pos → Ident → Option Expr → TypeExpr → Stmt) → P Stmt
+def port : Nat → Token → (Pos → Ident → PortForm Expr → TypeExpr → Stmt) → P Stmt
   | 0, _, _ => exhausted
   | f + 1, t, make => do
     let h ← portHead f

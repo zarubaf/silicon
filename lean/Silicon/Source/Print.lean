@@ -23,6 +23,8 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
 - A `List` prints as `(<element> ...)` with one space between two elements, and `()` if it is
   empty.
 - An `Option` prints as `none`, or as `(some <value>)`.
+- A `PortForm` prints as the `Option` of its family key: `none` for `scalar`, and
+  `(some <key>)` for `indexed`. `keyed` prints as `(keyed <key>)`.
 - Each item prints on one line, and LF ends each line. The dump of no items is empty.
 -/
 namespace Silicon.Source.Print
@@ -160,6 +162,12 @@ mutual
     | a :: as => Arm.dumpsTo (a.dumpTo acc ++ " ") as
 end
 
+/-! The form of a port, as the `Option` of its family key, or `(keyed <key>)`. -/
+def Print.formTo (acc : String) : PortForm Expr → String
+  | .scalar => acc ++ "none"
+  | .indexed k => k.dumpTo (acc ++ "(some ") ++ ")"
+  | .keyed k => k.dumpTo (acc ++ "(keyed ") ++ ")"
+
 mutual
   def Stmt.dumpTo (acc : String) : Stmt → String
     | .local _ m n ty v =>
@@ -170,10 +178,9 @@ mutual
     | .reg _ n ty i => i.dumpTo (ty.dumpTo (acc ++ "(reg " ++ ident n ++ " ") ++ " ") ++ ")"
     | .wire _ n ty => ty.dumpTo (acc ++ "(wire " ++ ident n ++ " ") ++ ")"
     | .mem _ n ty d => d.dumpTo (ty.dumpTo (acc ++ "(mem " ++ ident n ++ " ") ++ " ") ++ ")"
-    | .input _ n k ty =>
-      ty.dumpTo (optionTo Expr.dumpTo (acc ++ "(input " ++ ident n ++ " ") k ++ " ") ++ ")"
+    | .input _ n k ty => ty.dumpTo (formTo (acc ++ "(input " ++ ident n ++ " ") k ++ " ") ++ ")"
     | .output _ n k ty =>
-      ty.dumpTo (optionTo Expr.dumpTo (acc ++ "(output " ++ ident n ++ " ") k ++ " ") ++ ")"
+      ty.dumpTo (formTo (acc ++ "(output " ++ ident n ++ " ") k ++ " ") ++ ")"
     | .inst _ n m xs =>
       listTo Expr.dumpTo (acc ++ "(inst " ++ ident n ++ " " ++ ident m ++ " ") xs ++ ")"
     | .ret _ v => optionTo Expr.dumpTo (acc ++ "(ret ") v ++ ")"
@@ -364,10 +371,10 @@ mutual
     | .mem _ n ty e => indent d ++ "mem " ++ n.name ++ ": [" ++ ty.print ++ "; " ++ e.print 0
       ++ "];\n"
     | .input _ n k ty =>
-      let k := (k.map fun e => "[" ++ e.print 0 ++ "]").getD ""
+      let k := (k.index?.map fun e => "[" ++ e.print 0 ++ "]").getD ""
       indent d ++ "input " ++ n.name ++ k ++ ": " ++ ty.print ++ ";\n"
     | .output _ n k ty =>
-      let k := (k.map fun e => "[" ++ e.print 0 ++ "]").getD ""
+      let k := (k.index?.map fun e => "[" ++ e.print 0 ++ "]").getD ""
       indent d ++ "output " ++ n.name ++ k ++ ": " ++ ty.print ++ ";\n"
     | .inst _ n m xs => indent d ++ "instance " ++ n.name ++ " = " ++ m.name ++ "("
       ++ args (xs.map (Expr.print 0)) ++ ");\n"

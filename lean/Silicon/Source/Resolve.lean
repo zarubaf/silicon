@@ -276,8 +276,8 @@ inductive Stmt where
   | reg (pos : Pos) (name : Binder) (ty : TypeExpr) (init : Expr)
   | wire (pos : Pos) (name : Binder) (ty : TypeExpr)
   | mem (pos : Pos) (name : Binder) (word : TypeExpr) (depth : Expr)
-  | input (pos : Pos) (name : Binder) (index : Option Expr) (ty : TypeExpr)
-  | output (pos : Pos) (name : Binder) (index : Option Expr) (ty : TypeExpr)
+  | input (pos : Pos) (name : Binder) (form : PortForm Expr) (ty : TypeExpr)
+  | output (pos : Pos) (name : Binder) (form : PortForm Expr) (ty : TypeExpr)
   | inst (pos : Pos) (name : Binder) (module : Ident) (item : Nat) (args : List Expr)
   | ret (pos : Pos) (value : Option Expr)
   | ctIf (pos : Pos) (cond : Expr) (yes : List Stmt) (no : Option (List Stmt))
@@ -580,13 +580,23 @@ def seePort (n : Ident) (indexed input : Bool) : M Unit := do
   modify fun s => { s with ports := s.ports.insert n.name e }
 
 /-!
+The family walk sees a port of the form `k`. A keyed port is no port name of the walk: its binder
+is a name of the body only (section 5.6).
+-/
+def famPort (n : Ident) (k : PortForm α) (input : Bool) : M Unit :=
+  match k with
+  | .scalar => seePort n false input
+  | .indexed _ => seePort n true input
+  | .keyed _ => pure ()
+
+/-!
 The family walk of a module body (section 5.6): one pre-order walk of each statement at each
 block depth, before the statements resolve.
 -/
 mutual
   def famStmt : Source.Stmt → M Unit
-    | .input _ n k _ => seePort n k.isSome true
-    | .output _ n k _ => seePort n k.isSome false
+    | .input _ n k _ => famPort n k true
+    | .output _ n k _ => famPort n k false
     | .ctIf _ _ y n => do
       famStmts y
       match n with
@@ -604,8 +614,8 @@ end
 The binder of the port `n`. An indexed declaration of a module body takes its family binder, and
 it binds the name in its own block too (section 5.6). Another port declares a local.
 -/
-def port (n : Ident) (indexed : Bool) : M Binder := do
-  if indexed then
+def port (n : Ident) (k : PortForm Expr) : M Binder := do
+  if k matches .indexed _ then
     if let some ⟨some (_, id, input), _⟩ := (← get).ports.get? n.name then
       bind n (.family id input)
       return ⟨n, id⟩
@@ -826,6 +836,21 @@ def moduleRef (m : Ident) : M Nat := do
   wrongKind m.pos m.name "a module"
   return 0
 
+/-!
+The key and the type of a port, in source order: a family key comes before the type, and an `as`
+key after it.
+-/
+def portParts (k : PortForm Source.Expr) (ty : Source.TypeExpr) :
+    M (PortForm Expr × TypeExpr) :=
+  match k with
+  | .scalar => return (.scalar, ← typeExpr ty)
+  | .indexed e => do
+    let e ← expr e
+    return (.indexed e, ← typeExpr ty)
+  | .keyed e => do
+    let ty ← typeExpr ty
+    return (.keyed (← expr e), ty)
+
 mutual
   def stmt : Source.Stmt → M Stmt
     | .local p m n ty v => do
@@ -844,13 +869,11 @@ mutual
       let d ← expr d
       return .mem p (← declare n) w d
     | .input p n k ty => do
-      let k ← k.mapM expr
-      let ty ← typeExpr ty
-      return .input p (← port n k.isSome) k ty
+      let (k, ty) ← portParts k ty
+      return .input p (← port n k) k ty
     | .output p n k ty => do
-      let k ← k.mapM expr
-      let ty ← typeExpr ty
-      return .output p (← port n k.isSome) k ty
+      let (k, ty) ← portParts k ty
+      return .output p (← port n k) k ty
     | .inst p n m xs => do
       let i ← moduleRef m
       let xs ← xs.mapM expr

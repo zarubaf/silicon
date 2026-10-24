@@ -53,7 +53,7 @@ private def t (s : String) : TypeExpr := .name p s
 
 private def counter : Item :=
   .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
-    [.output p (nm "q") none (.index p (t "UInt") [v "W"]),
+    [.output p (nm "q") .scalar (.index p (t "UInt") [v "W"]),
      .connect p (.field p (v "u") (nm "d")) (.str p "a\n\"b\""),
      .expr p (.cond p (v "en") (.num p 1) (.num p 0))]
 
@@ -119,16 +119,17 @@ example : ¬ Printable [.module p (nm "M") [⟨p, .none, nm "W", t "Nat"⟩] non
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide
 
 /-! A port in a `fn` without `comptime`, but not in a `comptime fn`. Each `fn` holds a resource. -/
-example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.input p (nm "i") none (t "T")]] := by
+example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.input p (nm "i") .scalar (t "T")]] := by
   decide
-example : Printable [.fn p true (nm "f") [] (t "T") [.input p (nm "i") none (t "T")]] := by
+example : Printable [.fn p true (nm "f") [] (t "T") [.input p (nm "i") .scalar (t "T")]] := by
   decide
 
 /-! The key of a family entry is an expression, and it is printable as an expression. -/
-example : Printable [.module p (nm "M") [] none [.input p (nm "r") (some (v "i")) (t "T")]] := by
+example : Printable
+    [.module p (nm "M") [] none [.input p (nm "r") (.indexed (v "i")) (t "T")]] := by
   decide
 example : ¬ Printable
-    [.module p (nm "M") [] none [.output p (nm "r") (some (.tuple p [])) (t "T")]] := by
+    [.module p (nm "M") [] none [.output p (nm "r") (.indexed (.tuple p [])) (t "T")]] := by
   decide
 example : Printable [.fn p false (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
 

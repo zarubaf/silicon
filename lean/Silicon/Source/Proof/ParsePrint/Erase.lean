@@ -22,8 +22,9 @@ a check here:
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
 - Each assignment and connection target is a place: `Expr.place`.
 - No port is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
-- The key of an indexed port is an expression, so `Stmt.printable` applies `Expr.printable` to
-  it. The height bound `N` holds for the key as for each expression, because `N` is at least the
+- No port has an `as` key, because the parser gives none yet: `PortForm.printable`.
+- The key of an indexed port is an expression, so `PortForm.printable` applies `Expr.printable`
+  to it. The height bound `N` holds for the key as for each expression, because `N` is at least the
   length of the printed text.
 - Each body has only the statement kinds that the parser accepts in that body. The parser
   accepts each statement kind in each body, except a port in a `fn` without `comptime`.
@@ -228,6 +229,12 @@ mutual
     | a :: as => a.printable && Arm.printableAll as
 end
 
+/-! The form of a port that the parser gives: a scalar name, or a family key that is printable. -/
+def PortForm.printable : PortForm Expr → Bool
+  | .scalar => true
+  | .indexed k => k.printable
+  | .keyed _ => false
+
 mutual
   /-- A statement in a body. `plain` holds in the body of a `fn` without `comptime`. -/
   def Stmt.printable (plain : Bool) : Stmt → Bool
@@ -237,8 +244,8 @@ mutual
     | .reg _ n ty i => validName n.name && ty.printable && i.printable
     | .wire _ n ty => validName n.name && ty.printable
     | .mem _ n ty d => validName n.name && ty.printable && d.printable
-    | .input _ n k ty => !plain && validName n.name && k.all Expr.printable && ty.printable
-    | .output _ n k ty => !plain && validName n.name && k.all Expr.printable && ty.printable
+    | .input _ n k ty => !plain && validName n.name && k.printable && ty.printable
+    | .output _ n k ty => !plain && validName n.name && k.printable && ty.printable
     | .inst _ n m xs =>
       validName n.name && validName m.name && Expr.printableAll xs
     | .ret _ v => v.all Expr.printable
@@ -351,6 +358,14 @@ theorem TypeExpr.ind (motive : TypeExpr → Prop)
     (fun _ _ _ => trivial) (fun _ _ ih _ _ h => by cases h; exact ih)
     case1 (fun p b xs ih _ => case2 p b xs ih) case3 case4 (fun p t n ih _ => case5 p t n ih)
     (fun p ps r ih ihr => case6 p ps r (fun m t h => ih _ h m t rfl) ihr) t
+
+@[simp] theorem PortForm.map_map (f : α → β) (g : β → γ) (k : PortForm α) :
+    (k.map f).map g = k.map (g ∘ f) := by
+  cases k <;> rfl
+
+@[simp] theorem PortForm.index?_map (f : α → β) (k : PortForm α) :
+    (k.map f).index? = k.index?.map f := by
+  cases k <;> rfl
 
 /-! The erasure is idempotent. -/
 
@@ -571,6 +586,15 @@ theorem Arm.printableAll_eq (as : List Arm) :
     simp [Pattern.erase, Pattern.printable, List.all_map, Function.comp_def, this]
   | _ => rfl
 
+/-! A printable port form is the form of its family key, and the key is printable. -/
+theorem PortForm.printable_index {k : PortForm Expr} (h : k.printable = true) :
+    k.index?.all Expr.printable = true ∧ k = .ofIndex k.index? := by
+  cases k <;> simp_all [PortForm.printable, PortForm.index?, PortForm.ofIndex]
+
+@[simp] theorem PortForm.map_ofIndex (f : α → β) (k : Option α) :
+    (PortForm.ofIndex k).map f = .ofIndex (k.map f) := by
+  cases k <;> rfl
+
 theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
     Stmt.printableAll plain ss = ss.all (Stmt.printable plain) := by
   induction ss <;> simp_all [Stmt.printableAll]
@@ -658,7 +682,8 @@ private theorem printable_erase_all :
     rw [all_congr_mem ih]
   | case1 _ _ _ ty _ => cases ty <;> simp [Stmt.erase, Stmt.printable]
   | case10 _ v => cases v <;> simp [Stmt.erase, Stmt.printable]
-  | case7 _ _ k _ | case8 _ _ k _ => cases k <;> simp [Stmt.erase, Stmt.printable]
+  | case7 _ _ k _ | case8 _ _ k _ =>
+    cases k <;> simp [Stmt.erase, Stmt.printable, PortForm.map, PortForm.printable]
   | _ => simp [Stmt.erase, Stmt.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def]
 

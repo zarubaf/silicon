@@ -152,6 +152,11 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
   else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
   else normalize p (.ref (.name ⟨x, []⟩) t)
 
+/-! An `as` key is `S004` at the key until its checks exist. -/
+def portKeyLater (p : Pos) : Eval.M Unit :=
+  let what := "a port key"
+  fail .S004 p s!"{what} is not supported yet"
+
 /-! The `S010` text "Family as a value" of section 6.2, for the family `x`. -/
 def familyValueText (x : String) : String :=
   s!"`{x}` is a port family, not a value; select one port with `{x}[k]`"

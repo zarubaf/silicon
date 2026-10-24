@@ -797,7 +797,7 @@ def exprs : List Expr :=
 
 def counter : Item :=
   .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
-    [.input p (nm "en") none (t "Bool"), .output p (nm "q") none (uint (v "W")),
+    [.input p (nm "en") .scalar (t "Bool"), .output p (nm "q") .scalar (uint (v "W")),
      .reg p (nm "r") (uint (v "W")) (n 0), .wire p (nm "w") (t "Bool"),
      .connect p (v "q") (v "r"), .connect p (.field p (v "u") (nm "d")) (v "w"),
      .inst p (nm "u") (nm "Child") [bin .add (v "W") (n 1)],

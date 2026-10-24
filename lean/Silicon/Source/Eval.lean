@@ -3053,9 +3053,10 @@ mutual
   -/
   def hwStmt (n : Nat) (s : Resolve.Stmt) : M Unit :=
     match s with
-    | .input p x (some k) ty | .output p x (some k) ty =>
+    | .input p x (.indexed k) ty | .output p x (.indexed k) ty =>
       entryDecl n p (s matches .input ..) x k ty
-    | .input p x none ty | .output p x none ty => do
+    | .input _ _ (.keyed k) _ | .output _ _ (.keyed k) _ => Elab.portKeyLater k.pos
+    | .input p x .scalar ty | .output p x .scalar ty => do
       let t ← Elab.dataType p (← typeExpr n ty)
       let v ← Elab.port p (s matches .input ..) x t
       bindLocal x.id ⟨some t, false, v⟩
@@ -3272,12 +3273,14 @@ mutual
     | .alias _ b ty => do scanType ty; scanBinder b
 
   /-- An indexed port of a module body has its family binder (section 5.6). -/
-  def scanPort (b : Binder) (k : Option Resolve.Expr) (ty : Resolve.TypeExpr) (input : Bool) :
+  def scanPort (b : Binder) (k : PortForm Resolve.Expr) (ty : Resolve.TypeExpr) (input : Bool) :
       ScanM Unit := do
-    k.forM scanExpr
+    if let .indexed e := k then scanExpr e
     scanType ty
+    if let .keyed e := k then scanExpr e
     scanBinder b
-    if k.isSome then modify fun t => { t with families := (b.id, input) :: t.families }
+    if k matches .indexed _ then
+      modify fun t => { t with families := (b.id, input) :: t.families }
 
   def scanStmts (ss : List Resolve.Stmt) : ScanM Unit := do
     for s in ss do scanStmt s
