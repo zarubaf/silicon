@@ -586,12 +586,9 @@ impl Evaluator<'_> {
             {
                 break;
             }
-            // A selector of a new value reaches a part of unknown type. A field after it can
-            // name a port of an instance, which the next segment reads as a handle.
-            if matches!(step, Sel::Select(..))
-                && known.is_none()
-                && matches!(steps.get(n + 1), Some(Sel::Field(..)))
-            {
+            // A selector of a new value reaches a part of unknown type. That part can be an
+            // instance, which the next step reads as a handle before it applies.
+            if matches!(step, Sel::Select(..)) && known.is_none() && n + 1 < steps.len() {
                 break;
             }
             known = after;
