@@ -273,27 +273,6 @@ impl Evaluator<'_> {
         }
     }
 
-    /// Whether the handle `h` fits the type `t`: a handle type needs a handle of exactly this
-    /// type. It is the one rule of the typed use of a handle leaf, also for the plan of an
-    /// aggregate.
-    pub(super) fn handle_fits(&self, h: &Handle, t: TyId) -> bool {
-        self.tys.get(t).is_handle() && self.handle_is(h, t)
-    }
-
-    /// The `S010` at `pos` for the `leaf` that does not fit the type `t`, when `t` is a handle
-    /// type or the leaf is a handle. A type with the handle flag is a container of handles, and
-    /// a data type is a data leaf, each with its own text. It is the one choice of the text,
-    /// also for the plan of an aggregate.
-    pub(super) fn handle_mismatch<T>(&self, pos: Pos, t: TyId, leaf: Seen<'_>) -> Res<T> {
-        let a = self.about(leaf);
-        let text = if t.holds_handles() {
-            self.handle_use_text(t, &a)
-        } else {
-            self.data_leaf_text(t, &a)
-        };
-        fail(Code::S010, pos, text)
-    }
-
     /// The new container node of the type `ty` at `pos` with the pieces: its depth (`S015`),
     /// then the charge of its size from the stored numbers of the pieces. Only then do the pieces
     /// copy.
