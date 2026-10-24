@@ -487,8 +487,7 @@ def huge : Nat → Ty
 #guard (Value.tuple (Array.replicate (2 ^ 20) (.uint 8 0))).text.utf8ByteSize == 1027
 /-!
 A user struct or enum with a prelude type name prints as `crate::X` at each depth (section 5.6).
-A prelude struct keeps its source form. The marker comes in the same step as the name, so the
-cut at the bound treats it as a part of the name.
+A prelude struct keeps its source form. The cut at the bound applies to the text with the marker.
 -/
 def userBool : Ty := .struct 102 "Bool" #[] (Meta.struct [Meta.finite 1] [])
 #guard userBool.text == "crate::Bool"
