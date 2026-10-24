@@ -14,7 +14,7 @@
 //! replaces a subexpression, which shifts the later draws of the main tape.
 
 use super::stat::{self, Reach};
-use super::{Builder, Built, Ctx, Names};
+use super::{Builder, Built, Ctx, Lane, Names};
 use crate::eval::Env;
 use crate::program::{EnumDef, Item, SExpr, STy, Scalar, Stmt, Variant};
 use num_bigint::BigUint;
@@ -36,21 +36,21 @@ impl Builder {
     /// it, also when it calls the code of the other forms. A call inside
     /// `f` stays on the side tape.
     pub(super) fn on_side<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
-        if self.swapped {
+        if self.swapped.is_some() {
             return f(self);
         }
-        self.swapped = true;
+        self.swapped = Some(Lane::Side);
         std::mem::swap(&mut self.tape, &mut self.side);
         let out = f(self);
         std::mem::swap(&mut self.tape, &mut self.side);
-        self.swapped = false;
+        self.swapped = None;
         out
     }
 
     /// A number below `n` from the side tape, also while `on_side` has
     /// swapped the tapes.
     pub(super) fn side_below(&mut self, n: u32) -> u32 {
-        if self.swapped {
+        if self.swapped.is_some() {
             self.tape.below(n)
         } else {
             self.side.below(n)

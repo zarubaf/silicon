@@ -171,6 +171,14 @@ fn build(tape: Vec<u32>) -> Result<Program, BuildFault> {
     Builder::new(tape).program().map_err(BuildFault)
 }
 
+/// A side tape of the builder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Lane {
+    Side,
+    Hand,
+    Port,
+}
+
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
 /// of the `Tape` of `core_ir::gen` (`crates/core-ir/src/gen/mod.rs`), which
 /// carries the core `Config`; a shared `Tape` would couple the two
@@ -542,9 +550,9 @@ struct Builder {
     /// of ports draw from it, so that a program without them is the program
     /// of the other tapes alone.
     port: Tape,
-    /// Whether `on_side`, `on_hand`, or `on_port` has swapped `tape` with
-    /// another.
-    swapped: bool,
+    /// The tape that `on_side`, `on_hand`, or `on_port` has swapped into
+    /// `tape`, if any.
+    swapped: Option<Lane>,
     /// The binders `B<n>` of static matches made so far.
     binders: u32,
     /// The matches that are open: the arm being built is in this many.
@@ -620,7 +628,7 @@ impl Builder {
             tape: Tape {
                 numbers: tape.into_iter(),
             },
-            swapped: false,
+            swapped: None,
             binders: 0,
             match_level: 0,
             consts: Vec::new(),
