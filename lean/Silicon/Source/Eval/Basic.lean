@@ -216,24 +216,38 @@ def Base.sub (ps : Parts) (t : Ty) (k : Nat) (f : Field) : Base → Base
   | .out i q r => .out i q (f :: r)
   | .word m o => .word m (o + Ty.offset ps t k)
 
-/-! A port of an instantiation, as its parent sees it. `sym` is the symbol of its name. -/
+/-!
+The identity of a port: the symbol of its name and the key of a family entry. A scalar port has
+no key (section 5.6).
+-/
+abbrev PortId := Nat × Option Nat
+
+/-!
+A port of an instantiation, as its parent sees it. `sym` is the symbol of its name, and `key`
+the key of a family entry.
+-/
 structure Port where
   name : String
   sym : Nat
+  key : Option Nat
   input : Bool
   ty : Ty
   pos : Pos
   deriving Repr, Inhabited
 
+def Port.id (q : Port) : PortId := (q.sym, q.key)
+
 /-!
-The interface of a done instantiation: its emitted name, its ports by the symbol of their
-name, its number of inputs, and its domain. A combinational module has no domain.
+The interface of a done instantiation: its emitted name, its ports by their identity, its
+number of inputs, and its domain. A combinational module has no domain. `families` gives the
+direction of each port family by the symbol of its name, `true` for an input.
 -/
 structure Iface where
   name : Names.Name
-  ports : Std.HashMap Nat Port
+  ports : Std.HashMap PortId Port
   inputs : Nat
   domain : Option String
+  families : Std.HashMap Nat Bool
 
 /-! The resources that need one binding with `:=`. -/
 inductive Kind where
@@ -815,10 +829,11 @@ namespace Silicon.Source.Elab
 
 open Resolve Names Eval
 
-/-! A port declaration. A port keeps its source name. -/
+/-! A port declaration. A port keeps its source name. A family entry has its key. -/
 structure PortDecl where
   name : String
   sym : Nat
+  key : Option Nat
   input : Bool
   ty : Ty
   pos : Pos
@@ -872,9 +887,11 @@ structure Body where
 /-!
 A resource that needs one binding, by its number: its declaration, its bindings, and its first
 binding. The first binding holds its position and the number of its call frame (`Ctx.call`).
+An output entry of a family has its key.
 -/
 structure Need where
   name : String
+  key : Option Nat := none
   pos : Pos
   count : Nat
   first : Option (Pos × Nat) := none
@@ -882,16 +899,16 @@ structure Need where
 /-!
 The work of the current instantiation. The resource number indexes `needs`, and the instance
 number indexes `bound`. The memories are in the names of the instantiation (`Naming.mems`).
-`inputs` counts the bindings of each child input, with the position and the call frame number
-of the first one. `dup`
-holds the first `S018` of a second binding or a second port call by position. `spent` is the
-fuel of the new children.
+`inputs` counts the bindings of each child input, by the instance number and the port identity.
+It also holds the position and the call frame number of the first binding. `dup` holds the
+first `S018` of a second binding or a second port call by position. `spent` is the fuel of the
+new children.
 -/
 structure Work where
   body : Body
   needs : Array Need := #[]
   bound : Array Nat := #[]
-  inputs : Std.HashMap (Nat × Nat) (Nat × Pos × Nat) := {}
+  inputs : Std.HashMap (Nat × PortId) (Nat × Pos × Nat) := {}
   dup : Option (Pos × Breach) := none
   spent : Nat := 0
 

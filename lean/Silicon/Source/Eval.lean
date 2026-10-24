@@ -2237,6 +2237,28 @@ def matchHw (pos : Pos) (sel : Hw) (keys : List (Option Int)) (vs : List Val) : 
   | j => return (← armPart "match" pos leaf j xs).val
 
 /-!
+The part that the field `f` at `p` selects from the base `o`. On an `Instance` handle it is the
+child port: an input gives its handle, and an output refers to it. Another base gives its data
+field.
+-/
+def fieldPart (p : Pos) (o : Out) (f : Ident) : M Out := do
+  match o.value with
+  | .handle (.inst id path iface _) =>
+    match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
+    | some q =>
+      if q.input then return ⟨.handle (.input id path q), true, none⟩
+      else
+        -- A child output refers, unless it has no hardware leaf and is a new static value.
+        let r ← readRef p (.out path q.name []) q.ty
+        return ⟨r, !(r matches .static _), none⟩
+    | none => fail .S010 p s!"the instance has no port `{f.name}`"
+  | v => do
+    -- A data field selection is a data context (section 9.2), so an input handle is S017.
+    let w ← if v matches .handle (.res ..) | .handle (.input ..) then baseData p v
+      else pure v
+    return part o w (← field p f w)
+
+/-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
 charges 1, then its index evaluates by `ev` and is static (`S011`). Another step has no index
 here.
@@ -2267,7 +2289,7 @@ def targetRoot (ev : Resolve.Expr → M (Option Out)) (root : Resolve.Expr) : M 
 /-!
 The part that the `:=` target `e` selects. A root that is not a local evaluates first. Then
 the indices evaluate (`targetKeys`), and a local root gives its value after them. One walk then
-runs the steps from the root outward (`Elab.targetStep`). Another root has no slot, and its value
+runs the steps from the root outward (`Elab.targetWalk`). Another root has no slot, and its value
 names it in the text of `S017`. The target is an identity, so it opens no window and charges
 no held root.
 -/
@@ -2277,12 +2299,10 @@ def targetPart (ev : Resolve.Expr → M (Option Out)) (e : Resolve.Expr) : M Val
     | .name _ _ (.local _) => pure none
     | _ => do pure (some (← targetRoot ev root))
   let keys ← targetKeys ev sels
-  let mut v ← match early with
+  let v ← match early with
     | some v => pure v
     | none => targetRoot ev root
-  for key in keys do
-    v ← Elab.targetStep e.pos v key
-  return v
+  Elab.targetWalk e.pos v keys
 
 /-!
 The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
@@ -2311,10 +2331,10 @@ def sinkValue (p : Pos) (t : Ty) : Val → M Agg
 
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
-one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`, `params`,
-`placeAt`, `args`, `ctor`, `actuals`, `invoke`, `call`, `hwStmt`, and `instantiate` get the
-bound `n` of their caller after its charge. They call entry functions, `spec`, which a name of a
-struct item uses, and the helpers that `call` and `hwStmt` use.
+one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`,
+`indexBase`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`, `call`, `hwStmt`, and
+`instantiate` get the bound `n` of their caller after its charge. They call entry functions,
+`spec`, which a name of a struct item uses, and the helpers that `call` and `hwStmt` use.
 -/
 /-!
 The kind of a declaration or a `:=` statement in the text "Hardware in a `comptime fn`"
@@ -2419,7 +2439,7 @@ mutual
             charge bp 1
             return some ⟨.static (.type (← spec n p i xs)), false, none⟩
         let [x] := xs | fail .S010 p "an index of a value has one argument"
-        let o ← need b (← eval n b)
+        let o ← indexBase n b
         let v ← baseData p o.value
         if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
         let k ← changesOf o
@@ -2434,23 +2454,7 @@ mutual
         if (← changesOf o) == k then return some r
         charge p r.value.size
         return some ⟨r.value, false, none⟩
-      | .field p b f => do
-        let o ← need b (← eval n b)
-        match o.value with
-        | .handle (.inst id path iface _) =>
-          match (← read).field f.pos >>= (iface.ports[·]?) with
-          | some q =>
-            if q.input then return some ⟨.handle (.input id path q), true, none⟩
-            else
-              -- A child output refers, unless it has no hardware leaf and is a new static value.
-              let r ← readRef p (.out path q.name []) q.ty
-              return some ⟨r, !(r matches .static _), none⟩
-          | none => fail .S010 p s!"the instance has no port `{f.name}`"
-        | v => do
-          -- A data field selection is a data context (section 9.2), so an input handle is S017.
-          let w ← if v matches .handle (.res ..) | .handle (.input ..) then baseData p v
-            else pure v
-          return some (part o w (← field p f w))
+      | .field p b f => return some (← fieldPart p (← need b (← eval n b)) f)
       | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
       | .tuple p xs => do
         let es ← operands n xs fun x o => element x.pos o.value
@@ -2584,6 +2588,18 @@ mutual
         staticValue p "a comptime parameter" v
         return .static (← static p v)
     specOf (fun t => typeExpr n t) p i x ps fs pre args
+  termination_by (n + 1, 0)
+
+  /--
+  The base `b` of an index of a value. A field base charges its node, then its own base
+  evaluates, and `fieldPart` selects from it, as `eval` of the field does.
+  -/
+  def indexBase (n : Nat) (b : Resolve.Expr) : M Out :=
+    match b with
+    | .field q c f => do
+      charge q 1
+      fieldPart q (← need c (← eval n c)) f
+    | b => do need b (← eval n b)
   termination_by (n + 1, 0)
 
   /--

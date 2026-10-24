@@ -130,7 +130,7 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
     set { s with naming.versions := s.naming.versions.insert key (v + 1) }
     return v != 0 : Eval.M Bool)
   if taken then fail .S019 p s!"two declarations have the core name `{x}`"
-  modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, input, t, p⟩ }
+  modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, none, input, t, p⟩ }
   -- An input refers to its name: a scalar is hardware, and an aggregate a lazy reference. An
   -- empty input stays a reference too, so only a read of it pays its zero (`Eval.name`).
   if !input then resource .output ⟨x, []⟩ t p x
@@ -169,7 +169,7 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := 
   let (sel, key) := step
   match v, sel with
   | .handle (.inst k path iface _), .field q f =>
-    match (← read).field f.pos >>= (iface.ports[·]?) with
+    match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
     | some port =>
       if port.input then return .handle (.input k path port)
       else fail .S017 s (outputText f.name)
@@ -186,6 +186,14 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := 
       charge q 1
       return (← fieldKey q f v).2.1
   | _, _ => fail .S017 s partText
+
+/-!
+The walk of the steps `steps` of a `:=` target that starts at `s`, from the base `v` outward.
+Each step selects in `targetStep`.
+-/
+def targetWalk (s : Pos) (v : Val) : List (Sel × Option Value) → Eval.M Val
+  | [] => pure v
+  | step :: rest => do targetWalk s (← targetStep s v step) rest
 
 /-! Records the `S018` data `x` at `p`. The first by position wins (section 6.2). -/
 def breach (p : Pos) (x : Breach) : Eval.M Unit :=
@@ -225,13 +233,13 @@ def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
         { r with count := n.count + 1, first := r.first <|> some here } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
   | .child k path q =>
-    let (c, b) := w.inputs.getD (k, q.sym) (0, here)
+    let (c, b) := w.inputs.getD (k, q.id) (0, here)
     if c == 0 then
       modify fun s => { s with inst.work.bound := s.inst.work.bound.modify k (· + 1) }
     if c == 1 then
       let (u, d) := ((w.body.children[k]?).map fun c => (c.name, c.pos)).getD ("", p)
       breach p (← second p (.input u q.name) b d)
-    modify fun s => { s with inst.work.inputs := s.inst.work.inputs.insert (k, q.sym) (c + 1, b) }
+    modify fun s => { s with inst.work.inputs := s.inst.work.inputs.insert (k, q.id) (c + 1, b) }
     modifyBody fun b =>
       { b with binds := b.binds.push ⟨.child k path (portName q.name) q.ty, h, p⟩ }
 
@@ -257,14 +265,16 @@ def bindings : Eval.M Unit := do
       if first.all fun (d, _) => before c.pos d.pos then first := some (c, k)
   if let some (c, k) := first then
     let free := c.iface.ports.fold (init := none) fun f _ q =>
-      if q.input && !w.inputs.contains (k, q.sym) && f.all (before q.pos ·.pos) then some q else f
+      if q.input && !w.inputs.contains (k, q.id) && f.all (before q.pos ·.pos) then some q else f
     err := firstBreach err c.pos (.input c.name ((free.map (·.name)).getD ""))
   if let some (p, x) := err then fail .S018 p (x.text (← read).itemName)
 
 /-! The interface of a done instantiation. -/
 def iface (name : Name) (b : Body) : Iface :=
-  ⟨name, b.ports.foldl (fun m q => m.insert q.sym ⟨q.name, q.sym, q.input, q.ty, q.pos⟩) {},
-   (b.ports.filter (·.input)).size, b.domain⟩
+  ⟨name,
+   b.ports.foldl (fun m q => m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos⟩)
+     {},
+   (b.ports.filter (·.input)).size, b.domain, {}⟩
 
 /-!
 The serialization of an `InstantiationId` at the statement `pos`. It charges the walk that
