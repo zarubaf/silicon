@@ -1,0 +1,17 @@
+// S010: a selector after the instance part of a temporary tuple reads the instance as data, so it is an instance, not data.
+// TOP M()
+module C() {
+    output q: UInt[8];
+    q := 7;
+}
+fn wrap(h: Instance[C]) -> (Instance[C],) {
+    return (h,);
+}
+module M() {
+    output o: UInt[8];
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `u` is an instance, not data; read its outputs as `u.q`
+    let t = wrap(u).0.1;
+    o := u.q;
+}
