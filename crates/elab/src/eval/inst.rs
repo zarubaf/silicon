@@ -43,8 +43,11 @@ use crate::value::{InstantiationId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
 use parse::ast::{Expr, Ident, Item, Pos, Stmt, TypeExpr, UnOp};
-use resolve::{Resolved, Target as Ref};
+use resolve::{DeclId, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod family;
+pub(super) use family::family_value;
 
 /// A port declaration. A port keeps its source name. A family entry has its key.
 pub(crate) struct PortDecl {
@@ -201,12 +204,15 @@ enum Breach {
 /// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
 /// `inputs` counts the bindings of each child input, with the position and the call frame number of the first one. `dup`
 /// holds the first `S018` of a second binding or a second port call by position. `spent` is the
-/// fuel of the new children.
+/// fuel of the new children. `entries` holds the declared family entries by the family binder and
+/// the key: the value of each entry and the position of its declaration. A family binder has no
+/// frame slot.
 struct Work {
     body: Body,
     needs: Vec<Need>,
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, PortId), (u64, Here)>,
+    entries: BTreeMap<(DeclId, u32), (Val, Pos)>,
     dup: Option<(Pos, Breach)>,
     spent: u64,
 }
@@ -218,6 +224,7 @@ impl Work {
             needs: Vec::new(),
             bound: Vec::new(),
             inputs: BTreeMap::new(),
+            entries: BTreeMap::new(),
             dup: None,
             spent: 0,
         }
@@ -579,11 +586,7 @@ impl Evaluator<'_> {
                 ty,
             } => {
                 if let Some(k) = index {
-                    return fail(
-                        Code::S004,
-                        k.pos(),
-                        "a port family is not supported yet".to_owned(),
-                    );
+                    return self.entry_decl(*pos, matches!(s, Stmt::Input { .. }), name, k, ty);
                 }
                 let tid = self.type_expr(ty)?;
                 let t = self.data_type(*pos, tid)?;
@@ -617,7 +620,7 @@ impl Evaluator<'_> {
                 let path = self.fresh(id);
                 #[cfg(test)]
                 self.elab.work.body.wires.push(path);
-                let w = self.resource(Kind::Wire, path, tid, *pos, self.sym(id));
+                let w = self.resource(Kind::Wire, path, tid, *pos, (self.sym(id), None));
                 self.bind(
                     id,
                     Slot {
@@ -696,7 +699,7 @@ impl Evaluator<'_> {
             init,
             pos,
         });
-        let reg = self.resource(Kind::Reg, path, tid, pos, self.sym(id));
+        let reg = self.resource(Kind::Reg, path, tid, pos, (self.sym(id), None));
         self.bind(
             id,
             Slot {
@@ -821,11 +824,18 @@ impl Evaluator<'_> {
     }
 
     /// A resource that needs one binding. The result is its handle.
-    fn resource(&mut self, kind: Kind, path: PathId, tid: TyId, pos: Pos, name: Sym) -> Val {
+    fn resource(
+        &mut self,
+        kind: Kind,
+        path: PathId,
+        tid: TyId,
+        pos: Pos,
+        (name, key): (Sym, Option<u32>),
+    ) -> Val {
         let id = self.elab.work.needs.len();
         self.elab.work.needs.push(Need {
             name,
-            key: None,
+            key,
             pos,
             count: 0,
             first: None,
@@ -872,7 +882,7 @@ impl Evaluator<'_> {
                 self.normalize(pos, r)
             }
         } else {
-            Ok(self.resource(Kind::Output, path, tid, pos, sym))
+            Ok(self.resource(Kind::Output, path, tid, pos, (sym, None)))
         }
     }
 

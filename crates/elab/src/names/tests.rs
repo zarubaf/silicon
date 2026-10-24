@@ -111,6 +111,9 @@ fn made() -> Vec<Field> {
         Field::Elem(int("0")),
         Field::Elem(int("2")),
         Field::Elem(int("18446744073709551616")),
+        Field::Family(0),
+        Field::Family(3),
+        Field::Family(u32::MAX),
     ];
     out.extend(ROLES.iter().map(|r| Field::Role(*r)));
     out
@@ -198,6 +201,35 @@ fn the_keyword_escape() {
         )),
         "Fifo$16$1b"
     );
+}
+
+/// The key of a family entry is the made field `<k>f` (section 7.2). It differs from an element
+/// `<k>e` and from a loop value `k`, and its text has no leading zeros.
+#[test]
+fn the_family_field() {
+    let entry = |k: u32| name("req", vec![Field::Family(k)]);
+    assert_eq!(encode(&entry(3)), "req$3f");
+    assert_eq!(
+        encode(&name(
+            "req",
+            vec![Field::Family(3), Field::User("a".into())]
+        )),
+        "req$3f$a"
+    );
+    assert_eq!(decode("req$3f"), Some(entry(3)));
+    assert_eq!(decode("req$0f"), Some(entry(0)));
+    assert_eq!(decode("req$4294967295f"), Some(entry(u32::MAX)));
+    assert_eq!(decode("req$4294967296f"), None);
+    assert_eq!(decode("req$03f"), None);
+    assert_eq!(
+        decode("req$f"),
+        Some(name("req", vec![Field::User("f".into())]))
+    );
+    assert_eq!(
+        decode("req$3e"),
+        Some(name("req", vec![Field::Elem(int("3"))]))
+    );
+    assert_eq!(entry(10).byte_size(), "req$10f".len() as u64);
 }
 
 /// The leaf names of section 7.3. An element `<k>e` differs from the loop value `k`.
@@ -445,6 +477,7 @@ fn arb_field() -> impl Strategy<Value = Field> {
         any::<u64>().prop_map(Field::Temp),
         any::<u64>().prop_map(|k| Field::Elem(Int::from_u64(k))),
         any::<u64>().prop_map(|k| Field::Elem(Int::from_u64(k).shl(64))),
+        any::<u32>().prop_map(Field::Family),
         proptest::sample::select(ROLES.to_vec()).prop_map(Field::Role),
     ]
 }

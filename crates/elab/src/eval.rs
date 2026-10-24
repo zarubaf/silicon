@@ -56,6 +56,7 @@ mod typed;
 mod types;
 
 pub use inst::Design;
+use inst::family_value;
 pub(crate) use inst::{Bind, Elab, Inst, Literal, Mem, Sink, elaborate};
 pub(crate) use mem::addr_width;
 use store::{ConstStatus, Slot, Store};
@@ -227,11 +228,14 @@ struct Evaluator<'a> {
     lens: crate::serial::Cache,
 }
 
-/// The kind of a guard (section 9.4): a hardware arm or a structural context.
+/// The kind of a guard (section 9.4): a hardware arm or a structural context. A family key
+/// (`Key`) and an index of a `:=` target (`Index`) are structural contexts with their own texts.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuardKind {
     Arm,
     Structural,
+    Key,
+    Index,
 }
 
 /// The innermost guard: its kind, the nesting depth at its start, and `callee`. The `callee` is
@@ -265,6 +269,14 @@ impl Guard {
             GuardKind::Structural => format!(
                 "a type or a constant cannot change `{x}`; change `{x}` before it, keep the result in a `let`, and use that name here"
             ),
+            GuardKind::Key => format!(
+                "a port family key cannot change `{x}`; change `{x}` before this statement, keep \
+                 the result in a `let`, and use that name in the key"
+            ),
+            GuardKind::Index => format!(
+                "a `:=` target index cannot change `{x}`; change `{x}` before the `:=`, keep the \
+                 result in a `let`, and use that name in the index"
+            ),
         }
     }
 
@@ -277,6 +289,14 @@ impl Guard {
             ),
             GuardKind::Structural => format!(
                 "a type or a constant has no graph effect such as `{g}`; call it before and use the result"
+            ),
+            GuardKind::Key => format!(
+                "a port family key has no graph effect such as `{g}`; call `{g}` before this \
+                 statement, keep the result in a `let`, and use that name in the key"
+            ),
+            GuardKind::Index => format!(
+                "a `:=` target index has no graph effect such as `{g}`; call `{g}` before the \
+                 `:=`, keep the result in a `let`, and use that name in the index"
             ),
         }
     }
@@ -1099,10 +1119,19 @@ impl Evaluator<'_> {
     /// Runs `act` in a structural context (section 9.4): its guard starts at the current depth,
     /// so it is the innermost guard. Setting and restoring it is O(1).
     pub(super) fn structural<T>(&mut self, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
+        self.guarded(GuardKind::Structural, act)
+    }
+
+    /// Runs `act` under a guard of the kind `kind` (Lean `guardedBy`).
+    pub(super) fn guarded<T>(
+        &mut self,
+        kind: GuardKind,
+        act: impl FnOnce(&mut Self) -> Res<T>,
+    ) -> Res<T> {
         #[cfg(test)]
         crate::counters::add(crate::counters::Count::Guarded, 1);
         let saved = self.guard.replace(Guard {
-            kind: GuardKind::Structural,
+            kind,
             depth: self.depth,
             callee: None,
         });
@@ -1313,6 +1342,9 @@ impl Evaluator<'_> {
                     self.charge(*bp, 1)?;
                     let t = self.spec(*pos, i, args)?;
                     return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
+                }
+                if let Some(out) = self.family_selection(*pos, base, args)? {
+                    return Ok(Some(out));
                 }
                 self.read(e)
             }
@@ -1612,6 +1644,7 @@ impl Evaluator<'_> {
                     None => fail(Code::S010, pos, format!("`{x}` is not an item")),
                 },
                 Kind::Module => fail(Code::S010, pos, format!("`{x}` is not a value")),
+                Kind::Family { .. } => family_value(pos, x),
                 Kind::Domain => {
                     self.keep_domain(id, x);
                     Ok(Out::Named(Val::Handle(Handle::Domain(id))))

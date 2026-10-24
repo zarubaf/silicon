@@ -64,7 +64,7 @@ impl Design {
         let mut shapes = layout::Shapes::default();
         let mut ports = Vec::with_capacity(top.body.ports.len());
         for q in &top.body.ports {
-            let source = text(q.sym);
+            let source = self.texts.get(q.sym).map_or("", String::as_str);
             let root = self.tys.id_of(&q.ty)?;
             let mut leaves = Vec::new();
             let mut cursor = layout::Leaves::new(root, ());
@@ -74,18 +74,19 @@ impl Design {
             {
                 let fields = cursor.fields();
                 leaves.push(Entry {
-                    name: layout::leaf_entry(&source, fields),
-                    core: encode(&layout::leaf_name(&source, fields)),
+                    name: layout::leaf_entry(source, q.key, fields),
+                    core: encode(&layout::leaf_name(source, q.key, fields)),
                     ty: self.tys.get(t).clone(),
                 });
             }
             ports.push(layout::Declared {
-                name: source,
+                sym: q.sym,
+                key: q.key,
                 input: q.input,
                 leaves,
             });
         }
-        let layout::Ports { inputs, outputs } = layout::arrange(reset, ports);
+        let layout::Ports { inputs, outputs } = layout::arrange(reset, ports, &self.texts);
         Some(Schema { inputs, outputs })
     }
 }

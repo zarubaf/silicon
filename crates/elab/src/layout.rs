@@ -4,10 +4,11 @@
 //! leaves. `flatten` and `vectors` both read it. No other module expands a port.
 //!
 //! The domain ports come first, then the inputs, then the outputs. In each group of inputs and
-//! outputs, the ports sort by the byte order of their source names. The leaves of one port
-//! follow in packing order, so the layout order is not the byte order of the core names. The
-//! resolver makes the port names of a module unique, so two ports never tie and the sort
-//! needs no tie break.
+//! outputs, the ports sort by the byte order of their source names, then by their family keys as
+//! numbers, with no key first, so `req[2]` comes before `req[10]`. The sort compares two names
+//! only when their symbols differ. The leaves of one port follow in packing order, so the layout
+//! order is not the byte order of the core names. One name has one form and one family has each
+//! key once, so two ports never tie.
 //!
 //! `Leaves` streams the leaves of a type in packing order with its own stack: it makes no
 //! list of them, so a caller charges each leaf before it makes the leaf. A part without a leaf
@@ -18,6 +19,7 @@
 use crate::names::{Field, Name, Sym};
 use crate::types::{ENUM_PART_NAMES, PartNames, Ty, TyId, Types};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// What the walk needs to name the parts of a type: the table of types, the field symbols of
 /// each struct item, and the text of each symbol.
@@ -213,18 +215,27 @@ impl<S> Leaves<S> {
     }
 }
 
-/// The core name of the leaf of the port `source` with the leaf fields `fields`.
-pub(crate) fn leaf_name(source: &str, fields: &[Field]) -> Name {
+/// The core name of the leaf of the port `source` with the family key `key` and the leaf fields
+/// `fields`.
+pub(crate) fn leaf_name(source: &str, key: Option<u32>, fields: &[Field]) -> Name {
     Name {
         head: source.to_owned(),
-        rest: fields.to_vec(),
+        rest: key
+            .map(Field::Family)
+            .into_iter()
+            .chain(fields.iter().cloned())
+            .collect(),
     }
 }
 
-/// The name of the leaf in a source vector: the source name of the port, then `.f` for a field
-/// and `.k` for an element at each level.
-pub(crate) fn leaf_entry(source: &str, fields: &[Field]) -> String {
+/// The name of the leaf in a source vector (section 11.2): the source name of the port, then
+/// `[k]` for the key of a family entry. Then each level adds `.f` for a field and `.k` for an
+/// element.
+pub(crate) fn leaf_entry(source: &str, key: Option<u32>, fields: &[Field]) -> String {
     let mut entry = source.to_owned();
+    if let Some(k) = key {
+        let _ = write!(entry, "[{k}]");
+    }
     for field in fields {
         entry.push('.');
         match field {
@@ -242,19 +253,33 @@ pub(crate) struct Ports<T> {
     pub outputs: Vec<T>,
 }
 
-/// A declared port: its source name, its direction, and the values of its leaves in packing
-/// order.
+/// A declared port: the symbol of its source name, its family key, its direction, and the values
+/// of its leaves in packing order. It holds no text, so a port without a leaf copies none.
 pub(crate) struct Declared<T> {
-    pub name: String,
+    pub sym: Sym,
+    pub key: Option<u32>,
     pub input: bool,
     pub leaves: Vec<T>,
 }
 
-/// The layout of the domain ports `domain` and the declared ports `ports`. The domain ports
-/// stay in their order, `d$0clk` before `d$0rst`.
-pub(crate) fn arrange<T>(domain: Vec<T>, ports: Vec<Declared<T>>) -> Ports<T> {
+/// The layout of the domain ports `domain` and the declared ports `ports`, with the text of each
+/// symbol from `texts`. The domain ports stay in their order, `d$0clk` before `d$0rst`.
+pub(crate) fn arrange<T>(domain: Vec<T>, ports: Vec<Declared<T>>, texts: &[String]) -> Ports<T> {
     let mut sorted = ports;
-    sorted.sort_by(|x, y| x.name.cmp(&y.name));
+    let text = |s: Sym| texts.get(s).map_or("", String::as_str);
+    sorted.sort_by(|x, y| {
+        if x.sym == y.sym {
+            x.key.cmp(&y.key)
+        } else {
+            let (a, b) = (text(x.sym), text(y.sym));
+            #[cfg(test)]
+            crate::counters::add(
+                crate::counters::Count::TextBytes,
+                a.len().min(b.len()) as u64,
+            );
+            a.cmp(b)
+        }
+    });
     let mut inputs = domain;
     let mut outputs = Vec::new();
     for port in sorted {
