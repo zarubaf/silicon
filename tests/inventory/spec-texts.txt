@@ -32,8 +32,6 @@ pin | S001 Query operand | 344
 lean | S001 `as` on an indexed port | 339
 rust | S001 `as` on an indexed port | 339
 pin | S001 `as` on an indexed port | 339
-rust | S002 Family and scalar port | 338
-rust | S010 Family as a value | 338
 lean | S010 `@typeInfo` of a value | 345
 rust | S010 `@typeInfo` of a value | 345
 pin | S010 `@typeInfo` of a value | 345
@@ -43,16 +41,6 @@ pin | S010 `@ports` of a non-instance | 346
 lean | S010 No public port | 344
 rust | S010 No public port | 344
 pin | S010 No public port | 344
-rust | S013 Undeclared family key | 338
-rust | S002 Family with two directions | 338
-rust | S010 Family key type | 338
-rust | S012 Family key range | 338
-rust | S013 Child family key | 338
-rust | S019 Family key twice | 338
-rust | S016 Mutation in a family key | 338
-rust | S016 Graph effect in a family key | 338
-rust | S016 Mutation in a target index | 338
-rust | S016 Graph effect in a target index | 338
 lean | S019 Public name twice | 339
 rust | S019 Public name twice | 339
 pin | S019 Public name twice | 339
