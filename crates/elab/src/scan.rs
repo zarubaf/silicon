@@ -16,7 +16,7 @@
 use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Pattern, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Pattern, PortForm, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -294,16 +294,14 @@ impl Walk<'_> {
                 self.expr(depth, d);
                 self.binder(name);
             }
-            Stmt::Input {
-                name, index, ty, ..
-            }
-            | Stmt::Output {
-                name, index, ty, ..
-            } => {
-                if let Some(k) = index {
+            Stmt::Input { name, form, ty, .. } | Stmt::Output { name, form, ty, .. } => {
+                if let PortForm::Indexed(k) = form {
                     self.expr(k, d);
                 }
                 self.ty(ty, d);
+                if let PortForm::Keyed(k) = form {
+                    self.expr(k, d);
+                }
                 self.binder(name);
                 self.family(name);
             }

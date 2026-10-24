@@ -6,7 +6,7 @@
 //! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
 use crate::ast::{
-    Arm, Expr, FnParam, Ident, Item, Param, Pattern, Stmt, StructField, TypeExpr, Variant,
+    Arm, Expr, FnParam, Ident, Item, Param, Pattern, PortForm, Stmt, StructField, TypeExpr, Variant,
 };
 use std::fmt::{Debug, Write};
 
@@ -78,6 +78,19 @@ fn option<T>(value: Option<&T>, out: &mut String, each: impl FnOnce(&T, &mut Str
         Some(value) => node("some", out, |out| {
             out.push(' ');
             each(value, out);
+        }),
+    }
+}
+
+/// The form of a port: `none` for a scalar, `(some <index>)` for an indexed port, and
+/// `(keyed <key>)` for a port with an `as` key.
+fn port_form(form: &PortForm, out: &mut String) {
+    match form {
+        PortForm::Scalar => option::<Expr>(None, out, expr),
+        PortForm::Indexed(k) => option(Some(k), out, expr),
+        PortForm::Keyed(k) => node("keyed", out, |out| {
+            out.push(' ');
+            expr(k, out);
         }),
     }
 }
@@ -319,15 +332,11 @@ fn stmt(s: &Stmt, out: &mut String) {
         } => node("mem", out, |out| {
             fields!(out; ident(name, out), type_expr(word, out), expr(depth, out));
         }),
-        Stmt::Input {
-            name, index, ty, ..
-        } => node("input", out, |out| {
-            fields!(out; ident(name, out), option(index.as_ref(), out, expr), type_expr(ty, out));
+        Stmt::Input { name, form, ty, .. } => node("input", out, |out| {
+            fields!(out; ident(name, out), port_form(form, out), type_expr(ty, out));
         }),
-        Stmt::Output {
-            name, index, ty, ..
-        } => node("output", out, |out| {
-            fields!(out; ident(name, out), option(index.as_ref(), out, expr), type_expr(ty, out));
+        Stmt::Output { name, form, ty, .. } => node("output", out, |out| {
+            fields!(out; ident(name, out), port_form(form, out), type_expr(ty, out));
         }),
         Stmt::Inst {
             name, module, args, ..

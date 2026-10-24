@@ -9,8 +9,8 @@ use crate::{
     Call, Code, Decl, DeclId, Error, Kind, Resolved, Table, Target, VariantNames, VariantRef,
 };
 use parse::ast::{
-    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, Pos, Stmt, StructField,
-    TypeExpr, Variant,
+    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, PortForm, Pos, Stmt,
+    StructField, TypeExpr, Variant,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -380,8 +380,12 @@ impl Walker {
                 continue;
             };
             match stmt {
-                Stmt::Input { name, index, .. } => self.see_port(name, index.is_some(), true),
-                Stmt::Output { name, index, .. } => self.see_port(name, index.is_some(), false),
+                Stmt::Input { name, form, .. } => {
+                    self.see_port(name, matches!(form, PortForm::Indexed(_)), true);
+                }
+                Stmt::Output { name, form, .. } => {
+                    self.see_port(name, matches!(form, PortForm::Indexed(_)), false);
+                }
                 Stmt::CtIf { yes, no, .. } => {
                     if let Some(no) = no {
                         open.push(no.iter());
@@ -459,13 +463,17 @@ impl Walker {
     /// The statement `input name[k]: T;` or `output name[k]: T;`, and the same without a key.
     /// An indexed declaration of a module body takes its family, and binds the name in its own
     /// block too (section 5.6). Another port declares a local.
-    fn port(&mut self, name: &Ident, index: Option<&Expr>, ty: &TypeExpr, kind: Kind) {
-        if let Some(key) = index {
+    fn port(&mut self, name: &Ident, form: &PortForm, ty: &TypeExpr, kind: Kind) {
+        if let PortForm::Indexed(key) = form {
             self.expr(key);
         }
         self.ty(ty);
-        let family = index
-            .and(self.ports.get(name.name.as_str()))
+        if let PortForm::Keyed(key) = form {
+            self.expr(key);
+        }
+        let family = matches!(form, PortForm::Indexed(_))
+            .then(|| self.ports.get(name.name.as_str()))
+            .flatten()
             .and_then(|e| e.family);
         let Some((_, id, _)) = family else {
             self.declare(name, kind);
@@ -525,12 +533,8 @@ impl Walker {
                 self.expr(depth);
                 self.declare(name, Kind::Mem);
             }
-            Stmt::Input {
-                name, index, ty, ..
-            } => self.port(name, index.as_ref(), ty, Kind::Input),
-            Stmt::Output {
-                name, index, ty, ..
-            } => self.port(name, index.as_ref(), ty, Kind::Output),
+            Stmt::Input { name, form, ty, .. } => self.port(name, form, ty, Kind::Input),
+            Stmt::Output { name, form, ty, .. } => self.port(name, form, ty, Kind::Output),
             Stmt::Inst {
                 name, module, args, ..
             } => {

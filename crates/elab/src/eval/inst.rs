@@ -43,7 +43,7 @@ use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
-use parse::ast::{Expr, Ident, Item, Pos, Stmt, TypeExpr, UnOp};
+use parse::ast::{Expr, Ident, Item, PortForm, Pos, Stmt, TypeExpr, UnOp};
 use resolve::{DeclId, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -582,16 +582,16 @@ impl Evaluator<'_> {
             Stmt::Input {
                 pos,
                 name,
-                index,
+                form,
                 ty,
             }
             | Stmt::Output {
                 pos,
                 name,
-                index,
+                form,
                 ty,
             } => {
-                if let Some(k) = index {
+                if let PortForm::Indexed(k) = form {
                     return self.entry_decl(*pos, matches!(s, Stmt::Input { .. }), name, k, ty);
                 }
                 let tid = self.type_expr(ty)?;

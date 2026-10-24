@@ -306,6 +306,16 @@ pub struct FnParam {
     pub ty: TypeExpr,
 }
 
+/// The name form of a port (section 5.6). A scalar port has a name only. An indexed port has its
+/// family key in brackets after the name. A keyed port has an `as` key after the type. A port has
+/// one form, so no port has both an index and an `as` key.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub enum PortForm {
+    Scalar,
+    Indexed(Expr),
+    Keyed(Expr),
+}
+
 /// A statement. A target of `Assign` or `Connect` is a `Name`, a `Field`, or an `Index`
 /// expression.
 #[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
@@ -347,13 +357,13 @@ pub enum Stmt {
     Input {
         pos: Pos,
         name: Ident,
-        index: Option<Expr>,
+        form: PortForm,
         ty: TypeExpr,
     },
     Output {
         pos: Pos,
         name: Ident,
-        index: Option<Expr>,
+        form: PortForm,
         ty: TypeExpr,
     },
     Inst {
