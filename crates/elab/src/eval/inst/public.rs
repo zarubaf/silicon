@@ -222,7 +222,7 @@ impl Evaluator<'_> {
                 ),
             );
         }
-        self.elab.work.body.ports.push(PortDecl {
+        self.elab.work.add_port(PortDecl {
             sym,
             key: None,
             input,

@@ -213,12 +213,12 @@ impl Evaluator<'_> {
 
     /// The memory number `id` of the current instantiation.
     pub(super) fn mem(&self, id: usize) -> Option<&Mem> {
-        self.elab.work.body.mems.get(id)
+        self.elab.work.mem(id)
     }
 
     /// The memory number `id` of the current instantiation, for a request.
     pub(super) fn mem_mut(&mut self, id: usize) -> Option<&mut Mem> {
-        self.elab.work.body.mems.get_mut(id)
+        self.elab.work.mem_mut(id)
     }
 
     /// The serialization of an `InstantiationId` at the statement `pos`. It charges the walk
