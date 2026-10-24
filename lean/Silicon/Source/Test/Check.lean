@@ -710,4 +710,26 @@ def unusedFns (k : Nat) : String :=
 #guard ok (unusedFns 8)
 #guard fails ("fn unused(x: Nat) -> Nat { return UInt[8]" ++ indices 4094 ++ "; }") .S007 1 35
 
+/-!
+Port families (section 5.6). A family key is a static position, so a resource there is `S005`.
+A family names ports: its name in a static position is `S005`, also before its declaration, and
+it is no mutable root (`S008`).
+-/
+#guard ok (modBody ("comptime for i in 0..2 {\ninput req[i]: Bool;\n}\noutput o: Bool;\n" ++
+  "o := req[1];"))
+#guard fails (modBody "wire w: Bool;\ninput req[w]: Bool;") .S005 3 11
+#guard message (modBody "wire w: Bool;\ninput req[w]: Bool;") ==
+  "`w` is a wire; a static position needs a static value"
+#guard fails (modBody "input a: Bool;\noutput g[a]: Bool;") .S005 3 10
+#guard fails (modBody "input req[0]: Bool;\ninput a: Bool;\nlet y = req[a];") .S005 4 13
+#guard fails (modBody "input req[0]: Bool;\ncomptime if (req[0]) {}") .S005 3 14
+#guard message (modBody "input req[0]: Bool;\ncomptime if (req[0]) {}") ==
+  "`req` is a port; a static position needs a static value"
+#guard fails (modBody "let x: UInt[req[0]] = 0;\ninput req[0]: Bool;") .S005 2 13
+#guard fails (modBody "input req[0]: Bool;\npush(req, 1);") .S008 3 6
+#guard message (modBody "input req[0]: Bool;\npush(req, 1);") ==
+  "a `mut` actual has a `let mut` local or a `mut` formal as its root"
+#guard fails (modBody "push(req[0], 1);\ninput req[0]: Bool;") .S008 2 6
+#guard fails "comptime fn g() -> Nat {\ninput req[0]: Bool;\nreturn 1;\n}" .S006 2 1
+
 end Silicon.Source.Test.Check

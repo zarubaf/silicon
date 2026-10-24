@@ -767,4 +767,83 @@ def genericFn (s : String) : Option Bool :=
 #guard genericFn (pair ++ "fn g(n: Nat, y: UInt[match (n) { _ => n }]) -> Bool { return true; }") ==
   some true
 
+/-!
+Port families (section 5.6). The first indexed declaration of a name gives one family binder in
+the scope of the body. A loop declares the entries, and a later loop selects them (F35). The
+implicit `clock` is the local 0 and `W` the local 1, so the family takes the local 2 before the
+loop value `i`.
+-/
+def familyLoops : String :=
+  modBody ("comptime for i in 0..2 {\ninput req[i]: Bool;\n}\noutput o: Bool;\n" ++
+    "comptime for j in 0..2 {\no := req[j];\n}")
+
+#guard match users familyLoops with
+  | some #[.module _ _ _ _ [.ctFor _ ⟨_, 3⟩ _ _ [.input _ ⟨_, 2⟩ (some (.name _ _ (.local 3))) _],
+      .output _ ⟨_, 4⟩ none _,
+      .ctFor _ ⟨_, 5⟩ _ _ [.connect _ _ (.index _ (.name _ _ (.family 2 true)) _)]]] => true
+  | _ => false
+
+/-! Each indexed declaration of a name, at each depth, takes the one family binder. -/
+#guard match users (modBody "output g[0]: Bool;\n{\noutput g[1]: Bool;\n}\noutput g[2]: Bool;") with
+  | some #[.module _ _ _ _ [.output _ ⟨_, 2⟩ _ _, .block _ [.output _ ⟨_, 2⟩ _ _],
+      .output _ ⟨_, 2⟩ _ _]] => true
+  | _ => false
+
+/-! A use before the first declaration resolves. Its key is `S013` at run time. -/
+#guard match users (modBody "output o: Bool;\no := req[0];\ninput req[0]: Bool;") with
+  | some #[.module _ _ _ _ [_, .connect _ _ (.index _ (.name _ _ (.family 2 true)) _), _]] => true
+  | _ => false
+
+/-! Two entries of one family in one block are no second declaration. -/
+#guard ok (modBody "input req[0]: Bool;\ninput req[1]: Bool;")
+
+/-! A `let` in a nested block without an indexed declaration of the name shadows the family. -/
+#guard match users (modBody "input req[0]: Bool;\n{\nlet req = 1;\nlet y = req;\n}") with
+  | some #[.module _ _ _ _ [_, .block _ [_, .local _ _ _ _ (.name _ _ (.local 3))]]] => true
+  | _ => false
+
+/-!
+Outside a module body, an indexed port declares a local at its statement. A plain `fn` with a
+port is `S004` in the parser, and a `comptime fn` is `S006` in `Check`.
+-/
+#guard match users "comptime fn f(p: Bool) -> Bool {\ninput req[0]: Bool;\nreturn p;\n}" with
+  | some #[.fn _ _ _ _ _ [.input _ ⟨_, 1⟩ (some _) _, _]] => true
+  | _ => false
+
+/-! `S002` "Family and scalar port", at the later name, at any depth, in each order. -/
+#guard fails (modBody "input req: Bool;\n{\ninput req[0]: Bool;\n}") .S002 4 7
+#guard message (modBody "input req: Bool;\n{\ninput req[0]: Bool;\n}") ==
+  "`req` names a port family and a scalar port, here and at 2:7; use one form for the name"
+#guard fails (modBody "{\ninput req[0]: Bool;\n}\noutput req: Bool;") .S002 5 8
+#guard message (modBody "{\ninput req[0]: Bool;\n}\noutput req: Bool;") ==
+  "`req` names a port family and a scalar port, here and at 3:7; use one form for the name"
+#guard fails (modBody "comptime if (true) {\ninput req: Bool;\n}\noutput req[0]: Bool;") .S002 5 8
+
+/-! `S002` "Family with two directions", at the first entry of the second direction. -/
+#guard fails (modBody "input req[0]: Bool;\ncomptime if (true) {\noutput req[1]: Bool;\n}")
+  .S002 4 8
+#guard message (modBody "input req[0]: Bool;\ncomptime if (true) {\noutput req[1]: Bool;\n}") ==
+  "the port family `req` has an input entry and an output entry, here and at 2:7; give the " ++
+    "entries of one direction another name"
+
+/-! A family and another name of the body scope: the ordinary `S002` at the later name. -/
+#guard fails "module M(comptime req: Nat) {\ninput req[0]: Bool;\n}" .S002 2 7
+#guard message "module M(comptime req: Nat) {\ninput req[0]: Bool;\n}" ==
+  "`req` is already declared in this scope"
+#guard fails (modBody "let req = 1;\n{\ninput req[0]: Bool;\n}") .S002 4 7
+#guard fails (modBody "{\ninput req[0]: Bool;\n}\nlet req = 1;") .S002 5 5
+#guard fails (modBody "let req = 1;\ninput req[0]: Bool;") .S002 3 7
+
+/-!
+An indexed declaration declares its name in its own block too, so another declaration of the
+name in that block is `S002` in each order. The loop value and the loop body share one scope.
+-/
+#guard fails (modBody "{\nlet req = 1;\ninput req[0]: Bool;\n}") .S002 4 7
+#guard message (modBody "{\nlet req = 1;\ninput req[0]: Bool;\n}") ==
+  "`req` is already declared in this scope"
+#guard fails (modBody "{\ninput req[0]: Bool;\nlet req = 1;\n}") .S002 4 5
+#guard message (modBody "{\ninput req[0]: Bool;\nlet req = 1;\n}") ==
+  "`req` is already declared in this scope"
+#guard fails (modBody "comptime for req in 0..2 {\ninput req[req]: Bool;\n}") .S002 3 7
+
 end Silicon.Source.Test.Resolve
