@@ -13,7 +13,7 @@ use std::process::{Command, Output};
 
 use anyhow::{Context, Result, bail};
 use proptest::strategy::{Just, Strategy};
-use srcgen::{BuildFault, Program, lines, twin, typed};
+use srcgen::{BuildFault, LineError, Program, Twin, lines, twin, typed};
 use testkit::source::{compare_observe, split_observed};
 
 use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of, write};
@@ -82,23 +82,50 @@ fn try_verdict(tools: &Tools, dir: &Path, case: &Case) -> Result<Option<String>>
         );
     }
     let twin_file = write(dir, "twin.si", &twin.text)?;
-    let stdin = stdin(input.iter().map(String::as_str));
-    let traces = [
-        run_trace("silicon", &tools.silicon, &file, &top, &stdin)?,
-        run_trace("lean", &tools.lean, &file, &top, &stdin)?,
-        run_trace(
-            "silicon twin",
-            &tools.silicon,
-            &twin_file,
-            &twin.top,
-            &stdin,
-        )?,
-        run_trace("lean twin", &tools.lean, &twin_file, &twin.top, &stdin)?,
+    let program_stdin = stdin(input.iter().map(String::as_str));
+    let twin_input = twin_lines(&twin, input)?;
+    let twin_stdin = stdin(twin_input.iter().map(String::as_str));
+    let mut traces = vec![
+        run_trace("silicon", &tools.silicon, &file, &top, &program_stdin)?,
+        run_trace("lean", &tools.lean, &file, &top, &program_stdin)?,
     ];
+    for (tool, binary) in [("silicon twin", &tools.silicon), ("lean twin", &tools.lean)] {
+        let trace = run_trace(tool, binary, &twin_file, &twin.top, &twin_stdin)?;
+        match program_trace(&twin, &trace) {
+            Ok(trace) => traces.push(trace),
+            Err(error) => return Ok(Some(format!("run: {tool}: {error}"))),
+        }
+    }
     if let Some(message) = compare(&traces) {
         return Ok(Some(format!("run: {message}")));
     }
     Ok(validated(tools, &twin_file, &twin.top)?.map(|m| format!("twin: {m}")))
+}
+
+/// The input lines of the program for the twin: the names and the order of
+/// the twin (front-end spec 11.4). The lines come from the ports of the
+/// program, so a name that the twin lacks is a fault of the generator.
+fn twin_lines(twin: &Twin, input: &[String]) -> Result<Vec<String>> {
+    input
+        .iter()
+        .map(|line| twin.input_line(line))
+        .collect::<std::result::Result<_, LineError>>()
+        .context("the generator cannot map an input line to the twin")
+}
+
+/// The trace of a run of the twin with its output lines in the names and
+/// the order of the program. A line that the twin ports do not explain is
+/// an error: the generator predicted other outputs than the front end gave.
+fn program_trace(twin: &Twin, trace: &Trace) -> std::result::Result<Trace, LineError> {
+    let lines = trace
+        .lines
+        .iter()
+        .map(|line| twin.output_line(line))
+        .collect::<std::result::Result<_, _>>()?;
+    Ok(Trace {
+        tool: trace.tool,
+        lines,
+    })
 }
 
 /// `None` if both front ends print the same `observe` output for `file`, with
@@ -198,7 +225,28 @@ pub(super) fn report(
     let steps: Vec<(String, String)> = input.iter().cloned().zip(trace.lines).collect();
     print!("{}", reproducer(&source, &top, &steps));
     let twin = twin(program);
-    print!("// twin\n// TOP {}\n{}", twin.top, twin.text);
+    let twin_input = twin_lines(&twin, input)?;
+    let twin_file = write(dir, "report-twin.si", &twin.text)?;
+    let twin_trace = run_trace(
+        "lean twin",
+        &tools.lean,
+        &twin_file,
+        &twin.top,
+        &stdin(twin_input.iter().map(String::as_str)),
+    )?;
+    if twin_trace.lines.len() != twin_input.len() {
+        bail!(
+            "{} gave {} output lines for {} input lines of the twin",
+            tools.lean.display(),
+            twin_trace.lines.len(),
+            twin_input.len()
+        );
+    }
+    let twin_steps: Vec<(String, String)> = twin_input.into_iter().zip(twin_trace.lines).collect();
+    print!(
+        "// twin\n{}",
+        reproducer(&twin.text, &twin.top, &twin_steps)
+    );
     let (expr, value) = program.probe();
     println!("// probe: eval `{expr}` gives `{value}` in the generator");
     println!("Run `{}` to repeat it.", repeat(Mode::Typed, seed));
