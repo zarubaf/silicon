@@ -1211,3 +1211,39 @@ fn the_plan_gives_the_ports_of_the_top() {
     }
     assert!(checked > 100, "{checked}");
 }
+
+/// A port draw comes from the port tape only, also while the hand tape or
+/// the side tape is swapped in (tape isolation): the other tapes keep all
+/// of their numbers.
+#[test]
+fn port_draws_stay_on_the_port_tape() {
+    let left = |b: &Builder| {
+        (
+            b.tape.numbers.len(),
+            b.side.numbers.len(),
+            b.hand.numbers.len(),
+            b.port.numbers.len(),
+        )
+    };
+    for outer in [Some(Lane::Hand), Some(Lane::Side), None] {
+        let mut b = Builder::new(vec![7; 16]);
+        let before = left(&b);
+        let draw = |b: &mut Builder| {
+            b.on_port(|b| {
+                b.tape.below(9);
+            });
+        };
+        match outer {
+            Some(Lane::Hand) => b.on_hand(draw),
+            Some(_) => b.on_side(draw),
+            None => draw(&mut b),
+        }
+        let after = left(&b);
+        // Only the port tape (the fourth count) loses a number.
+        assert_eq!(
+            (after.0, after.1, after.2, after.3 + 1),
+            before,
+            "{before:?} {after:?}"
+        );
+    }
+}
