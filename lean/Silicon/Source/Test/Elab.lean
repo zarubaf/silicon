@@ -3123,4 +3123,108 @@ def cycle (m : String) : String :=
 #guard failure ("fn again() -> Nat {\n  instance u = M();\n  return 1;\n}\n" ++
     "module M() {\n  let n = again();\n}\n") 100000000 == s!"S019 2:3 {cycle "M"}"
 
+/-!
+Port families (section 5.6). A module `M` with the input `a` and the statements `body` from line
+3 on. Each text of section 6.2 is in full, with its code and its position.
+-/
+def fam (body : String) : String :=
+  failure ("module M() {\n  input a: Bool;\n" ++ body ++ "}\n") 100000000
+def famValue (x : String) : String :=
+  s!"`{x}` is a port family, not a value; select one port with `{x}[k]`"
+def keyType (a : String) : String :=
+  s!"a family key is a static `Nat`, not {a}; compute the key from static integers, for " ++
+    "example a loop value"
+def keyRange (i : String) : String :=
+  s!"a family key is 0 to 4294967295, not {i}; use a key in this range"
+def undeclared (x k : String) : String :=
+  s!"the port family `{x}` has no key {k} here; declare `{x}[{k}]` before this use"
+def keyTwice (x k b : String) : String :=
+  s!"the port `{x}[{k}]` is declared here and at {b}; declare each key of `{x}` once"
+def effect : String :=
+  "a type or a constant has no graph effect such as `diagnostic`; call it before and use the " ++
+    "result"
+def sel (ss : String) : String :=
+  fam ("  input req[0]: Bool;\n  output o: Bool;\n" ++ ss)
+
+#guard fam "  input req[0]: Bool;\n  output o: Bool;\n  o := req[0];\n" == "ok"
+#guard fam "  input req[4294967295]: Bool;\n  output o: Bool;\n  o := req[4294967295];\n" == "ok"
+-- A use before the declaration resolves, and its key is undeclared at run time.
+#guard fam "  output o: Bool;\n  o := req[0];\n  input req[0]: Bool;\n" ==
+  s!"S013 4:12 {undeclared "req" "0"}"
+#guard fam "  comptime if (false) { input req[0]: Bool; }\n  output o: Bool;\n  o := req[0];\n" ==
+  s!"S013 5:12 {undeclared "req" "0"}"
+-- A family is a namespace: each other use of its name is "Family as a value".
+#guard sel "  let x = req;\n  o := a;\n" == s!"S010 5:11 {famValue "req"}"
+#guard sel "  let x = len(req);\n  o := a;\n" == s!"S010 5:15 {famValue "req"}"
+#guard sel "  let h = a;\n  o := req[h];\n" == s!"S010 6:8 {famValue "req"}"
+
+/-! The entry order of section 6.2: the key checks in order, then the type, then `S019`. -/
+#guard fam "  input req[diagnostic(\"k\", 0)]: fn () -> Bool;\n" == s!"S016 3:13 {effect}"
+#guard fam "  let h = a;\n  input req[h]: fn () -> Bool;\n" ==
+  s!"S011 4:13 {notStatic "a value of `Bool`"}"
+#guard fam "  input req[UInt[8](1)]: fn () -> Bool;\n" ==
+  s!"S010 3:13 {keyType "a value of `UInt[8]`"}"
+#guard fam "  input req[true]: Bool;\n" == s!"S010 3:13 {keyType "a value of `Bool`"}"
+#guard fam "  input req[0 - 1]: fn () -> Bool;\n" == "S012 3:13 -1 is not a Nat"
+#guard fam "  input req[1 << 32]: fn () -> Bool;\n" == s!"S012 3:13 {keyRange "4294967296"}"
+#guard fam "  input req[0]: Bool;\n  input req[0]: fn () -> Bool;\n" ==
+  "S010 4:3 a port, a register, and a wire need a hardware data type, not `fn () -> Bool`; " ++
+    "use a fixed-width type, for example `UInt[8]`"
+#guard fam "  input req[0]: Bool;\n  input req[0]: Bool;\n" ==
+  s!"S019 4:3 {keyTwice "req" "0" "3:3"}"
+#guard fam "  comptime for i in 0..2 {\n    output g[0]: Bool;\n  }\n" ==
+  s!"S019 4:5 {keyTwice "g" "0" "4:5"}"
+
+/-! The selection order of section 6.2: the index arity, the key checks in order, then `S013`. -/
+#guard sel "  o := req[0, diagnostic(\"k\", 0)];\n" ==
+  "S010 5:8 an index of a value has one argument"
+#guard sel "  o := req[diagnostic(\"k\", 7)];\n" == s!"S016 5:12 {effect}"
+#guard sel "  let h = a;\n  o := req[h];\n" == s!"S010 6:8 {famValue "req"}"
+#guard sel "  o := req[UInt[4](7)];\n" == s!"S010 5:12 {keyType "a value of `UInt[4]`"}"
+#guard sel "  o := req[0 - 7];\n" == "S012 5:12 -7 is not a Nat"
+#guard sel "  o := req[1 << 40];\n" == s!"S012 5:12 {keyRange "1099511627776"}"
+#guard sel "  o := req[7];\n" == s!"S013 5:12 {undeclared "req" "7"}"
+
+/-!
+The targets of section 5.2. The first index of an own family takes the key checks of a
+selection. An own output entry is a target, and an own input entry is not. A part of an entry
+is `S017`. A family root without a key is "Family as a value".
+-/
+#guard fam "  output g[0]: Bool;\n  g[0] := a;\n" == "ok"
+#guard fam "  output g[0]: Bool;\n  g[1] := a;\n" == s!"S013 4:5 {undeclared "g" "1"}"
+#guard fam "  output g[0]: Bool;\n  let h = a;\n  g[h] := a;\n" == s!"S010 5:3 {famValue "g"}"
+#guard fam "  output g[0]: Bool;\n  g[UInt[2](0)] := a;\n" ==
+  s!"S010 4:5 {keyType "a value of `UInt[2]`"}"
+#guard fam "  output g[0]: Bool;\n  g[diagnostic(\"k\", 0)] := a;\n" == s!"S016 4:5 {effect}"
+#guard fam "  output g[0]: Bool;\n  g[0, 1] := a;\n" ==
+  "S010 4:3 an index of a value has one argument"
+#guard fam "  output g[0]: Bool;\n  g := a;\n" == s!"S010 4:3 {famValue "g"}"
+#guard fam "  output g[0]: Bool;\n  g.x := a;\n" == s!"S010 4:3 {famValue "g"}"
+#guard fam "  input req[0]: Bool;\n  req[0] := a;\n" ==
+  s!"S017 4:3 {Elab.kindText "a value of `Bool`"}"
+#guard fam "  output g[0]: (Bool, Bool);\n  g[0].0 := a;\n" == s!"S017 4:3 {Elab.partText}"
+
+/-!
+Each index of a `:=` target evaluates in a structural context (sections 5.2 and 9.4), also
+without a family. A graph effect or a change of an earlier binding there is `S016`.
+-/
+#guard fam ("  reg r: Bool = false;\n  r := a;\n  let rs = [r];\n" ++
+    "  rs[diagnostic(\"k\", 0)] := a;\n") == s!"S016 6:6 {effect}"
+#guard fam ("  reg r: Bool = false;\n  r := a;\n  let mut l = list(Nat);\n  push(l, 0);\n" ++
+    "  let rs = [r];\n  rs[pop(l)] := a;\n") ==
+  "S016 8:6 a type or a constant cannot change `l`; change `l` before it, keep the result in " ++
+    "a `let`, and use that name here"
+
+/-!
+The core names of section 7.2: an entry has the made field `<k>f`, and its leaves follow. An
+input entry reads as its port, and an output entry is bound as a whole port.
+-/
+def famNames : String :=
+  "module M() {\n  comptime for i in 0..2 {\n    input req[i]: (UInt[4], Bool);\n  }\n" ++
+  "  output gnt[3]: UInt[4];\n  gnt[3] := req[1].0;\n}\n"
+#guard ((design famNames "M").map fun d => d.insts.toList.map fun i =>
+    i.body.ports.toList.map fun q => Names.encode q.path.name) ==
+  some [["req$0f", "req$1f", "gnt$3f"]]
+#guard (cost famNames "M").startsWith "total"
+
 end Silicon.Source.Test.Elab

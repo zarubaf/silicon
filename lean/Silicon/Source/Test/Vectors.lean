@@ -220,4 +220,27 @@ def enums : String :=
 #guard run enums "E" ["in=(clock$0rst false f.tag 2 op.tag 0 op.payload 0)"] ==
   "input f.tag exceeds its width"
 
+/-!
+Family entries (sections 7.5 and 11.2). The layout sorts by the name, then by the key as a
+number, so `req[2]` comes before `req[10]`. The scalar port `r` sorts before the family `req`
+by its name. An entry has the core name `req$10f` and the entry `req[10]`, and its leaves have
+the entries `p[1].a` and `p[1].b`. An empty entry has no entry.
+-/
+def families : String :=
+  "struct P {\n  a: UInt[4],\n  b: Bool,\n}\n" ++
+  "module F() {\n  comptime for i in 0..3 {\n    input req[10 - 4 * i]: UInt[4];\n  }\n" ++
+  "  input r: Bool;\n  input p[1]: P;\n  input e[0]: ();\n" ++
+  "  output g[10]: UInt[4];\n  output g[2]: UInt[4];\n" ++
+  "  g[10] := req[10] +% p[1].a;\n  g[2] := if (r && p[1].b) { req[6] } else { req[2] };\n}\n"
+
+#guard names families "F" ==
+  ([("clock$0rst", "clock$0rst"), ("p[1].a", "p$1f$a"), ("p[1].b", "p$1f$b"), ("r", "r"),
+    ("req[2]", "req$2f"), ("req[6]", "req$6f"), ("req[10]", "req$10f")],
+   [("g[2]", "g$2f"), ("g[10]", "g$10f")])
+#guard run families "F" [
+    "in=(clock$0rst false p[1].a 4 p[1].b true r true req[2] 1 req[6] 2 req[10] 3)",
+    "in=(clock$0rst false p[1].a 15 p[1].b true r false req[2] 1 req[6] 2 req[10] 3)"] == text [
+  "out=(g[2] 2 g[10] 7)",
+  "out=(g[2] 1 g[10] 2)"]
+
 end Silicon.Source.Test.Vectors

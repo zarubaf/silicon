@@ -838,6 +838,12 @@ structure PortDecl where
   ty : Ty
   pos : Pos
 
+/-! The path of a port: its source name, and the field `<k>f` of a family entry (section 7.2). -/
+def PortDecl.path (q : PortDecl) : Path :=
+  match q.key with
+  | some k => ⟨q.name, [.family k]⟩
+  | none => ⟨q.name, []⟩
+
 structure RegDecl where
   path : Path
   ty : Ty
@@ -902,13 +908,15 @@ number indexes `bound`. The memories are in the names of the instantiation (`Nam
 `inputs` counts the bindings of each child input, by the instance number and the port identity.
 It also holds the position and the call frame number of the first binding. `dup` holds the
 first `S018` of a second binding or a second port call by position. `spent` is the fuel of the
-new children.
+new children. `entries` holds the declared family entries by the family binder and the key: the
+value of each entry and the position of its declaration. A family binder has no frame slot.
 -/
 structure Work where
   body : Body
   needs : Array Need := #[]
   bound : Array Nat := #[]
   inputs : Std.HashMap (Nat × PortId) (Nat × Pos × Nat) := {}
+  entries : Std.HashMap (Nat × Nat) (Val × Pos) := {}
   dup : Option (Pos × Breach) := none
   spent : Nat := 0
 
