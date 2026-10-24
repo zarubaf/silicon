@@ -22,7 +22,7 @@ enum Read {
 impl Evaluator<'_> {
     /// The text "`read` of an input" of the input `port` of the child at `path` (section 6.2).
     pub(super) fn input_text(&self, path: PathId, port: &crate::hw::Port) -> String {
-        let name = self.syms.texts.get(port.sym).map_or("", String::as_str);
+        let name = self.port_text(port);
         format!(
             "the input `{name}` of `{}` is a target only; read the value that you bind to it",
             self.paths.source(path, &self.syms.texts)

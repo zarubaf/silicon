@@ -444,9 +444,9 @@ impl Evaluator<'_> {
                 && let Some(next) = rest.first()
             {
                 known = None;
-                if let Sel::Field(q, f) = next {
-                    let out = self.field_part(*q, base.into_out(), f)?;
-                    rest = rest.get(1..).unwrap_or_default();
+                if let Sel::Field(..) = next {
+                    let (out, taken) = self.field_or_entry(base.into_out(), rest)?;
+                    rest = rest.get(taken..).unwrap_or_default();
                     if rest.is_empty() {
                         return Ok(Some(out));
                     }
@@ -462,13 +462,30 @@ impl Evaluator<'_> {
     /// static value, and the number of steps taken (Lean `indexBase`). A field of a root that is
     /// not static, for example a port of an instance, applies at once by the rule of `field_part`.
     fn index_base(&mut self, mut b: Out, steps: &[Sel<'_>], mut done: usize) -> Res<(Out, usize)> {
-        while let Some(Sel::Field(q, f)) = steps.get(done)
+        while let Some(Sel::Field(..)) = steps.get(done)
             && !matches!(self.store.seen(&b), Seen::Static(_))
         {
-            b = self.field_part(*q, b, f)?;
-            done += 1;
+            let (out, taken) = self.field_or_entry(b, steps.get(done..).unwrap_or_default())?;
+            b = out;
+            done += taken;
         }
         Ok((b, done))
+    }
+
+    /// The field step at the start of `steps` on the base `b`, and the number of steps taken
+    /// (Lean `fieldPart` and `childSel`). A field of an `Instance` handle that names a family of
+    /// the child, followed by an index, selects the entry of that key: the two steps are one
+    /// selection (section 6.2). Else the field applies by the rule of `field_part`.
+    fn field_or_entry(&mut self, b: Out, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
+        let Some(Sel::Field(q, f)) = steps.first() else {
+            return Ok((b, 0));
+        };
+        if let Some(Sel::Index(p, [key])) = steps.get(1)
+            && self.child_family(&b, f)
+        {
+            return Ok((self.child_sel((*p, *q), &b, f, key)?, 2));
+        }
+        Ok((self.field_part(*q, b, f)?, 1))
     }
 
     /// The first segment of a read from `base` along `steps`: the result, and the number of its

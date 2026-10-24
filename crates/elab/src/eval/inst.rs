@@ -47,7 +47,7 @@ use resolve::{DeclId, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod family;
-pub(super) use family::family_value;
+pub(super) use family::{FamKey, child_key, family_value};
 
 /// A port declaration. A port keeps its source name. A family entry has its key.
 pub(crate) struct PortDecl {
@@ -64,6 +64,15 @@ pub(crate) struct RegDecl {
     pub ty: Ty,
     pub init: Value,
     pub pos: Pos,
+}
+
+/// The public name of the port `x` with the family key `key` in a message: `x`, or the entry
+/// `x[k]` (section 6.2). Only an error renders it.
+pub(super) fn entry_text(x: &str, key: Option<u32>) -> String {
+    match key {
+        Some(k) => format!("{x}[{k}]"),
+        None => x.to_owned(),
+    }
 }
 
 /// A position with the number of the call frame that ran it (`Ev::call`).
@@ -106,6 +115,7 @@ pub(crate) enum Sink {
         index: usize,
         inst: PathId,
         port: Sym,
+        key: Option<u32>,
         ty: Ty,
     },
 }
@@ -152,7 +162,6 @@ impl Body {
 /// of the first one with its call frame number.
 struct Need {
     name: Sym,
-    #[expect(dead_code, reason = "the family entries of the next step read it")]
     key: Option<u32>,
     pos: Pos,
     count: u64,
@@ -160,11 +169,16 @@ struct Need {
 }
 
 /// A resource in an `S018` text (section 6.2): an own resource by its source name, or the input
-/// `port` of the child number `child`, which renders as `u.p`.
+/// `port` of the child number `child`, which renders as `u.p`. The key of a family entry renders
+/// as `x[k]`.
 #[derive(Clone, Copy)]
 enum Subject {
-    Own(Sym),
-    Input { child: usize, port: Sym },
+    Own(Sym, Option<u32>),
+    Input {
+        child: usize,
+        port: Sym,
+        key: Option<u32>,
+    },
 }
 
 /// The data of an `S018` text of section 6.2. A binding or a port call records it with no walk.
@@ -181,7 +195,7 @@ enum Breach {
         r: Subject,
         h: usize,
     },
-    Unbound(Sym),
+    Unbound(Sym, Option<u32>),
     /// The first child with a free input, by its number.
     Input(usize),
     NoPort {
@@ -237,23 +251,22 @@ enum Status {
     Done(usize),
 }
 
-/// The interface of a done instantiation: its emitted name, its ports by the symbol of their
-/// name, its number of inputs, and its domain.
+/// The interface of a done instantiation: its emitted name, its ports by their identity, its
+/// number of inputs, and its domain. `item` is the module item. Its port families come from the
+/// resolver (`Syms::families`), so they include a family without an entry.
 pub(crate) struct Iface {
     pub name: Name,
     ports: BTreeMap<PortId, Port>,
-    /// The direction of each port family by the symbol of its name, `true` for an input.
-    #[expect(dead_code, reason = "the family selection of the next step reads it")]
-    families: BTreeMap<Sym, bool>,
+    pub item: usize,
     inputs: usize,
     pub domain: Option<Sym>,
 }
 
 impl Iface {
-    fn of(name: Name, b: &Body) -> Iface {
+    fn of(name: Name, b: &Body, item: usize) -> Iface {
         let mut ports = BTreeMap::new();
         let mut inputs = 0;
-        for q in &b.ports {
+        for (order, q) in b.ports.iter().enumerate() {
             ports.insert(
                 (q.sym, q.key),
                 Port {
@@ -262,6 +275,7 @@ impl Iface {
                     input: q.input,
                     ty: q.tid,
                     pos: q.pos,
+                    order,
                 },
             );
             inputs += usize::from(q.input);
@@ -269,7 +283,7 @@ impl Iface {
         Iface {
             name,
             ports,
-            families: BTreeMap::new(),
+            item,
             inputs,
             domain: b.domain,
         }
@@ -978,12 +992,12 @@ impl Evaluator<'_> {
         let sink = match t {
             Target::Own { kind, id, ty, path } => {
                 let need = self.elab.work.needs.get(id);
-                let seen = need.map(|n| (n.count, n.first, n.name, n.pos));
+                let seen = need.map(|n| (n.count, n.first, (n.name, n.key), n.pos));
                 if let Some((count, first, name, decl)) = seen {
                     if count == 1 {
                         let x = self.second_binding(
                             pos,
-                            Subject::Own(name),
+                            Subject::Own(name.0, name.1),
                             first.unwrap_or(here),
                             decl,
                         );
@@ -1023,6 +1037,7 @@ impl Evaluator<'_> {
                     let subject = Subject::Input {
                         child: inst,
                         port: port.sym,
+                        key: port.key,
                     };
                     let x = self.second_binding(pos, subject, first, decl);
                     self.breach(pos, x);
@@ -1032,6 +1047,7 @@ impl Evaluator<'_> {
                     index: inst,
                     inst: path,
                     port: port.sym,
+                    key: port.key,
                     ty,
                 }
             }
@@ -1053,7 +1069,7 @@ impl Evaluator<'_> {
         let mut first = work.dup;
         for need in &work.needs {
             if need.count == 0 {
-                first = first_of(first, need.pos, Breach::Unbound(need.name));
+                first = first_of(first, need.pos, Breach::Unbound(need.name, need.key));
             }
         }
         for (k, mem) in work.body.mems.iter().enumerate() {
@@ -1098,9 +1114,9 @@ impl Evaluator<'_> {
             i.ports
                 .values()
                 .filter(|q| q.input && !work.inputs.contains_key(&(k, q.id())))
-                .min_by_key(|q| (q.pos.line, q.pos.col))
+                .min_by_key(|q| (q.pos.line, q.pos.col, q.order))
         });
-        let name = port.map_or("", |q| text(q.sym));
+        let name = port.map_or_else(String::new, |q| entry_text(text(q.sym), q.key));
         let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
         format!(
             "the input `{name}` of the instance `{inst}` has no binding; \
@@ -1114,14 +1130,14 @@ impl Evaluator<'_> {
         let sym_text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
         let at = |p: Pos| format!("{}:{}", p.line, p.col);
         let subject = |r: Subject| match r {
-            Subject::Own(sym) => sym_text(sym).to_owned(),
-            Subject::Input { child, port } => {
+            Subject::Own(sym, key) => entry_text(sym_text(sym), key),
+            Subject::Input { child, port, key } => {
                 let u = work
                     .body
                     .children
                     .get(child)
                     .map_or("", |c| c.name.as_str());
-                format!("{u}.{}", sym_text(port))
+                format!("{u}.{}", entry_text(sym_text(port), key))
             }
         };
         let mem_name = |k: usize| work.body.mems.get(k).map_or("", |m| sym_text(m.name));
@@ -1142,8 +1158,8 @@ impl Evaluator<'_> {
                 item(h),
                 item(h)
             ),
-            Breach::Unbound(sym) => {
-                let r = sym_text(sym);
+            Breach::Unbound(sym, key) => {
+                let r = entry_text(sym_text(sym), key);
                 format!(
                     "`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
                 )
@@ -1332,7 +1348,7 @@ impl Evaluator<'_> {
             let w = std::mem::replace(&mut ev.elab.work, parent);
             let mut body = w.body;
             body.lets = lets;
-            let iface = Iface::of(name, &body);
+            let iface = Iface::of(name, &body, i);
             let k = ev.elab.done.len();
             ev.elab.table.insert(key, Status::Done(k));
             ev.elab.done.push(Inst {

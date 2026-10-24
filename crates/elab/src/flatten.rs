@@ -1356,9 +1356,11 @@ impl<'d> Lower<'d> {
                 index,
                 inst,
                 port,
+                key,
                 ref ty,
             } => {
-                let port = &port_name(self.design.texts.get(port).map_or("", String::as_str));
+                let text = self.design.texts.get(port).map_or("", String::as_str);
+                let port = &port_name(text, key);
                 let Some(conns) = conns.get_mut(index) else {
                     return defect("a connection names no child");
                 };
