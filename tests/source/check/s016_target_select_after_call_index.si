@@ -1,0 +1,16 @@
+// S016: an index of a `:=` target evaluates in a structural context, so the call that records a diagnostic is `S016` before the selector `.2` of the tuple is checked.
+// TOP M()
+fn idx() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a `:=` target index has no graph effect such as `diagnostic`; call `diagnostic` before the `:=`, keep the result in a `let`, and use that name in the index
+    diagnostic("idx", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = ([r], [r]);
+    a.2[idx()] := x;
+    o := true;
+}

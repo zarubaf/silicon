@@ -1,0 +1,12 @@
+// S013: the indices of a `:=` target evaluate before the walk selects (section 5.2). The index `1 / 0` fails first, and the selector `.2` of the tuple is out of range only after it.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = ([r], [r]);
+    // expected-error S013 @+2
+    // expected-message: division by zero
+    a.2[1 / 0] := x;
+    o := true;
+}
