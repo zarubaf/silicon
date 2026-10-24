@@ -3,7 +3,7 @@
 // in the symbol table and in the table of public names, each one ordered-map operation after the charge of the name, so
 // the work follows the fuel. A scan of the table for each port makes N more work for each port, and the work escapes
 // the bound.
-// SCALE port_key_decl_loop 16 32 64 128 256
+// SCALE port_key_decl_loop 64 128 256 512 1024
 // TOP M()
 module M() {
     output o: UInt[8];
