@@ -232,13 +232,7 @@ impl Evaluator<'_> {
                 }
                 self.elab.work.inputs.insert(key, (count + 1, first));
                 if count == 1 {
-                    let decl = self
-                        .elab
-                        .work
-                        .body
-                        .children
-                        .get(inst)
-                        .map_or(pos, |child| child.pos);
+                    let decl = self.elab.work.child(inst).map_or(pos, |child| child.pos);
                     let subject = Subject::Input {
                         child: inst,
                         port: port.sym,
@@ -257,7 +251,7 @@ impl Evaluator<'_> {
                 }
             }
         };
-        self.elab.work.body.binds.push(Bind { sink, value, pos });
+        self.elab.work.add_bind(Bind { sink, value, pos });
     }
 
     /// The binding rule at the end of a body. A missing binding of an own resource is at its
@@ -311,9 +305,7 @@ impl Evaluator<'_> {
         let work = &self.elab.work;
         let text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
         let iface = work
-            .body
-            .children
-            .get(k)
+            .child(k)
             .and_then(|child| self.elab.done.get(child.inst))
             .map(|i| &i.iface);
         let port = iface.and_then(|i| {
@@ -323,7 +315,7 @@ impl Evaluator<'_> {
                 .min_by_key(|q| (q.pos.line, q.pos.col, q.order))
         });
         let name = port.map_or_else(String::new, |q| str_text(&entry_text(text(q.sym), q.key)));
-        let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
+        let inst = work.child(k).map_or("", |c| c.name.as_str());
         format!(
             "the input `{name}` of the instance `{inst}` has no binding; \
              bind it with `{inst}.{name} := ...;`"
@@ -339,15 +331,11 @@ impl Evaluator<'_> {
             Subject::Own(sym, key, true) => str_text(&entry_text(sym_text(sym), key)),
             Subject::Own(sym, key, false) => entry_text(sym_text(sym), key),
             Subject::Input { child, port, key } => {
-                let u = work
-                    .body
-                    .children
-                    .get(child)
-                    .map_or("", |c| c.name.as_str());
+                let u = work.child(child).map_or("", |c| c.name.as_str());
                 format!("{u}.{}", str_text(&entry_text(sym_text(port), key)))
             }
         };
-        let mem_name = |k: usize| work.body.mems.get(k).map_or("", |m| sym_text(m.name));
+        let mem_name = |k: usize| work.mem(k).map_or("", |m| sym_text(m.name));
         let call = |write: bool| if write { "write_port" } else { "read_port" };
         let item = |h: usize| self.item_name(h);
         let text = match x {

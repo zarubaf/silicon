@@ -110,7 +110,7 @@ impl Evaluator<'_> {
                 let id = self.decl(name)?;
                 let path = self.fresh(id);
                 #[cfg(test)]
-                self.elab.work.body.wires.push(path);
+                self.elab.work.add_wire(path);
                 let w = self.resource(Kind::Wire, path, tid, *pos, (self.sym(id), None), None);
                 self.bind(
                     id,
@@ -172,7 +172,7 @@ impl Evaluator<'_> {
         ty: &TypeExpr,
         init: &Expr,
     ) -> Res<()> {
-        if self.elab.work.body.domain.is_none() {
+        if !self.elab.work.clocked() {
             return fail(
                 Code::S017,
                 pos,
@@ -190,7 +190,7 @@ impl Evaluator<'_> {
         let init = self.conform(pos, tid, out)?;
         let id = self.decl(name)?;
         let path = self.fresh(id);
-        self.elab.work.body.regs.push(RegDecl {
+        self.elab.work.add_reg(RegDecl {
             path,
             ty: ty.clone(),
             init,
@@ -218,7 +218,7 @@ impl Evaluator<'_> {
         word: &TypeExpr,
         depth: &Expr,
     ) -> Res<()> {
-        if self.elab.work.body.domain.is_none() {
+        if !self.elab.work.clocked() {
             return fail(
                 Code::S017,
                 pos,
@@ -237,8 +237,7 @@ impl Evaluator<'_> {
         let id = self.decl(name)?;
         let path = self.fresh(id);
         let sym = self.sym(id);
-        let number = self.elab.work.body.mems.len();
-        self.elab.work.body.mems.push(Mem {
+        let number = self.elab.work.add_mem(Mem {
             name: sym,
             path,
             word: tid,
@@ -281,7 +280,7 @@ impl Evaluator<'_> {
             return fail(Code::S010, pos, "an instance needs a module".to_owned());
         };
         let clocked = domains.as_ref().is_none_or(|d| !d.is_empty());
-        if self.elab.work.body.domain.is_none() && clocked {
+        if !self.elab.work.clocked() && clocked {
             return fail(
                 Code::S017,
                 pos,
@@ -298,14 +297,12 @@ impl Evaluator<'_> {
         let ty = self.tys.instance(i, &m.name, values);
         let id = self.decl(name)?;
         let path = self.fresh(id);
-        let k = self.elab.work.body.children.len();
-        self.elab.work.body.children.push(ChildDecl {
+        let k = self.elab.work.add_child(ChildDecl {
             path,
             inst: done,
             pos,
             name: name.name.clone(),
         });
-        self.elab.work.bound.push(0);
         self.bind(
             id,
             Slot {
