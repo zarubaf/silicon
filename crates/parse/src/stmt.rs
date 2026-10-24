@@ -153,12 +153,23 @@ impl Parser<'_> {
 
     /// `input x: T;` or `output x: T;`
     fn port(&mut self) -> Res {
+        self.port_head()?;
+        self.port_tail()
+    }
+
+    /// The keyword and the name of a port declaration.
+    fn port_head(&mut self) -> Res {
         self.bump();
         self.expect(Ident, "a name")?;
         if self.is(LBracket) {
             self.later_slice(self.offset(), "a port family");
             return None;
         }
+        Some(())
+    }
+
+    /// The type, the domain check, and the `;` of a port declaration.
+    fn port_tail(&mut self) -> Res {
         self.expect(Colon, "`:`")?;
         self.type_expr()?;
         self.no_domain_annotation()?;
