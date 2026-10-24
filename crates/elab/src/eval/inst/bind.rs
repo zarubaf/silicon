@@ -13,19 +13,6 @@ use crate::ops::str_text;
 use crate::types::TyId;
 use parse::ast::{Item, Pos};
 
-/// A resource that needs one binding: its name, its declaration, its bindings, and the position
-/// of the first one with its call frame number. An own output (`port`) has its public name. An
-/// output with an `as` key has its `binder` for the fix of its `S018` text.
-pub(super) struct Need {
-    name: Sym,
-    key: Option<u32>,
-    port: bool,
-    binder: Option<Sym>,
-    pos: Pos,
-    count: u64,
-    first: Option<Here>,
-}
-
 /// A resource in an `S018` text (section 6.2): an own resource by its source name, or the input
 /// `port` of the child number `child`, which renders as `u.p`. The key of a family entry renders
 /// as `x[k]`. An own output (the flag) and a child input have their public name, with the limit of
@@ -74,10 +61,6 @@ pub(super) enum Breach {
     },
 }
 
-pub(super) fn before(a: Pos, b: Pos) -> bool {
-    a < b
-}
-
 /// The target of a `:=` binding. It refers, so it charges nothing.
 #[derive(Clone)]
 pub(super) enum Target {
@@ -106,16 +89,10 @@ impl Evaluator<'_> {
         (name, key): (Sym, Option<u32>),
         binder: Option<Sym>,
     ) -> Val {
-        let id = self.elab.work.needs.len();
-        self.elab.work.needs.push(Need {
-            name,
-            key,
-            port: kind == Kind::Output,
-            binder,
-            pos,
-            count: 0,
-            first: None,
-        });
+        let id = self
+            .elab
+            .work
+            .add_need((name, key), kind == Kind::Output, binder, pos);
         Val::Handle(Handle::Res {
             kind,
             id,
@@ -128,16 +105,6 @@ impl Evaluator<'_> {
     /// module body gives none.
     pub(super) fn helper(&self) -> Option<usize> {
         matches!(self.file.ast().get(self.item), Some(Item::Fn { .. })).then_some(self.item)
-    }
-
-    /// Records the `S018` data `x` at `pos`. The first by position wins, and a tie keeps the
-    /// first recorded one (section 6.2).
-    pub(super) fn breach(&mut self, pos: Pos, x: Breach) {
-        let w = &mut self.elab.work;
-        w.dup = Some(match w.dup {
-            Some((q, y)) if !before(pos, q) => (q, y),
-            _ => (pos, x),
-        });
     }
 
     /// The `S018` data of a second binding or a second port call at `pos`, whose first one is at
@@ -171,7 +138,7 @@ impl Evaluator<'_> {
                 b: b.0,
             },
         };
-        self.breach(pos, x);
+        self.elab.work.record_breach(pos, x);
         true
     }
 
@@ -200,37 +167,15 @@ impl Evaluator<'_> {
         let here = (pos, self.call);
         let sink = match t {
             Target::Own { kind, id, ty, path } => {
-                let need = self.elab.work.needs.get(id);
-                let seen =
-                    need.map(|n| (n.count, n.first, Subject::Own(n.name, n.key, n.port), n.pos));
-                if let Some((count, first, subject, decl)) = seen {
-                    if count == 1 {
-                        let x = self.second_binding(pos, subject, first.unwrap_or(here), decl);
-                        self.breach(pos, x);
-                    }
-                    if let Some(n) = self.elab.work.needs.get_mut(id) {
-                        n.count += 1;
-                        n.first = n.first.or(Some(here));
-                    }
+                if let Some((1, first, subject, decl)) = self.elab.work.bind_own(id, here) {
+                    let x = self.second_binding(pos, subject, first, decl);
+                    self.elab.work.record_breach(pos, x);
                 }
                 let ty = self.tys.get(ty).clone();
                 Sink::Own { kind, ty, path }
             }
             Target::Child { inst, path, port } => {
-                let key = (inst, port.id());
-                let (count, first) = self
-                    .elab
-                    .work
-                    .inputs
-                    .get(&key)
-                    .copied()
-                    .unwrap_or((0, here));
-                if count == 0
-                    && let Some(n) = self.elab.work.bound.get_mut(inst)
-                {
-                    *n += 1;
-                }
-                self.elab.work.inputs.insert(key, (count + 1, first));
+                let (count, first) = self.elab.work.bind_input(inst, port.id(), here);
                 if count == 1 {
                     let decl = self.elab.work.child(inst).map_or(pos, |child| child.pos);
                     let subject = Subject::Input {
@@ -239,7 +184,7 @@ impl Evaluator<'_> {
                         key: port.key,
                     };
                     let x = self.second_binding(pos, subject, first, decl);
-                    self.breach(pos, x);
+                    self.elab.work.record_breach(pos, x);
                 }
                 let ty = self.tys.get(port.ty).clone();
                 Sink::Child {
@@ -260,40 +205,7 @@ impl Evaluator<'_> {
     /// searched. The records compete by position, and the text of the winner renders once
     /// (section 6.2).
     pub(super) fn bindings(&self) -> Res<()> {
-        let work = &self.elab.work;
-        let first_of = |old: Option<(Pos, Breach)>, at: Pos, x: Breach| match old {
-            Some(o) if !before(at, o.0) => Some(o),
-            _ => Some((at, x)),
-        };
-        let mut first = work.dup;
-        for need in &work.needs {
-            if need.count == 0 {
-                let r = Subject::Own(need.name, need.key, need.port);
-                first = first_of(first, need.pos, Breach::Unbound(r, need.binder));
-            }
-        }
-        for (k, mem) in work.body.mems.iter().enumerate() {
-            if mem.read.is_none() || mem.write.is_none() {
-                let x = Breach::NoPort {
-                    mem: k,
-                    write: mem.read.is_some(),
-                };
-                first = first_of(first, mem.pos, x);
-            }
-        }
-        let mut free: Option<(Pos, usize)> = None;
-        for (k, child) in work.body.children.iter().enumerate() {
-            let inputs = self.elab.done.get(child.inst).map_or(0, |i| i.iface.inputs);
-            if work.bound.get(k).copied().unwrap_or(0) < inputs
-                && free.is_none_or(|(at, _)| before(child.pos, at))
-            {
-                free = Some((child.pos, k));
-            }
-        }
-        if let Some((at, k)) = free {
-            first = first_of(first, at, Breach::Input(k));
-        }
-        let Some((pos, x)) = first else {
+        let Some((pos, x)) = self.elab.work.first_breach(&self.elab.done) else {
             return Ok(());
         };
         fail(Code::S018, pos, self.breach_text(x))
@@ -311,7 +223,7 @@ impl Evaluator<'_> {
         let port = iface.and_then(|i| {
             i.ports
                 .values()
-                .filter(|q| q.input && !work.inputs.contains_key(&(k, q.id())))
+                .filter(|q| q.input && !work.has_input(k, q.id()))
                 .min_by_key(|q| (q.pos.line, q.pos.col, q.order))
         });
         let name = port.map_or_else(String::new, |q| str_text(&entry_text(text(q.sym), q.key)));
