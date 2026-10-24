@@ -152,6 +152,13 @@ def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
   else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
   else normalize p (.ref (.name ⟨x, []⟩) t)
 
+/-! A port in a helper is `S004` at the statement until the checks of a port in a helper exist. -/
+def helperPortLater (p : Pos) : Eval.M Unit := do
+  let c ← readThe Ctx
+  if let some (.fn ..) := c.items[c.item]? then
+    fail .S004 p ("a helper cannot declare a port; declare the port in the module body and " ++
+      "pass its value to the helper")
+
 /-! An `as` key is `S004` at the key until its checks exist. -/
 def portKeyLater (p : Pos) : Eval.M Unit :=
   let what := "a port key"

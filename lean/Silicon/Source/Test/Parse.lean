@@ -96,6 +96,19 @@ def roundtrip (items : List Item) : Bool :=
 #guard stFails "input req[]: T;" .S001 11
 #guard stFails "input req[a, b]: T;" .S001 12
 #guard stFails "input req[a: T;" .S001 12
+
+/-!
+An `as` key is one expression after the type (section 5.6). An indexed port with `as` is `S001`
+at `as`, with the text "`as` on an indexed port" of section 6.2.
+-/
+#guard st "input pin: Bool as \"req_0\";" ==
+  "(input \"pin\" (keyed (str \"req_0\")) (name \"Bool\"))"
+#guard st "output o: T as PortKey(\"gnt\", true, i + 1);" ==
+  "(output \"o\" (keyed (call (name \"PortKey\") ((str \"gnt\") (bool true) " ++
+    "(binary add (name \"i\") (num 1))))) (name \"T\"))"
+#guard stFails "output o[0]: T as k;" .S001 16
+#guard stFails "input i: T as;" .S001 14
+#guard stFails "input i: T as k as j;" .S001 17
 #guard st "instance u = M(8, true);" == "(inst \"u\" \"M\" ((num 8) (bool true)))"
 #guard st "instance u = M();" == "(inst \"u\" \"M\" ())"
 #guard st "return;" == "(ret none)"
@@ -398,8 +411,6 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard stFails "mem m: [T; 4] in d;" .S004 15
 #guard stFails "input i: T in d;" .S004 12
 #guard stFails "input i[0]: T in d;" .S004 15
-#guard stFails "output o[0]: T as k;" .S004 16
-#guard stFails "output o: T as k;" .S004 13
 #guard stFails "instance u = M() with { clock = d };" .S004 18
 #guard stFails "instance u = p::M();" .S004 15
 #guard stFails "@field(a, \"i\") = 1;" .S004 1
@@ -410,6 +421,11 @@ def message (s : String) : String :=
   match parseSource defaultSyntaxDepth s with
   | .error e => e.msg
   | .ok _ => ""
+
+/-! The text "`as` on an indexed port" names the family in its fix. -/
+#guard message (ctBody "output o[0]: T as k;") == Parse.asIndexedText "o"
+#guard Parse.asIndexedText "o" == "an indexed port takes no `as` key; declare a scalar port " ++
+  "with `as PortKey(\"o\", true, k)`"
 
 /-!
 An enum (slice 3): the tag type, and each variant with its payload types and its tag value. A
@@ -527,19 +543,16 @@ a package path.
   "or `_`; compare with a constant in an `if`"
 
 /-!
-`S004`: a `fn` without `comptime` declares no port, with the text "Port in a `fn`" of section
-6.2. The position is the keyword, also in a nested block. A `comptime fn` and a module parse a
-port. Each body parses a resource, an instance, and a `:=`.
+A `fn` without `comptime` parses a port (F37), also in a nested block, and each other statement:
+a resource, an instance, and a `:=`.
 -/
 def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
-#guard fails (plainBody "input i: Bool;") .S004 2 1
-#guard fails (plainBody "output o: Bool;") .S004 2 1
-#guard fails (plainBody "let x = 1;\n{\ncomptime if (c) { input i: Bool; }\n}") .S004 4 19
-#guard fails (plainBody "comptime for i in 0..2 {\noutput o: Bool;\n}") .S004 3 1
-#guard message (plainBody "input i: Bool;") == Parse.portFnText
-#guard message (plainBody "output o: Bool;") == Parse.portFnText
-#guard Parse.portFnText == "a helper cannot declare a port; declare the port in the module " ++
-  "body and pass its value to the helper"
+#guard (parseSource defaultSyntaxDepth
+  (plainBody "input i: Bool;\noutput o: Bool as \"q\";")).toBool
+#guard (parseSource defaultSyntaxDepth
+  (plainBody "let x = 1;\n{\ncomptime if (c) { input i[0]: Bool; }\n}")).toBool
+#guard (parseSource defaultSyntaxDepth
+  (plainBody "comptime for i in 0..2 {\noutput o: Bool as \"o\" + str(i);\n}")).toBool
 #guard (parseSource defaultSyntaxDepth (plainBody "let x = 1;\nx = 2;\nreturn x;")).toBool
 #guard (parseSource defaultSyntaxDepth (plainBody
   "reg r: Bool = false;\nwire w: Bool;\nmem m: [Bool; 4];\ninstance u = M();\nw := r;")).toBool

@@ -14,9 +14,7 @@ position order, and it reports the first. This rule also orders a lexical error 
 if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item.
-  `in`, `as`, `with`, and `conforms` after their forms. `input`, `output`, `reg`, `wire`,
-  `mem`, and `instance` in the body of a `fn` without `comptime`: a helper that declares
-  resources is slice 3.
+  `in`, `with`, and `conforms` after their forms.
 - The opening token: `@` of one of the five builtins.
 - A later token of the construct: the `::` of a package path. The `(` after a type, which is a
   type function call. The second name in a `domains` clause. The `(` after the name of an enum,
@@ -147,14 +145,10 @@ def Input.of (ts : Array Token) : Input := Id.run do
       if let j :: _ := open_ then semi := semi.set! j true
   return ⟨ts, close, comma, semi⟩
 
-/-!
-The context of the parser: the tokens, the syntax depth, and whether the parser is in the body
-of a function without `comptime`.
--/
+/-! The context of the parser: the tokens and the syntax depth. -/
 structure Ctx where
   input : Input
   depth : Nat
-  plainFn : Bool
 
 /-!
 The state of the parser. `next` is the index of the next token. `high` is the first token of
@@ -715,13 +709,9 @@ def aliasDecl (f : Nat) (start : Pos) (make : Pos → Ident → TypeExpr → α)
   sym ";"
   return make start n ty
 
-/-! The statements that declare a port. A `fn` without `comptime` declares no port. -/
-def portKeywords : List String := ["input", "output"]
-
-/-! The `S004` text "Port in a `fn`" of section 6.2. -/
-def portFnText : String :=
-  "a helper cannot declare a port; declare the port in the module body and pass its value to " ++
-    "the helper"
+/-! The `S001` text "`as` on an indexed port" of section 6.2, for the family `x`. -/
+def asIndexedText (x : String) : String :=
+  s!"an indexed port takes no `as` key; declare a scalar port with `as PortKey(\"{x}\", true, k)`"
 
 /-!
 The head of a port declaration: the keyword, the name, and the key of a family entry in `[ ]`.
@@ -736,13 +726,21 @@ def portHead (f : Nat) : P (Ident × Option Expr) := do
     return (n, some k)
   return (n, none)
 
-/-! The tail of a port declaration: the type, the domain check, and `;`. -/
+/-!
+The tail of a port declaration: the type, the domain check, the `as` key, and `;`. An indexed
+port takes no `as` key (section 5.6), so `as` after its type is `S001`.
+-/
 def portTail (f : Nat) (p : Pos) (n : Ident) (k : Option Expr)
     (make : Pos → Ident → PortForm Expr → TypeExpr → Stmt) : P Stmt := do
   let ty ← typeAnnotation f
   noDomain
   let u ← peek
-  if isKw "as" u then later u "a port key"
+  if isKw "as" u then
+    if k.isSome then throw ⟨.S001, u.pos, asIndexedText n.name⟩
+    bump
+    let e ← value f
+    sym ";"
+    return make p n (.keyed e) ty
   sym ";"
   return make p n (.ofIndex k) ty
 
@@ -757,8 +755,6 @@ mutual
     | 0 => exhausted
     | f + 1 => do
       let t ← peek
-      if (← read).plainFn && portKeywords.any (isKw · t) then
-        throw ⟨.S004, t.pos, portFnText⟩
       match t.kind with
       | .keyword "let" =>
         bump
@@ -906,7 +902,7 @@ def fnRest (f : Nat) (start : Pos) (comptime : Bool) : P Item := do
   let ps ← params f false []
   sym "->"
   let r ← typeTop f
-  let b ← withReader (fun c => { c with plainFn := !comptime }) (block f)
+  let b ← block f
   return .fn start comptime n ps r b
 
 def moduleItem (f : Nat) (start : Pos) : P Item := do
@@ -1022,7 +1018,7 @@ error comes only after a parse without another error.
 -/
 def parse (depth : Nat) (tokens : List Token) : Except Error (List Item) := do
   let ts := tokens.toArray
-  let (items, s) ← ((items (32 * (ts.size + 1)) []).run ⟨Input.of ts, depth, false⟩).run ⟨0, none⟩
+  let (items, s) ← ((items (32 * (ts.size + 1)) []).run ⟨Input.of ts, depth⟩).run ⟨0, none⟩
   match s.high with
   | some p => throw ⟨.S001, p, heightText depth⟩
   | none => return items
@@ -1038,7 +1034,7 @@ def parseExpr (depth : Nat) (s : String) : Except Error Expr := do
     let t ← peek
     unless t.kind == .eof do unexpected t "the end of the expression"
     return e
-  let (e, st) ← (act.run ⟨Input.of ts, depth, false⟩).run ⟨0, none⟩
+  let (e, st) ← (act.run ⟨Input.of ts, depth⟩).run ⟨0, none⟩
   match st.high with
   | some p => throw ⟨.S001, p, heightText depth⟩
   | none => return e

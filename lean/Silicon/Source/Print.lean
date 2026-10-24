@@ -356,6 +356,16 @@ mutual
     | .mk p v => p.print ++ " => " ++ v.print 0
 end
 
+/-!
+The text of a port after its name, with the type text `ty`: the family key in `[ ]`, the type,
+and the `as` key.
+-/
+def Print.portText (k : PortForm Expr) (ty : String) : String :=
+  match k with
+  | .scalar => ": " ++ ty
+  | .indexed e => "[" ++ e.print 0 ++ "]: " ++ ty
+  | .keyed e => ": " ++ ty ++ " as " ++ e.print 0
+
 mutual
   /-- The lines of a statement at the nesting depth `d`. Each line ends with LF. -/
   def Stmt.print (d : Nat) : Stmt → String
@@ -370,12 +380,8 @@ mutual
     | .wire _ n ty => indent d ++ "wire " ++ n.name ++ ": " ++ ty.print ++ ";\n"
     | .mem _ n ty e => indent d ++ "mem " ++ n.name ++ ": [" ++ ty.print ++ "; " ++ e.print 0
       ++ "];\n"
-    | .input _ n k ty =>
-      let k := (k.index?.map fun e => "[" ++ e.print 0 ++ "]").getD ""
-      indent d ++ "input " ++ n.name ++ k ++ ": " ++ ty.print ++ ";\n"
-    | .output _ n k ty =>
-      let k := (k.index?.map fun e => "[" ++ e.print 0 ++ "]").getD ""
-      indent d ++ "output " ++ n.name ++ k ++ ": " ++ ty.print ++ ";\n"
+    | .input _ n k ty => indent d ++ "input " ++ n.name ++ portText k ty.print ++ ";\n"
+    | .output _ n k ty => indent d ++ "output " ++ n.name ++ portText k ty.print ++ ";\n"
     | .inst _ n m xs => indent d ++ "instance " ++ n.name ++ " = " ++ m.name ++ "("
       ++ args (xs.map (Expr.print 0)) ++ ");\n"
     | .ret _ none => indent d ++ "return;\n"

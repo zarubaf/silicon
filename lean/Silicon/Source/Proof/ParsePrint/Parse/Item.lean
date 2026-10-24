@@ -194,7 +194,7 @@ theorem Runs.params (static : Bool) (ps : List Param) : ∀ (ctx : Ctx) (i f : N
 
 theorem Runs.fnRest (p : Pos) (c : Bool) (n : Ident) (ps : List Param) (r : TypeExpr)
     (b : List Stmt) (hps : ps.all (Param.printable false) = true) (hr : r.printable = true)
-    (hb : Stmt.printableAll (!c) b = true) (ctx : Ctx) (i f : Nat) (R : List Kind)
+    (hb : Stmt.printableAll b = true) (ctx : Ctx) (i f : Nat) (R : List Kind)
     (start : Pos)
     (hw : Win ctx.input i (.keyword "fn" :: .ident n.name :: .symbol "(" ::
       (argToks (ps.map Param.toks) ++ .symbol ")" :: .symbol "->" ::
@@ -223,8 +223,7 @@ theorem Runs.fnRest (p : Pos) (c : Bool) (n : Ident) (ps : List Param) (r : Type
     fun r' hr' => ?_
   have w4 := w3.drop
   rw [← eb] at w4
-  refine Runs.bind (Runs.withReader (Runs.block_print b { ctx with plainFn := !c } _ f R hb w4
-    (by omega) (by show (Stmt.bodyToks b).length ≤ ctx.depth; omega))) fun b' hb' => ?_
+  refine Runs.bind (Runs.block_print b ctx _ f R hb w4 (by omega) (by omega)) fun b' hb' => ?_
   refine Runs.idx (by omega) (Runs.pure ?_)
   simp [Item.erase, Ident.erase_of_name (b := n) hid, hms, hr', hb']
 
@@ -241,8 +240,8 @@ theorem Item.toks_module (p : Pos) (n : Ident) (ps : List Param) (ds : Option (L
   cases ds <;> simp [Item.toks, domToks]
 
 theorem Runs.moduleItem (p : Pos) (n : Ident) (ps : List Param) (ds : Option (List Ident))
-    (b : List Stmt) (hp : (Item.module p n ps ds b).printable = true) (ctx : Ctx)
-    (hpl : ctx.plainFn = false) (i f : Nat) (R : List Kind) (start : Pos)
+    (b : List Stmt) (hp : (Item.module p n ps ds b).printable = true) (ctx : Ctx) (i f : Nat)
+    (R : List Kind) (start : Pos)
     (hw : Win ctx.input i ((Item.module p n ps ds b).toks ++ R))
     (hf : 4 * (Item.module p n ps ds b).toks.length + 5 ≤ f)
     (hd : (Item.module p n ps ds b).toks.length ≤ ctx.depth) :
@@ -250,7 +249,6 @@ theorem Runs.moduleItem (p : Pos) (n : Ident) (ps : List Param) (ds : Option (Li
       (fun it => it.erase = (Item.module p n ps ds b).erase) := by
   simp only [Item.printable, Bool.and_eq_true] at hp
   obtain ⟨⟨⟨hn, hps⟩, hds⟩, hb⟩ := hp
-  rw [← hpl] at hb
   have eb : Stmt.bodyToks b ++ R = .symbol "{" :: (Stmt.linesToks b ++ .symbol "}" :: R) := by
     simp [Stmt.bodyToks]
   rw [Item.toks_module] at hw hf hd ⊢
@@ -628,8 +626,8 @@ theorem Runs.enumItem (p : Pos) (n : Ident) (ty : TypeExpr) (vs : List Variant)
   simp [Item.erase, Ident.erase_of_name (b := n) hid, hty', hms]
 
 /-! `item` reads the kinds of a printable item back to it, up to positions. -/
-theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.plainFn = false)
-    (i f : Nat) (R : List Kind) (hw : Win ctx.input i (it.toks ++ R))
+theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (i f : Nat) (R : List Kind)
+    (hw : Win ctx.input i (it.toks ++ R))
     (hf : 4 * it.toks.length + 5 ≤ f) (hd : it.toks.length ≤ ctx.depth) :
     Runs (item f) ctx i (i + it.toks.length) (fun r => r.erase = it.erase) := by
   unfold Parse.item
@@ -711,7 +709,7 @@ theorem Runs.item (it : Item) (hp : it.printable = true) (ctx : Ctx) (hpl : ctx.
       hw.head' (by simp [Item.toks_module])
     refine Runs.peek_bind ?_
     simp only [hk]
-    exact Runs.moduleItem p n ps ds b hp ctx hpl i f R _ hw hf hd
+    exact Runs.moduleItem p n ps ds b hp ctx i f R _ hw hf hd
 
 theorem Item.headKind (it : Item) : ∃ k ks, it.toks = k :: ks ∧ k ≠ .eof := by
   have : ∃ k, it.toks.head? = some k ∧ k ≠ .eof := by
@@ -729,14 +727,14 @@ theorem printToks_cons (it : Item) (L : List Item) :
 
 /-! `items` reads the kinds of printable items back to them, up to positions, until `eof`. -/
 theorem Runs.items (L : List Item) : ∀ (ctx : Ctx) (i f : Nat) (R : List Kind)
-    (acc : List Item), ctx.plainFn = false → L.all Item.printable = true →
+    (acc : List Item), L.all Item.printable = true →
     Win ctx.input i (Print.toks L ++ .eof :: R) → 4 * (Print.toks L).length + 6 ≤ f →
     (Print.toks L).length ≤ ctx.depth →
     Runs (items f acc) ctx i (i + (Print.toks L).length)
       (fun r => ∃ ms, r = acc.reverse ++ ms ∧ ms.map Item.erase = L.map Item.erase) := by
   induction L with
   | nil =>
-    intro ctx i f R acc _ _ hw hf _
+    intro ctx i f R acc _ hw hf _
     simp only [Print.toks, List.flatMap_nil, List.nil_append, List.length_nil] at hw hf ⊢
     obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
     rw [Parse.items]
@@ -744,7 +742,7 @@ theorem Runs.items (L : List Item) : ∀ (ctx : Ctx) (i f : Nat) (R : List Kind)
     simp only [hw.head, beq_self_eq_true, ite_true]
     exact Runs.pure ⟨[], by simp, rfl⟩
   | cons it L ih =>
-    intro ctx i f R acc hpl hp hw hf hd
+    intro ctx i f R acc hp hw hf hd
     simp only [List.all_cons, Bool.and_eq_true] at hp
     rw [printToks_cons, List.append_assoc] at hw
     simp only [printToks_cons, List.length_append] at hf hd ⊢
@@ -756,8 +754,8 @@ theorem Runs.items (L : List Item) : ∀ (ctx : Ctx) (i f : Nat) (R : List Kind)
     have hk0 := hw.head' (k := k) (by simp [hks])
     simp only [hk0, show (k == Kind.eof) = false from by rw [Kind.beq_eq]; exact decide_eq_false hk,
       Bool.false_eq_true, ite_false]
-    refine Runs.bind (Runs.item it hp.1 ctx hpl i f _ hw (by omega) (by omega)) fun it' hit' => ?_
-    refine Runs.idx (by omega) (Runs.mono (ih ctx _ f R (it' :: acc) hpl hp.2 hw.drop
+    refine Runs.bind (Runs.item it hp.1 ctx i f _ hw (by omega) (by omega)) fun it' hit' => ?_
+    refine Runs.idx (by omega) (Runs.mono (ih ctx _ f R (it' :: acc) hp.2 hw.drop
       (by omega) (by omega)) ?_)
     rintro r ⟨ms, rfl, hms⟩
     exact ⟨it' :: ms, by simp, by simp [hit', hms]⟩

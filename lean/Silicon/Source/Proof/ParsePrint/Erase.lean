@@ -21,14 +21,12 @@ a check here:
 - Each module parameter and each struct parameter has `comptime`: `Param.printable true`.
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
 - Each assignment and connection target is a place: `Expr.place`.
-- No port is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
-- No port has an `as` key, because the parser gives none yet: `PortForm.printable`.
-- The key of an indexed port is an expression, so `PortForm.printable` applies `Expr.printable`
-  to it. The height bound `N` holds for the key as for each expression, because `N` is at least the
-  length of the printed text.
+- The key of an indexed port and an `as` key are expressions, so `PortForm.printable` applies
+  `Expr.printable` to them. The height bound `N` holds for a key as for each expression, because
+  `N` is at least the length of the printed text. A port has one name form (`PortForm`), so no
+  AST has an indexed port with an `as` key, and the precondition needs no clause for it.
 - Each body has only the statement kinds that the parser accepts in that body. The parser
-  accepts each statement kind in each body, except a port in a `fn` without `comptime`.
-  Thus the flag `plain` also covers this clause.
+  accepts each statement kind in each body, so this clause holds for each AST.
 - No string has a control character other than LF, CR, and tab: `printableChar`.
 - Each number is below 2^65536: `Expr.printable` at `num` and at `select`, and
   `Pattern.printable` at `int`.
@@ -229,38 +227,37 @@ mutual
     | a :: as => a.printable && Arm.printableAll as
 end
 
-/-! The form of a port that the parser gives: a scalar name, or a family key that is printable. -/
+/-! The form of a port: a scalar name, or a family key or an `as` key that is printable. -/
 def PortForm.printable : PortForm Expr → Bool
   | .scalar => true
-  | .indexed k => k.printable
-  | .keyed _ => false
+  | .indexed k | .keyed k => k.printable
 
 mutual
-  /-- A statement in a body. `plain` holds in the body of a `fn` without `comptime`. -/
-  def Stmt.printable (plain : Bool) : Stmt → Bool
+  /-- A statement in a body. -/
+  def Stmt.printable : Stmt → Bool
     | .local _ _ n ty v => validName n.name && ty.all TypeExpr.printable && v.printable
     | .assign _ t v => t.place && t.printable && v.printable
     | .connect _ t v => t.place && t.printable && v.printable
     | .reg _ n ty i => validName n.name && ty.printable && i.printable
     | .wire _ n ty => validName n.name && ty.printable
     | .mem _ n ty d => validName n.name && ty.printable && d.printable
-    | .input _ n k ty => !plain && validName n.name && k.printable && ty.printable
-    | .output _ n k ty => !plain && validName n.name && k.printable && ty.printable
+    | .input _ n k ty => validName n.name && k.printable && ty.printable
+    | .output _ n k ty => validName n.name && k.printable && ty.printable
     | .inst _ n m xs =>
       validName n.name && validName m.name && Expr.printableAll xs
     | .ret _ v => v.all Expr.printable
-    | .ctIf _ c y none => c.printable && Stmt.printableAll plain y
+    | .ctIf _ c y none => c.printable && Stmt.printableAll y
     | .ctIf _ c y (some n) =>
-      c.printable && Stmt.printableAll plain y && Stmt.printableAll plain n
+      c.printable && Stmt.printableAll y && Stmt.printableAll n
     | .ctFor _ i lo hi b =>
-      validName i.name && lo.printable && hi.printable && Stmt.printableAll plain b
-    | .block _ b => Stmt.printableAll plain b
+      validName i.name && lo.printable && hi.printable && Stmt.printableAll b
+    | .block _ b => Stmt.printableAll b
     | .expr _ v => v.printable
     | .alias _ n ty => validName n.name && ty.printable
 
-  def Stmt.printableAll (plain : Bool) : List Stmt → Bool
+  def Stmt.printableAll : List Stmt → Bool
     | [] => true
-    | s :: ss => s.printable plain && Stmt.printableAll plain ss
+    | s :: ss => s.printable && Stmt.printableAll ss
 end
 
 /-!
@@ -280,11 +277,11 @@ def Variant.printable (v : Variant) : Bool :=
 
 def Item.printable : Item → Bool
   | .const _ n ty v => validName n.name && ty.printable && v.printable
-  | .fn _ c n ps r b => validName n.name && ps.all (Param.printable false) && r.printable
-      && Stmt.printableAll (!c) b
+  | .fn _ _ n ps r b => validName n.name && ps.all (Param.printable false) && r.printable
+      && Stmt.printableAll b
   | .module _ n ps ds b => validName n.name && ps.all (Param.printable true)
       && ds.all (fun ds => ds.length ≤ 1 && ds.all (validName ·.name))
-      && Stmt.printableAll false b
+      && Stmt.printableAll b
   | .struct _ n ps fs => validName n.name && ps.all (Param.printable true)
       && fs.all (fun f => validName f.name.name && f.ty.printable)
   | .alias _ n ty => validName n.name && ty.printable
@@ -527,6 +524,10 @@ theorem Stmt.body_erase (l : List Stmt) (h : ∀ s ∈ l, ∀ d, s.erase.print d
     simp only [List.map, Stmt.body]
     rw [← List.map_cons, Stmt.lines_erase _ h]
 
+@[simp] theorem Print.portText_erase (k : PortForm Expr) (ty : String) :
+    Print.portText (k.map Expr.erase) ty = Print.portText k ty := by
+  cases k <;> simp [Print.portText, PortForm.map, Expr.print_erase]
+
 theorem Stmt.print_erase (s : Stmt) : ∀ d, s.erase.print d = s.print d := by
   induction s using Stmt.erase.induct with
   | case10 _ v => intro d; cases v <;> simp [Stmt.erase, Stmt.print, Expr.print_erase]
@@ -586,17 +587,12 @@ theorem Arm.printableAll_eq (as : List Arm) :
     simp [Pattern.erase, Pattern.printable, List.all_map, Function.comp_def, this]
   | _ => rfl
 
-/-! A printable port form is the form of its family key, and the key is printable. -/
-theorem PortForm.printable_index {k : PortForm Expr} (h : k.printable = true) :
-    k.index?.all Expr.printable = true ∧ k = .ofIndex k.index? := by
-  cases k <;> simp_all [PortForm.printable, PortForm.index?, PortForm.ofIndex]
-
 @[simp] theorem PortForm.map_ofIndex (f : α → β) (k : Option α) :
     (PortForm.ofIndex k).map f = .ofIndex (k.map f) := by
   cases k <;> rfl
 
-theorem Stmt.printableAll_eq (plain : Bool) (ss : List Stmt) :
-    Stmt.printableAll plain ss = ss.all (Stmt.printable plain) := by
+theorem Stmt.printableAll_eq (ss : List Stmt) :
+    Stmt.printableAll ss = ss.all Stmt.printable := by
   induction ss <;> simp_all [Stmt.printableAll]
 
 private theorem printable_erase_all :
@@ -661,8 +657,8 @@ private theorem printable_erase_all :
 @[simp] theorem TypeExpr.printable_erase (t : TypeExpr) : t.erase.printable = t.printable :=
   printable_erase_all.2 t
 
-@[simp] theorem Stmt.printable_erase (plain : Bool) (s : Stmt) :
-    s.erase.printable plain = s.printable plain := by
+@[simp] theorem Stmt.printable_erase (s : Stmt) :
+    s.erase.printable = s.printable := by
   induction s using Stmt.erase.induct with
   | case11 _ c y ih =>
     simp only [Stmt.erase, Stmt.printable, Expr.printable_erase, Stmt.printableAll_eq,

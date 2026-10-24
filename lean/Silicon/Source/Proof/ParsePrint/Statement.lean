@@ -118,8 +118,8 @@ example : ¬ Printable [.const p (nm "X") (t "Type") (.arrayType p (.tuple p [])
 example : ¬ Printable [.module p (nm "M") [⟨p, .none, nm "W", t "Nat"⟩] none []] := by decide
 example : ¬ Printable [.module p (nm "M") [] (some [nm "a", nm "b"]) []] := by decide
 
-/-! A port in a `fn` without `comptime`, but not in a `comptime fn`. Each `fn` holds a resource. -/
-example : ¬ Printable [.fn p false (nm "f") [] (t "T") [.input p (nm "i") .scalar (t "T")]] := by
+/-! A port in each `fn`, with or without `comptime`. -/
+example : Printable [.fn p false (nm "f") [] (t "T") [.input p (nm "i") .scalar (t "T")]] := by
   decide
 example : Printable [.fn p true (nm "f") [] (t "T") [.input p (nm "i") .scalar (t "T")]] := by
   decide
@@ -130,6 +130,14 @@ example : Printable
   decide
 example : ¬ Printable
     [.module p (nm "M") [] none [.output p (nm "r") (.indexed (.tuple p [])) (t "T")]] := by
+  decide
+
+/-! An `as` key is an expression, and it is printable as an expression. -/
+example : Printable
+    [.module p (nm "M") [] none [.input p (nm "r") (.keyed (.str p "x")) (t "T")]] := by
+  decide
+example : ¬ Printable
+    [.module p (nm "M") [] none [.output p (nm "r") (.keyed (.tuple p [])) (t "T")]] := by
   decide
 example : Printable [.fn p false (nm "f") [] (t "T") [.wire p (nm "w") (t "T")]] := by decide
 

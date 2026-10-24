@@ -7,7 +7,7 @@ The parser lemma of `parse_print` for statements and blocks.
 `Runs.stmt_print` gives `SGoal s` for each statement `s`:
 
 ```lean
-s.printable ctx.plainFn = true → Win ctx.input i (s.toks ++ t :: R) →
+s.printable = true → Win ctx.input i (s.toks ++ t :: R) →
   t ≠ .keyword "else" → 4 * s.toks.length + 4 ≤ f → s.toks.length ≤ ctx.depth →
   Runs (stmt f) ctx i (i + s.toks.length) (fun s' => s'.erase = s.erase)
 ```
@@ -26,10 +26,6 @@ namespace Silicon.Source.ParsePrint
 open Lex Parse Print
 
 /-! ## Monad steps -/
-
-theorem Runs.read_bind {β : Type} {k : Ctx → P β} {ctx : Ctx} {i l : Nat} {R : β → Prop}
-    (hk : Runs (k ctx) ctx i l R) : Runs (read >>= k) ctx i l R :=
-  Runs.bind (Q := (· = ctx)) (fun _ => ⟨ctx, rfl, rfl⟩) fun _ h => h ▸ hk
 
 theorem Runs.noDomain {ctx : Ctx} {i : Nat} (h : (tokenAt ctx.input i).kind ≠ .keyword "in") :
     Runs noDomain ctx i i (fun _ => True) := by
@@ -152,22 +148,10 @@ theorem Runs.map_bind {α β γ : Type} {m : P α} {g : α → β} {k : β → P
 
 /-! `stmt` reads the kinds of `s` back to `s`, up to positions. -/
 def SGoal (s : Stmt) : Prop :=
-  ∀ (ctx : Ctx) (i f : Nat) (t : Kind) (R : List Kind), s.printable ctx.plainFn = true →
+  ∀ (ctx : Ctx) (i f : Nat) (t : Kind) (R : List Kind), s.printable = true →
     Win ctx.input i (s.toks ++ t :: R) → t ≠ .keyword "else" → 4 * s.toks.length + 4 ≤ f →
     s.toks.length ≤ ctx.depth →
     Runs (stmt f) ctx i (i + s.toks.length) (fun s' => s'.erase = s.erase)
-
-/-! The check for a port in a `fn` without `comptime` passes. -/
-theorem stmt_res {ctx : Ctx} {tok : Token}
-    (h : ctx.plainFn = false ∨ ∀ w ∈ portKeywords, tok.kind ≠ .keyword w) :
-    (ctx.plainFn && portKeywords.any fun x => isKw x tok) = false := by
-  rcases h with h | h
-  · simp [h]
-  · simp only [Bool.and_eq_false_iff, List.any_eq_false, isKw, beq_iff_eq]
-    exact Or.inr fun w hw he => h w hw he
-
-theorem not_res {k : Kind} (h : ∀ w, k = .keyword w → w ∉ portKeywords) :
-    ∀ w ∈ portKeywords, k ≠ .keyword w := fun w hw he => h w he hw
 
 /-! The window of a statement, with its kinds as a list of single kinds and parts. -/
 macro "norm_win" : tactic => `(tactic| simp only [Stmt.toks, ite_true, ite_false,
@@ -201,16 +185,6 @@ theorem Win.head' {inp : Input} {i : Nat} {a R : List Kind} {k : Kind} (h : Win 
   | nil => simp at ha
   | cons x xs => simp only [List.head?_cons, Option.some.injEq] at ha; subst ha; exact h.head
 
-theorem stmt_res_kw {ctx : Ctx} {tok : Token} {w : String} (h : tok.kind = .keyword w)
-    (hw : portKeywords.contains w = false) :
-    (ctx.plainFn && portKeywords.any fun x => isKw x tok) = false :=
-  stmt_res (Or.inr fun w' hw' he => by
-    rw [h] at he; cases he; simp_all)
-
-theorem stmt_res_nkw {ctx : Ctx} {tok : Token} (h : ∀ w, tok.kind ≠ .keyword w) :
-    (ctx.plainFn && portKeywords.any fun x => isKw x tok) = false :=
-  stmt_res (Or.inr fun w _ => h w)
-
 theorem Runs.stmt_local (p : Pos) (m : Bool) (n : Ident) (ty : Option TypeExpr) (v : Expr) :
     SGoal (.local p m n ty v) := by
   intro ctx i f t R hp hw ht hf hd
@@ -218,9 +192,9 @@ theorem Runs.stmt_local (p : Pos) (m : Bool) (n : Ident) (ty : Option TypeExpr) 
   obtain ⟨⟨hn, hty⟩, hv⟩ := hp
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
+  refine Runs.peek_bind ?_
   have hk : (tokenAt ctx.input i).kind = .keyword "let" := hw.head' (by simp [Stmt.toks])
-  simp only [stmt_res_kw hk (by decide), hk, Bool.false_eq_true, ite_false]
+  simp only [hk]
   refine Runs.bump_bind ?_
   have hm : ∀ R', Win ctx.input (i + 1) ((if m then [Kind.keyword "mut"] else []) ++
       .ident n.name :: R') →
@@ -304,8 +278,8 @@ theorem Runs.stmt_reg (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -332,8 +306,8 @@ theorem Runs.stmt_wire (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.wire p n 
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -360,8 +334,8 @@ theorem Runs.stmt_mem (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -411,65 +385,93 @@ theorem Runs.portHead {ctx : Ctx} {i f : Nat} {k : Kind} (n : Ident) (key : Opti
       (by omega)) fun v hv => ?_
     exact Runs.sym_bind w.tail.drop.head (Runs.idx (by omega) (Runs.pure ⟨hid, by simp [hv]⟩))
 
-/-! The tail of a port: `:`, a type, and `;`. -/
-theorem Runs.portTail {ctx : Ctx} {i f : Nat} (p : Pos) (n : Ident) (k : Option Expr)
-    (ty : TypeExpr) (hty : ty.printable = true)
-    (make : Pos → Ident → PortForm Expr → TypeExpr → Stmt) (t : Kind)
-    (R : List Kind) (hw : Win ctx.input i (.symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R)))
-    (hf : 4 * ty.toks.length ≤ f) (hd : ty.toks.length ≤ ctx.depth) :
-    Runs (portTail f p n k make) ctx i (i + (ty.toks.length + 2))
-      (fun s' => ∃ ty', ty'.erase = ty.erase ∧ s' = make p n (.ofIndex k) ty') := by
+/-!
+The tail of a port: `:`, a type, the `as` key, and `;`. `key` is the family key that the head
+read. An `as` key comes only after the type of a port without a family key.
+-/
+theorem Runs.portTail {ctx : Ctx} {i f : Nat} (p : Pos) (n : Ident) (key : Option Expr)
+    (k : PortForm Expr) (hk : k.printable = true)
+    (hkey : key.map Expr.erase = k.index?.map Expr.erase) (ty : TypeExpr)
+    (hty : ty.printable = true) (make : Pos → Ident → PortForm Expr → TypeExpr → Stmt)
+    (t : Kind) (R : List Kind)
+    (hw : Win ctx.input i (.symbol ":" :: (ty.toks ++ k.asToks ++ .symbol ";" :: t :: R)))
+    (hf : 4 * ty.toks.length + 4 * k.asToks.length ≤ f)
+    (hd : ty.toks.length + k.asToks.length ≤ ctx.depth) :
+    Runs (portTail f p n key make) ctx i (i + (ty.toks.length + k.asToks.length + 2))
+      (fun s' => ∃ k' ty', k'.map Expr.erase = k.map Expr.erase ∧ ty'.erase = ty.erase ∧
+        s' = make p n k' ty') := by
   unfold Parse.portTail
-  refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw (by decide) hf hd)
-    fun ty' hty' => ?_
-  have w2 := hw.tail.drop
-  refine Runs.bind (Runs.noDomain (by rw [w2.head]; decide)) fun _ _ => ?_
-  refine Runs.peek_bind ?_
-  simp only [isKw_of w2.head]
-  reduce_checks
-  exact Runs.sym_bind w2.head (Runs.idx (by omega) (Runs.pure ⟨ty', hty', rfl⟩))
+  cases k with
+  | keyed e =>
+    obtain rfl : key = none := by cases key <;> simp_all [PortForm.index?]
+    simp only [PortForm.printable] at hk
+    simp only [PortForm.asToks, List.cons_append, List.append_assoc, List.length_cons] at hw hf hd ⊢
+    refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw (by decide) (by omega)
+      (by omega)) fun ty' hty' => ?_
+    have w2 := hw.tail.drop
+    refine Runs.bind (Runs.noDomain (by rw [w2.head]; decide)) fun _ _ => ?_
+    refine Runs.peek_bind ?_
+    simp only [isKw_of w2.head, Option.isSome_none]
+    reduce_checks
+    refine Runs.bump_bind ?_
+    refine Runs.bind (Runs.value e hk ctx _ f _ _ w2.tail After.semi (by omega) (by omega))
+      fun v hv => ?_
+    exact Runs.sym_bind w2.tail.drop.head
+      (Runs.idx (by omega) (Runs.pure ⟨.keyed v, ty', by simp [PortForm.map, hv], hty', rfl⟩))
+  | scalar | indexed e =>
+    simp only [PortForm.asToks, List.append_nil, List.length_nil, Nat.mul_zero, Nat.add_zero]
+      at hw hf hd ⊢
+    refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw (by decide) hf hd)
+      fun ty' hty' => ?_
+    have w2 := hw.tail.drop
+    refine Runs.bind (Runs.noDomain (by rw [w2.head]; decide)) fun _ _ => ?_
+    refine Runs.peek_bind ?_
+    simp only [isKw_of w2.head]
+    reduce_checks
+    refine Runs.sym_bind w2.head
+      (Runs.idx (by omega) (Runs.pure ⟨.ofIndex key, ty', ?_, hty', rfl⟩))
+    cases key <;> simp_all [PortForm.ofIndex, PortForm.map, PortForm.index?]
 
-/-! A port: `input` or `output`, a name, the key of a family entry, and a type. -/
-theorem Runs.port {ctx : Ctx} {i f : Nat} {k : Kind} (n : Ident) (key : Option Expr)
-    (hk : key.all Expr.printable = true) (ty : TypeExpr) (hty : ty.printable = true)
+/-! A port: `input` or `output`, a name, the key of a family entry, a type, and an `as` key. -/
+theorem Runs.port {ctx : Ctx} {i f : Nat} {kw : Kind} (n : Ident) (k : PortForm Expr)
+    (hk : k.printable = true) (ty : TypeExpr) (hty : ty.printable = true)
     (make : Pos → Ident → PortForm Expr → TypeExpr → Stmt) (t : Kind) (R : List Kind)
-    (hw : Win ctx.input i (k :: .ident n.name :: (portKey key ++ .symbol ":" ::
-      (ty.toks ++ .symbol ";" :: t :: R))))
-    (hf : 4 * (portKey key).length + 4 * ty.toks.length + 2 ≤ f)
-    (hd : (portKey key).length + ty.toks.length ≤ ctx.depth) :
+    (hw : Win ctx.input i (kw :: .ident n.name :: (portKey k.index? ++ .symbol ":" ::
+      (ty.toks ++ k.asToks ++ .symbol ";" :: t :: R))))
+    (hf : 4 * (portKey k.index?).length + 4 * ty.toks.length + 4 * k.asToks.length + 2 ≤ f)
+    (hd : (portKey k.index?).length + ty.toks.length + k.asToks.length ≤ ctx.depth) :
     Runs (port f (tokenAt ctx.input i) make) ctx i
-      (i + ((portKey key).length + ty.toks.length + 4))
-      (fun s' => ∃ id k' ty', id.name = n.name ∧ k'.map Expr.erase = key.map Expr.erase ∧
-        ty'.erase = ty.erase ∧ s' = make (tokenAt ctx.input i).pos id (.ofIndex k') ty') := by
+      (i + ((portKey k.index?).length + ty.toks.length + k.asToks.length + 4))
+      (fun s' => ∃ id k' ty', id.name = n.name ∧ k'.map Expr.erase = k.map Expr.erase ∧
+        ty'.erase = ty.erase ∧ s' = make (tokenAt ctx.input i).pos id k' ty') := by
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.port]
-  refine Runs.bind (Runs.portHead n key hk _ hw (by omega) (by omega)) fun h hh => ?_
+  have hi : k.index?.all Expr.printable = true := by
+    cases k <;> simp_all [PortForm.index?, PortForm.printable]
+  refine Runs.bind (Runs.portHead n k.index? hi _ hw (by omega) (by omega)) fun h hh => ?_
   have w := hw.tail.tail.drop
-  refine Runs.start (by omega) (Runs.idx (by omega) (Runs.mono (Runs.portTail _ h.1 h.2 ty hty
-    make t R w (by omega) (by omega)) ?_))
-  rintro _ ⟨ty', hty', rfl⟩
-  exact ⟨h.1, h.2, ty', hh.1, hh.2, hty', rfl⟩
+  refine Runs.start (by omega) (Runs.idx (by omega) (Runs.mono (Runs.portTail _ h.1 h.2 k hk
+    hh.2 ty hty make t R w (by omega) (by omega)) ?_))
+  rintro _ ⟨k', ty', hk', hty', rfl⟩
+  exact ⟨h.1, k', ty', hh.1, hk', hty', rfl⟩
 
 theorem Runs.stmt_input (p : Pos) (n : Ident) (k : PortForm Expr) (ty : TypeExpr) :
     SGoal (.input p n k ty) := by
   intro ctx i f t R hp hw ht hf hd
-  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨⟨hpl, hn⟩, hk⟩, hty⟩ := hp
-  obtain ⟨hk, hof⟩ := PortForm.printable_index hk
-  rw [hof] at hw hf hd ⊢
-  generalize k.index? = k at hk hw hf hd ⊢
-  have e : (Stmt.input p n (.ofIndex k) ty).toks ++ t :: R = .keyword "input" :: .ident n.name ::
-      (portKey k ++ .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R)) := by
-    cases k <;> simp [Stmt.toks, portKey, PortForm.ofIndex, PortForm.index?]
-  have hT : (Stmt.input p n (.ofIndex k) ty).toks.length =
-      (portKey k).length + ty.toks.length + 4 := by
-    cases k <;> simp [Stmt.toks, portKey, PortForm.ofIndex, PortForm.index?] <;> omega
+  simp only [Stmt.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hk⟩, hty⟩ := hp
+  have e : (Stmt.input p n k ty).toks ++ t :: R = .keyword "input" :: .ident n.name ::
+      (portKey k.index? ++ .symbol ":" :: (ty.toks ++ k.asToks ++ .symbol ";" :: t :: R)) := by
+    simp [Stmt.toks, portKey]
+  have hT : (Stmt.input p n k ty).toks.length =
+      (portKey k.index?).length + ty.toks.length + k.asToks.length + 4 := by
+    simp [Stmt.toks, portKey] <;> omega
   rw [e] at hw
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.mono (Runs.port n k hk ty hty _ t R hw (by omega) (by omega)) ?_
   rintro _ ⟨id, k', ty', hid, hk', hty', rfl⟩
   simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty', hk']
@@ -477,23 +479,20 @@ theorem Runs.stmt_input (p : Pos) (n : Ident) (k : PortForm Expr) (ty : TypeExpr
 theorem Runs.stmt_output (p : Pos) (n : Ident) (k : PortForm Expr) (ty : TypeExpr) :
     SGoal (.output p n k ty) := by
   intro ctx i f t R hp hw ht hf hd
-  simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨⟨hpl, hn⟩, hk⟩, hty⟩ := hp
-  obtain ⟨hk, hof⟩ := PortForm.printable_index hk
-  rw [hof] at hw hf hd ⊢
-  generalize k.index? = k at hk hw hf hd ⊢
-  have e : (Stmt.output p n (.ofIndex k) ty).toks ++ t :: R = .keyword "output" :: .ident n.name ::
-      (portKey k ++ .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R)) := by
-    cases k <;> simp [Stmt.toks, portKey, PortForm.ofIndex, PortForm.index?]
-  have hT : (Stmt.output p n (.ofIndex k) ty).toks.length =
-      (portKey k).length + ty.toks.length + 4 := by
-    cases k <;> simp [Stmt.toks, portKey, PortForm.ofIndex, PortForm.index?] <;> omega
+  simp only [Stmt.printable, Bool.and_eq_true] at hp
+  obtain ⟨⟨hn, hk⟩, hty⟩ := hp
+  have e : (Stmt.output p n k ty).toks ++ t :: R = .keyword "output" :: .ident n.name ::
+      (portKey k.index? ++ .symbol ":" :: (ty.toks ++ k.asToks ++ .symbol ";" :: t :: R)) := by
+    simp [Stmt.toks, portKey]
+  have hT : (Stmt.output p n k ty).toks.length =
+      (portKey k.index?).length + ty.toks.length + k.asToks.length + 4 := by
+    simp [Stmt.toks, portKey] <;> omega
   rw [e] at hw
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.mono (Runs.port n k hk ty hty _ t R hw (by omega) (by omega)) ?_
   rintro _ ⟨id, k', ty', hid, hk', hty', rfl⟩
   simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty', hk']
@@ -513,8 +512,8 @@ theorem Runs.stmt_inst (p : Pos) (n m : Ident) (xs : List Expr) : SGoal (.inst p
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
   have w := hw.tail.tail
@@ -539,8 +538,8 @@ theorem Runs.stmt_ret_none (p : Pos) : SGoal (.ret p none) := by
   rw [e] at hw
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by simp [Stmt.toks] at hf; omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.acceptSym_true hw.tail.head) fun b hb => ?_
   subst b
@@ -561,8 +560,8 @@ theorem Runs.stmt_ret_some (p : Pos) (v : Expr) : SGoal (.ret p (some v)) := by
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind ?_
   obtain ⟨k, hk, hek⟩ := Expr.headKind v 0
   refine Runs.bind (Runs.acceptSym_false (by rw [hw.tail.head' hk]; exact EHead.ne_semi hek))
@@ -576,7 +575,7 @@ theorem Runs.stmt_ret_some (p : Pos) (v : Expr) : SGoal (.ret p (some v)) := by
 
 /-! `block` reads the kinds of the body `b` back to `b`, up to positions. -/
 def BGoal (b : List Stmt) : Prop :=
-  ∀ (ctx : Ctx) (i f : Nat) (R : List Kind), Stmt.printableAll ctx.plainFn b = true →
+  ∀ (ctx : Ctx) (i f : Nat) (R : List Kind), Stmt.printableAll b = true →
     Win ctx.input i (Stmt.bodyToks b ++ R) → 4 * (Stmt.bodyToks b).length ≤ f →
     (Stmt.bodyToks b).length ≤ ctx.depth →
     Runs (block f) ctx i (i + (Stmt.bodyToks b).length)
@@ -599,8 +598,8 @@ theorem Runs.stmt_ctIf_none (p : Pos) (c : Expr) (y : List Stmt) (hB : BGoal y) 
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind (Runs.peek_bind ?_)
   simp only [isKw_of hw.tail.head]
   reduce_checks
@@ -636,8 +635,8 @@ theorem Runs.stmt_ctIf_some (p : Pos) (c : Expr) (y n : List Stmt) (hBy : BGoal 
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind (Runs.peek_bind ?_)
   simp only [isKw_of hw.tail.head]
   reduce_checks
@@ -675,8 +674,8 @@ theorem Runs.stmt_ctFor (p : Pos) (x : Ident) (lo hi : Expr) (b : List Stmt) (hB
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.bump_bind (Runs.peek_bind ?_)
   simp only [isKw_of hw.tail.head]
   reduce_checks
@@ -704,9 +703,8 @@ theorem Runs.stmt_block (p : Pos) (b : List Stmt) (hB : BGoal b) : SGoal (.block
   have hk : (tokenAt ctx.input i).kind = .symbol "{" := hw.head' (by simp [Stmt.bodyToks])
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_nkw (ctx := ctx) (tok := tokenAt ctx.input i) (by simp [hk]), hk,
-    Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hk]
   refine Runs.bind (hB ctx i f _ hp hw (by omega) hd) fun b' hb' => Runs.pure ?_
   simp [Stmt.erase, hb']
 
@@ -717,15 +715,7 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
       Pure.pure (Stmt.expr (tokenAt ctx.input i).pos e)) ctx i l Q) :
     Runs (stmt (f + 1)) ctx i l Q := by
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  have hres : (ctx.plainFn && portKeywords.any fun x => isKw x (tokenAt ctx.input i)) =
-      false := by
-    refine stmt_res (Or.inr fun w hw => ?_)
-    rw [hk]
-    refine EHead.ne_kw hE ?_
-    simp only [portKeywords, List.mem_cons, List.not_mem_nil, or_false] at hw
-    rcases hw with rfl | rfl <;> decide
-  simp only [hres, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
   generalize (tokenAt ctx.input i).kind = K at hk
   subst hk
   split
@@ -742,9 +732,8 @@ theorem Runs.stmt_ident {ctx : Ctx} {i f j l : Nat} {n : String} {Q : Stmt → P
     (hplace : ∀ e pl, P' (e, pl) → Runs (placeStmt f (tokenAt ctx.input i).pos e pl) ctx j l Q) :
     Runs (stmt (f + 1)) ctx i l Q := by
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_nkw (ctx := ctx) (tok := tokenAt ctx.input i) (by simp [hk]), hk,
-    Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hk]
   refine Runs.bind hpost ?_
   rintro ⟨e, pl⟩ h
   exact hplace e pl h
@@ -917,8 +906,8 @@ theorem Runs.stmt_alias (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.alias p 
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
-  refine Runs.peek_bind (Runs.read_bind ?_)
-  simp only [stmt_res_kw hw.head (by decide), hw.head, Bool.false_eq_true, ite_false]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
   refine Runs.mono (Runs.aliasDecl n ty hp.2 ctx i f _ _ _ hw (by omega) (by omega)) ?_
   rintro _ ⟨id, ty', hid, hty', rfl⟩
   simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty']
@@ -952,7 +941,7 @@ theorem Stmt.linesToks_cons (s : Stmt) (ss : List Stmt) :
   simp [Stmt.linesToks]
 
 theorem Runs.stmts (b : List Stmt) (hS : ∀ s ∈ b, SGoal s) : ∀ (ctx : Ctx) (i f : Nat)
-    (R : List Kind) (acc : List Stmt), Stmt.printableAll ctx.plainFn b = true →
+    (R : List Kind) (acc : List Stmt), Stmt.printableAll b = true →
     Win ctx.input i (Stmt.linesToks b ++ .symbol "}" :: R) →
     4 * (Stmt.linesToks b).length + 5 ≤ f → (Stmt.linesToks b).length ≤ ctx.depth →
     Runs (stmts f acc) ctx i (i + (Stmt.linesToks b).length + 1)
