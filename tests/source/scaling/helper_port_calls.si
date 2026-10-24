@@ -1,0 +1,20 @@
+// T3 of the work-counter tests of the ports with `as` keys (issue #339). N calls of a helper that declares a keyed input and
+// a keyed output, and binds the output. The port belongs to the owner, and its public name has no call frame, so each
+// call adds constant work and the work follows the fuel. A walk of the call frames for each port makes N more work
+// for each call, and the work escapes the bound.
+// SCALE helper_port_calls 16 32 64 128 256
+// TOP M()
+fn lane(k: Nat, x: UInt[8]) -> UInt[8] {
+    input a: UInt[8] as "a" + str(k);
+    output b: UInt[8] as "b" + str(k);
+    b := x;
+    return a;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+// REPEAT i {N}
+    let t{i} = lane({i}, x);
+// END
+    o := t0;
+}

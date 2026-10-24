@@ -1,0 +1,14 @@
+// T1 of the work-counter tests of the ports with `as` keys (issue #339). A loop declares N scalar ports `as "p" + str(i)`,
+// each of an aggregate type, and the design goes through the layout and the lowering. A port looks up its computed name
+// in the symbol table and in the table of public names, each one ordered-map operation after the charge of the name, so
+// the work follows the fuel. A scan of the table for each port makes N more work for each port, and the work escapes
+// the bound.
+// SCALE port_key_decl_loop 16 32 64 128 256
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..{N} {
+        input p: (UInt[8], UInt[8]) as "p" + str(i);
+    }
+    o := 0;
+}
