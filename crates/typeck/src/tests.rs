@@ -1437,6 +1437,29 @@ fn a_port_family_key_and_name_are_static_positions() {
     );
 }
 
+// The `as` key of a port is a static position (section 5.6). A port in a `comptime fn` stays
+// `S006`, also with a key. A `fn` without `comptime` can declare a port.
+#[test]
+fn an_as_key_is_a_static_position() {
+    ok(&mod_body(
+        "comptime for i in 0..2 {\ninput a: Bool as \"p\" + str(i);\n}",
+    ));
+    let named = "input a: Bool;\ninput b: Bool as a;";
+    fails(&mod_body(named), S005, 3, 18);
+    assert_eq!(
+        message(&mod_body(named)),
+        "`a` is a port; a static position needs a static value"
+    );
+    fails(&mod_body("wire w: Bool;\ninput b: Bool as w;"), S005, 3, 18);
+    fails(
+        "comptime fn g() -> Nat {\ninput a: Bool as \"x\";\nreturn 1;\n}",
+        S006,
+        2,
+        1,
+    );
+    ok("fn f() -> Nat {\ninput a: Bool as \"x\";\nreturn 1;\n}");
+}
+
 #[test]
 fn a_port_family_is_no_mutable_root() {
     let push = "input req[0]: Bool;\npush(req, 1);";
