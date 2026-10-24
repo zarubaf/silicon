@@ -68,7 +68,7 @@ pub(crate) struct Syms {
     /// The port families of each module item by the symbol of their name, in the order of the
     /// items: `true` for an input, with the position of the first indexed declaration in the
     /// source. The resolver finds them in the whole body, also in the arm of a `comptime if`
-    /// that does not run. An item that is not a module has none.
+    /// that does not run. A helper body fills its item too, and an item with no indexed port has none.
     pub families: Vec<BTreeMap<Sym, (bool, Pos)>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,

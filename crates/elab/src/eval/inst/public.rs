@@ -17,7 +17,7 @@ use super::PortDecl;
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::inst::family::FamKey;
-use crate::eval::{Evaluator, GuardKind, Res, fail, need};
+use crate::eval::{Evaluator, GuardKind, Res, at, fail, need};
 use crate::hw::{Kind, Seen, Val};
 use crate::names::{PathId, Sym};
 use crate::ops::{int_text, str_text};
@@ -269,24 +269,22 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The number of characters of the public name that the static `as` key `v` gives at `kp`,
-    /// and the family key of an entry (section 6.2, steps 6 and 7 of the port order). A `String`
+    /// The public name that the static `as` key `v` gives at `kp`, and the family key of an entry (section 6.2, steps 6 and 7 of the port order). A `String`
     /// is a scalar name. A record of the prelude struct `PortKey` is a scalar name with the index
     /// 0, or an entry with an index below 2^32. Each other value is `S010` "Port key type". The
     /// index check reads the bit length, so it takes constant work, and the index renders only in
     /// an error.
-    fn port_key(&self, kp: Pos, v: &Value) -> Res<(usize, Option<u32>)> {
+    fn port_key<'v>(&self, kp: Pos, v: &'v Value) -> Res<(&'v str, Option<u32>)> {
         if let Value::Str(x) = v {
-            return Ok((x.chars().count(), None));
+            return Ok((x, None));
         }
         if let Value::Record(t, fields) = v
             && self.is_port_key(*t)
             && let [Value::Str(x), Value::Bool(indexed), Value::Int(k)] = fields.as_slice()
         {
-            let chars = x.chars().count();
             if !indexed {
                 return if k.is_zero() {
-                    Ok((chars, None))
+                    Ok((x, None))
                 } else {
                     fail(
                         Code::S022,
@@ -299,7 +297,7 @@ impl Evaluator<'_> {
                     )
                 };
             }
-            return FamKey::of_int(k).key(kp).map(|k| (chars, Some(k)));
+            return FamKey::of_int(k).key(kp).map(|k| (x.as_str(), Some(k)));
         }
         fail(
             Code::S010,
@@ -334,9 +332,10 @@ impl Evaluator<'_> {
         })?;
         let kp = key.pos();
         self.check_static(kp, &o)?;
-        let (chars, index) = self.port_key(kp, self.store.value(&o))?;
-        self.charge(kp, 1 + chars as u128)?;
-        let x = key_name(self.store.value(&o));
+        let (x, index) = self.port_key(kp, self.store.value(&o))?;
+        self.fuel
+            .pay(1 + x.chars().count() as u128)
+            .map_err(at(kp))?;
         if !syntax::is_identifier(x) {
             return name_rule(kp, x, "port");
         }
@@ -349,17 +348,5 @@ impl Evaluator<'_> {
             None => self.port(pos, input, sym, t, binder),
             Some(k) => self.declare_entry(pos, input, (sym, k), t, binder),
         }
-    }
-}
-
-/// The public name of the static `as` key `v` that `port_key` accepted.
-fn key_name(v: &Value) -> &str {
-    match v {
-        Value::Str(x) => x,
-        Value::Record(_, fields) => match fields.first() {
-            Some(Value::Str(x)) => x,
-            _ => "",
-        },
-        _ => "",
     }
 }
