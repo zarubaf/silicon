@@ -12,10 +12,13 @@ method srcgen::Program::probe
 method srcgen::Program::records
 method srcgen::Program::text
 method srcgen::Program::top
+method srcgen::Twin::input_line
+method srcgen::Twin::output_line
 method srcgen::Twin::static_names
 mod srcgen::lines
 struct srcgen::BuildFault
 struct srcgen::Lifted
+struct srcgen::LineError
 struct srcgen::Mutant
 struct srcgen::Ports
 struct srcgen::Program

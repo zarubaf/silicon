@@ -11,7 +11,7 @@ use proptest::prelude::*;
 
 /// `cycles` random `in=` lines for the top ports: the domain reset first for
 /// a clocked top, with the bias of `core_ir::gen::resets`, then each input
-/// in byte order.
+/// in the order of `ports`, which is the layout order of spec 7.5.
 pub fn lines(ports: &Ports, cycles: usize) -> impl Strategy<Value = Vec<String>> + use<> {
     let clocked = ports.clocked;
     let names: Vec<String> = ports.inputs.iter().map(|(n, _)| n.clone()).collect();

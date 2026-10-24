@@ -28,22 +28,149 @@
 //! with it, so they show the bug.
 
 use super::build::STATIC_PREFIXES;
-use super::eval::{Env, Scope, Value, eval, exec_static, leaf_bits, loop_values};
+use super::eval::{Env, Fault, Scope, Value, eval, exec_static, leaf_bits, leaves, loop_values};
 use super::program::{
-    EnumDef, FTy, HBin, HExpr, Item, Match, Pattern, Place, Program, Radix, SExpr, STy, Scalar,
-    Stmt, Ty, helper_of, is_resource_helper, render_items,
+    EnumDef, FTy, HBin, HExpr, Item, Match, Pattern, Place, Ports, Program, Radix, SExpr, STy,
+    Scalar, Stmt, Ty, helper_of, is_resource_helper, render_items,
 };
+use super::public::Public;
 use num_bigint::{BigInt, BigUint, Sign};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::fmt;
 
 /// The source text of a twin and its top selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Twin {
     pub text: String,
     pub top: String,
+    clocked: bool,
+    ports: Vec<TwinPort>,
 }
 
+/// A port of the top module of a twin: its public name in the program, its
+/// name in the twin, and its leaves after the name in packing order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TwinPort {
+    public: Public,
+    name: String,
+    output: bool,
+    leaves: Vec<(String, Scalar)>,
+}
+
+/// The reset entry of a clocked top, which a vector line lists first.
+const RESET: &str = "clock$0rst";
+
+/// The pairs of the program name and the twin name of some leaves.
+type LeafNames = Vec<(String, String)>;
+
+/// A vector line that does not fit the ports of a twin.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LineError(String);
+
+impl fmt::Display for LineError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for LineError {}
+
 impl Twin {
+    /// The `in=` line `line` of the program, for the twin: each entry has
+    /// the name of its port in the twin, and the entries follow the layout
+    /// of the twin, which sorts the scalar ports by the bytes of their
+    /// names. The reset entry stays first. A name that the ports do not
+    /// have, a name twice, and a missing name are errors.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason if `line` does not list the inputs of the program.
+    pub fn input_line(&self, line: &str) -> Result<String, LineError> {
+        self.map_line("in", line, false)
+    }
+
+    /// The `out=` line `line` of the twin, for the program: each entry has
+    /// the public name of its port, and the entries follow the layout of
+    /// the program, which sorts by public name and then by numeric key.
+    ///
+    /// # Errors
+    ///
+    /// Returns the reason if `line` does not list the outputs of the twin.
+    pub fn output_line(&self, line: &str) -> Result<String, LineError> {
+        self.map_line("out", line, true)
+    }
+
+    /// The pairs of the program name and the twin name of each leaf of the
+    /// ports in one direction, in the layout of the twin and in the layout
+    /// of the program.
+    fn leaf_names(&self, output: bool) -> (LeafNames, LeafNames) {
+        let mut ports: Vec<&TwinPort> = self.ports.iter().filter(|p| p.output == output).collect();
+        let expand = |ports: &[&TwinPort]| -> LeafNames {
+            ports
+                .iter()
+                .flat_map(|p| {
+                    p.leaves.iter().map(|(suffix, _)| {
+                        (
+                            format!("{}{suffix}", p.public),
+                            format!("{}{suffix}", p.name),
+                        )
+                    })
+                })
+                .collect()
+        };
+        ports.sort_by(|a, b| a.name.cmp(&b.name));
+        let twin_order = expand(&ports);
+        ports.sort_by(|a, b| a.public.cmp(&b.public));
+        (twin_order, expand(&ports))
+    }
+
+    /// `line` with the prefix `kind` (`in` or `out`), mapped between the
+    /// names of the program and of the twin. `to_program` selects the
+    /// direction: an output line of the twin goes to the program.
+    fn map_line(&self, kind: &str, line: &str, to_program: bool) -> Result<String, LineError> {
+        let bad = |why: String| LineError(format!("`{line}`: {why}"));
+        let inner = line
+            .strip_prefix(kind)
+            .and_then(|l| l.strip_prefix("=("))
+            .and_then(|l| l.strip_suffix(')'))
+            .ok_or_else(|| bad(format!("not a line of the form `{kind}=(...)`")))?;
+        let words: Vec<&str> = inner.split_whitespace().collect();
+        if !words.len().is_multiple_of(2) {
+            return Err(bad("an entry has no value".to_owned()));
+        }
+        let mut entries: BTreeMap<&str, &str> = BTreeMap::new();
+        let mut reset = None;
+        for pair in words.chunks(2) {
+            let [name, value] = pair else {
+                return Err(bad("an entry has no value".to_owned()));
+            };
+            if *name == RESET && !to_program {
+                reset = Some(*value);
+            } else if entries.insert(name, value).is_some() {
+                return Err(bad(format!("the name `{name}` occurs twice")));
+            }
+        }
+        let (twin_order, program_order) = self.leaf_names(to_program);
+        // Each pair is the name that the line has and the name that it gets,
+        // in the layout of the result.
+        let pairs: Vec<(&String, &String)> = if to_program {
+            program_order.iter().map(|(p, t)| (t, p)).collect()
+        } else {
+            twin_order.iter().map(|(p, t)| (p, t)).collect()
+        };
+        let mut out: Vec<String> = reset.into_iter().map(|r| format!("{RESET} {r}")).collect();
+        for (have, give) in pairs {
+            let Some(value) = entries.remove(have.as_str()) else {
+                return Err(bad(format!("the name `{have}` is missing")));
+            };
+            out.push(format!("{give} {value}"));
+        }
+        if let Some(name) = entries.keys().next() {
+            return Err(bad(format!("the name `{name}` is no port of the twin")));
+        }
+        Ok(format!("{kind}=({})", out.join(" ")))
+    }
+
     /// The static names left in the text: identifiers of a static prefix
     /// of the builder and digits (a parameter, const, `comptime fn`,
     /// static `let`, or loop binder). A static fault of the twin leaves
@@ -70,25 +197,89 @@ impl Twin {
 /// The twin of `program`.
 #[must_use]
 pub fn twin(program: &Program) -> Twin {
-    let (items, top) = twin_items(program);
-    Twin {
-        text: render_items(&items),
-        top,
+    // A const that faults leaves an empty scope. Each fold that reads a
+    // const or a `comptime fn` then fails, and its static name stays in
+    // the twin, where the tests find it; `twin` returns no error.
+    let scope = Scope::new(&program.items).unwrap_or_default();
+    match walk(&program.items, &program.top, &program.args, scope) {
+        Some(w) => Twin {
+            text: render_items(&w.items),
+            top: w.top,
+            clocked: w.clocked,
+            ports: w.ports,
+        },
+        // A container argument is a fault of the builder; the static names
+        // of the program stay, where the tests find them.
+        None => Twin {
+            text: render_items(&program.items),
+            top: program.top(),
+            clocked: program.ports.clocked,
+            ports: Vec::new(),
+        },
     }
 }
 
 /// The items of the twin of `program` and its top selection.
+#[cfg(test)]
 pub(crate) fn twin_items(program: &Program) -> (Vec<Item>, String) {
+    let scope = Scope::new(&program.items).unwrap_or_default();
+    match walk(&program.items, &program.top, &program.args, scope) {
+        Some(w) => (w.items, w.top),
+        None => (program.items.clone(), program.top()),
+    }
+}
+
+/// The ports of the module `top` at the arguments `args`, from the walk of
+/// the twin: it unrolls each loop, branch, and helper call, so the lists
+/// follow the port layout of front-end spec 7.5 without a second unroller.
+///
+/// # Errors
+///
+/// Returns the fault of a static position that the checks of the builder
+/// exclude.
+pub(crate) fn ports(items: &[Item], top: &str, args: &[Value]) -> Result<Ports, Fault> {
+    let w = walk(items, top, args, Scope::new(items)?).ok_or(Fault::Type)?;
+    if w.fault {
+        return Err(Fault::Type);
+    }
+    let side = |output: bool| {
+        let mut ports: Vec<&TwinPort> = w.ports.iter().filter(|p| p.output == output).collect();
+        ports.sort_by(|a, b| a.public.cmp(&b.public));
+        ports
+            .into_iter()
+            .flat_map(|p| {
+                p.leaves
+                    .iter()
+                    .map(|(suffix, t)| (format!("{}{suffix}", p.public), *t))
+            })
+            .collect()
+    };
+    Ok(Ports {
+        clocked: w.clocked,
+        inputs: side(false),
+        outputs: side(true),
+    })
+}
+
+/// What the walk from the top instantiation gives.
+struct Walked {
+    items: Vec<Item>,
+    top: String,
+    clocked: bool,
+    ports: Vec<TwinPort>,
+    /// Whether a static position of a port had no value.
+    fault: bool,
+}
+
+/// The twin items of the module `top` at `args`, or `None` if its
+/// arguments have no twin name.
+fn walk(items: &[Item], top: &str, args: &[Value], scope: Scope) -> Option<Walked> {
     let mut w = Writer {
-        items: &program.items,
-        // A const that faults leaves an empty scope. Each fold that reads a
-        // const or a `comptime fn` then fails, and its static name stays in
-        // the twin, where the tests find it; `twin` returns no error.
-        scope: Scope::new(&program.items).unwrap_or_default(),
+        items,
+        scope,
         named: BTreeSet::new(),
         queue: VecDeque::new(),
-        hw_values: program
-            .items
+        hw_values: items
             .iter()
             .filter_map(|item| match item {
                 Item::HwFnValue { name, target, .. } => Some((name.clone(), target.clone())),
@@ -97,22 +288,20 @@ pub(crate) fn twin_items(program: &Program) -> (Vec<Item>, String) {
             .collect(),
         calls: 0,
         lists: BTreeMap::new(),
-        enums: program
-            .items
+        enums: items
             .iter()
             .filter_map(|item| match item {
                 Item::Enum(def) => Some((def.name.clone(), def.clone())),
                 _ => None,
             })
             .collect(),
+        in_top: false,
+        clocked: false,
+        ports: Vec::new(),
+        fault: false,
     };
-    let Some(top) = w.specialize(&program.top, &program.args) else {
-        // A container argument is a fault of the builder; the static names
-        // of the program stay, where the tests find them.
-        return (program.items.clone(), program.top());
-    };
-    let helpers: Vec<Item> = program
-        .items
+    let top = w.specialize(top, args)?;
+    let helpers: Vec<Item> = items
         .iter()
         .filter_map(|item| match item {
             Item::Helper {
@@ -141,15 +330,21 @@ pub(crate) fn twin_items(program: &Program) -> (Vec<Item>, String) {
         .collect();
     let mut modules = Vec::new();
     while let Some((name, module, args)) = w.queue.pop_front() {
+        // The top is the first instantiation of the queue.
+        w.in_top = modules.is_empty();
         modules.push(w.module(name, &module, &args));
     }
-    let enums = program
-        .items
+    let enums = items
         .iter()
         .filter(|item| matches!(item, Item::Enum(_)))
         .cloned();
-    let items: Vec<Item> = enums.chain(helpers).chain(modules).collect();
-    (items, format!("{top}()"))
+    Some(Walked {
+        items: enums.chain(helpers).chain(modules).collect(),
+        top: format!("{top}()"),
+        clocked: w.clocked,
+        ports: w.ports,
+        fault: w.fault,
+    })
 }
 
 /// The suffix of a twin module name for a static argument: decimal, `5n` for
@@ -267,6 +462,14 @@ struct Writer<'a> {
     /// A push in a loop body must reach the list of the module, so the
     /// lists live here and not in a frame.
     lists: BTreeMap<String, Vec<HVal>>,
+    /// Whether the module under the walk is the top.
+    in_top: bool,
+    /// Whether the top is clocked.
+    clocked: bool,
+    /// The ports of the top, in the order of the walk.
+    ports: Vec<TwinPort>,
+    /// Whether a type of a port had no concrete value.
+    fault: bool,
 }
 
 impl Writer<'_> {
@@ -304,6 +507,9 @@ impl Writer<'_> {
             };
         };
         self.lists.clear();
+        if self.in_top {
+            self.clocked = clocked;
+        }
         let mut fr = Frame {
             env: Env::of(params, args),
             ..Frame::default()
@@ -313,6 +519,22 @@ impl Writer<'_> {
             params: Vec::new(),
             clocked,
             body: self.stmts(body, &mut fr),
+        }
+    }
+
+    /// Notes a port of the top. `t` has a literal width.
+    fn record(&mut self, public: Public, name: &str, output: bool, t: &Ty) {
+        if !self.in_top {
+            return;
+        }
+        match leaves("", t, &Env::default(), &self.scope) {
+            Ok(leaves) => self.ports.push(TwinPort {
+                public,
+                name: name.to_owned(),
+                output,
+                leaves,
+            }),
+            Err(_) => self.fault = true,
         }
     }
 
@@ -590,8 +812,16 @@ impl Writer<'_> {
 
     fn stmt(&mut self, s: &Stmt, fr: &mut Frame, out: &mut Vec<Stmt>) {
         match s {
-            Stmt::Input(n, t) => out.push(Stmt::Input(n.clone(), self.ty(t, fr))),
-            Stmt::Output(n, t) => out.push(Stmt::Output(n.clone(), self.ty(t, fr))),
+            Stmt::Input(n, t) => {
+                let t = self.ty(t, fr);
+                self.record(Public::scalar(n), n, false, &t);
+                out.push(Stmt::Input(n.clone(), t));
+            }
+            Stmt::Output(n, t) => {
+                let t = self.ty(t, fr);
+                self.record(Public::scalar(n), n, true, &t);
+                out.push(Stmt::Output(n.clone(), t));
+            }
             Stmt::Reg(n, t, reset) => {
                 let (t, reset) = (self.ty(t, fr), self.fold(reset, fr));
                 out.push(Stmt::Reg(fr.declare(n), t, reset));
@@ -1673,6 +1903,70 @@ mod tests {
             }
         }
         assert!(resources > 1000, "{resources}");
+    }
+
+    /// The `in=` line of `ports`, with the reset first for a clocked top.
+    fn input_of(ports: &Ports) -> String {
+        let reset = ports.clocked.then(|| "clock$0rst false".to_owned());
+        let entries: Vec<String> = reset
+            .into_iter()
+            .chain(ports.inputs.iter().map(|(n, _)| format!("{n} 1")))
+            .collect();
+        format!("in=({})", entries.join(" "))
+    }
+
+    /// Without a family, the twin keeps each port name and the order, so the
+    /// maps change nothing.
+    #[test]
+    fn the_vector_maps_keep_the_lines_of_a_program_without_families() {
+        let mut runner = TestRunner::deterministic();
+        for _ in 0..64 {
+            let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
+            let t = twin(&p);
+            let line = input_of(p.ports());
+            assert_eq!(t.input_line(&line).as_deref(), Ok(line.as_str()));
+            let outputs: Vec<String> = p
+                .ports()
+                .outputs
+                .iter()
+                .map(|(n, _)| format!("{n} 0"))
+                .collect();
+            let out = format!("out=({})", outputs.join(" "));
+            assert_eq!(t.output_line(&out).as_deref(), Ok(out.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_vector_map_refuses_a_name_that_the_ports_do_not_match() {
+        let body = vec![
+            Stmt::Input("i0".to_owned(), uint(4)),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            connect("o0", hname("i0")),
+        ];
+        let p = program(vec![module("M0", &[], false, body)], Vec::new());
+        let t = twin(&p);
+        assert_eq!(t.input_line("in=(i0 3)").as_deref(), Ok("in=(i0 3)"));
+        assert!(
+            t.input_line("in=()")
+                .unwrap_err()
+                .to_string()
+                .contains("`i0` is missing")
+        );
+        assert!(
+            t.input_line("in=(i0 3 i1 4)")
+                .unwrap_err()
+                .to_string()
+                .contains("`i1`")
+        );
+        assert!(
+            t.input_line("in=(i0 3 i0 4)")
+                .unwrap_err()
+                .to_string()
+                .contains("twice")
+        );
+        assert!(t.input_line("out=(i0 3)").is_err());
+        assert!(t.output_line("out=(o0)").is_err());
+        assert_eq!(t.output_line("out=(o0 3)").as_deref(), Ok("out=(o0 3)"));
     }
 
     proptest! {
