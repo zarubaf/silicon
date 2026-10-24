@@ -39,6 +39,8 @@ The evaluator holds the innermost guard of section 9.4 in `Ctx.guard : Option Gu
 
 Handles (spec sections 5.1, 5.2, and 9.4): `typedUse` compares each handle leaf by its type. `data` charges the size, then reads each register leaf and wire leaf in packing order. A static position checks the value (`staticValue`), then the type (`staticHandle`). Both read only the flag and the kind. `Eval.targetPart` walks the steps of a `:=` target; the type of each base decides. `read(h)` (spec section 5.4) is `Eval.readOf`: the copy, then `S017` for a child input or `S010` with the fix `readHint`, then `readRef`. Its result refers to the resource (`Out.ref`), so `let x = read(r)` charges the zero size once, before the leaves bind. A result without a hardware leaf is a new static value, so its binding is no copy.
 
+Port families (spec section 5.6): before the statements of a module body, the resolver gives each family one binder with the reference `Ref.family`. An entry has no frame slot. `Work.entries` holds its value by the binder and the key, and a port has the identity `(symbol, key)` (`PortId`). `Syms.families` gives `Iface.families`, so a family of a child exists also without an entry. `Elab.familyKey` does the type and range checks of each key. `familySel` selects an own entry, `childSel` an entry of a child, and `Elab.walkStep` an entry of a child in a `:=` target, with no second walk from the root. An error renders an entry as `x[k]` (`entryText`), and a binding copies no name.
+
 ## Invariants
 
 - Do not use `sorry`. Check: `cargo xtask check` (rule `lean-sorry`).
@@ -54,6 +56,4 @@ Lean has no dependencies on `crates/`.
 
 ## How to test
 
-Run `just check` from the repository root.
-
-Run `lake -d lean exe silicon-check check FILE` to check a design. Run `silicon-check parse`, `eval`, `cost`, `elab`, `observe`, or `validate` for the front end. `observe` prints the records, then the first error.
+Run `just check` from the repository root. Run `lake -d lean exe silicon-check check FILE` to check a design. Run `silicon-check parse`, `eval`, `cost`, `elab`, `observe`, or `validate` for the front end. `observe` prints the records, then the first error.
