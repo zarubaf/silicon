@@ -51,8 +51,6 @@ pub(crate) struct Parser<'a> {
     /// Whether the last postfix form is a place: a name, or a field, an index, or a selector
     /// of a place.
     pub place: bool,
-    /// Whether the body of a `fn` without `comptime` is open: it declares no hardware.
-    pub in_plain_fn: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -75,7 +73,6 @@ impl<'a> Parser<'a> {
             semi,
             height: 0,
             place: false,
-            in_plain_fn: false,
         }
     }
 
@@ -345,17 +342,6 @@ impl<'a> Parser<'a> {
     /// The syntax of a later slice, `S004`, at an offset.
     pub(crate) fn later_slice(&mut self, offset: usize, what: &str) {
         self.report(Code::S004, offset, format!("{what} is not supported yet"));
-    }
-
-    /// A port in a `fn` without `comptime`, `S004`, at an offset.
-    pub(crate) fn port_in_fn(&mut self, offset: usize) {
-        self.report(
-            Code::S004,
-            offset,
-            "a helper cannot declare a port; declare the port in the module body and pass its \
-             value to the helper"
-                .to_owned(),
-        );
     }
 
     /// A package path, `S004`, at an offset. Slice 3 has the path `E::V` of two names only.
