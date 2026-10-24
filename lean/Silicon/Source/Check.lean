@@ -35,6 +35,11 @@ at the name. These are the static positions:
    constructor are not static positions.
 10. Each part of an expression in a static position. A static expression is thus built only of
    static parts, also in a branch that a static condition does not select.
+11. From slice 4 on, the key of an indexed `input` or `output` (section 5.6). The key of a family
+   selection `req[k]` is an index argument, so rule 1 holds for it.
+
+A port family names ports, so its name in a static position is `S005`, also before its first
+declaration. A family is no mutable root, so a `mut` actual with a family root is `S008`.
 
 `S006` is at the statement:
 
@@ -334,12 +339,16 @@ def pattern : Resolve.Pattern → M Unit
         s!"{bs.length}; write one binder or `_` for each payload value")
   | _ => pure ()
 
-/-! A name that is not a type. A resource in a static position is `S005`. -/
+/-! `S005` at `pos` for the name `n` of the resource `r` in a static position. -/
+def staticResource (pos : Pos) (n : String) (r : Resource) : M Unit :=
+  report .S005 pos s!"`{n}` is {r.text}; a static position needs a static value"
+
+/-! A name that is not a type. A resource or a port family in a static position is `S005`. -/
 def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
   | .local id => do
     if static then
-      if let some (.resource r) := (← get).locals[id]? then
-        report .S005 pos s!"`{n}` is {r.text}; a static position needs a static value"
+      if let some (.resource r) := (← get).locals[id]? then staticResource pos n r
+  | .family .. => if static then staticResource pos n .port else pure ()
   | _ => pure ()
 
 /-! The fix of the `S007` text of the prelude `read` (section 6.2). Another callee has none. -/
@@ -397,7 +406,7 @@ def receiver (pos : Pos) (m : Ident) (r : Ref) (b : Option Nat) (got : Nat) :
 
 /-! The local of the root of a place, if the expression is a place with a local root. -/
 def root : Resolve.Expr → Option Nat
-  | .name _ _ (.local id) => some id
+  | .name _ _ (.local id) | .name _ _ (.family id _) => some id
   | .index _ b _ | .select _ b .. | .field _ b _ => root b
   | _ => none
 
@@ -579,8 +588,11 @@ mutual
       typeExpr w
       expr true d
       declare b (.resource .mem)
-    | .input p b _ ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
-    | .output p b _ ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
+    | .input p b k ty | .output p b k ty => do
+      placement o p "port"
+      if let some k := k then expr true k
+      typeExpr ty
+      declare b (.resource .port)
     | .inst p b m i xs => do
       placement o p "instance"
       if let some (.module k) := (← read)[i]? then arity p s!"`{m.name}`" k xs.length

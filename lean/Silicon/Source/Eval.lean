@@ -2634,6 +2634,7 @@ mutual
       | _ => fail .S011 p s!"`{x}` is not a static value"
     | .type k => do return ⟨.static (.type (← prim p x k)), true, none⟩
     | .fn _ => fail .S010 p s!"`{x}` is a builtin; a builtin is not a value"
+    | .family .. => fail .S004 p "a port family is not supported yet"
     | .item i => do
       match (← read).items[i]? with
       | some (.const cp _ ty v) => do

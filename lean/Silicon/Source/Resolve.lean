@@ -38,6 +38,22 @@ no name. These rules settle the open points:
   declares it before the parameters, because it has no token. Its position is the start of the
   module. Thus a parameter `clock` is `S002` at the parameter. `domains()` declares no domain.
 
+A port family has module scope (F35, section 5.6). Before the statements of a module body, one
+pre-order walk (`famStmts`) visits each statement at each block depth. These are a block, both
+arms of a `comptime if`, and the body of a `comptime for`. A statement holds no item, so the walk
+enters no nested item. The first indexed declaration of a name gives it one family binder in the
+scope of the body. This binder is a local number with the reference `Ref.family`. Each indexed
+declaration of the name refers to it, and it also binds the name in its own block. Thus a `let`
+with that name in that block is `S002`, in each order. These are the other collisions:
+
+- A family and a scalar port of one name, at any depth, are `S002` "Family and scalar port" at
+  the later name.
+- One family with an input entry and an output entry is `S002` "Family with two directions". It
+  is at the name of the first entry of the second direction.
+- A family and another name of the body scope is the ordinary `S002`, at the later name.
+
+Outside a module body, an indexed port declares a local at its statement, and `Check` reports it.
+
 The resolver does not look up the name after a `.`. The selection of a field or a port is a
 later check. A selector `.N` holds a number, so it has no name. The container forms of slice 2,
 `()`, tuples, arrays, and the selector, have no declaration. The walk resolves their parts.
@@ -123,13 +139,16 @@ inductive PrimFn where
 The declaration of a name. An `item` holds the index of the item in the file. A `local` holds
 the number of the local declaration in its item. The numbers start at 0 in each item, in the
 order of the declarations: the implicit `clock`, the parameters, the domain names, and then the
-statements. A binder of a pattern takes its number when its arm starts.
+statements. A binder of a pattern takes its number when its arm starts. A `family` holds the
+local number of its family binder, which the module body takes before its statements, and whether
+its first entry is an input.
 -/
 inductive Ref where
   | type (t : PrimType)
   | fn (f : PrimFn)
   | item (index : Nat)
   | local (id : Nat)
+  | family (id : Nat) (input : Bool)
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-! The parameter modes of a prelude function (section 5.6). -/
@@ -451,16 +470,30 @@ so the read takes constant work.
 -/
 def responseIndex (size : Nat) : Nat := size - preludeCount
 
-/-! A visible declaration and the number of its scope. The item scope has the number 0. -/
+/-!
+A visible declaration, the number of its scope, and the position of its name. The item scope has
+the number 0.
+-/
 structure Binding where
   ref : Ref
   scope : Nat
+  pos : Pos
+
+/-!
+What the family walk of a module body knows of one port name. `family` holds its first indexed
+declaration: the position of its name, the number of its family binder, and whether it is an
+input. `scalar` holds the position of the name of its first scalar port.
+-/
+structure PortName where
+  family : Option (Pos × Nat × Bool) := none
+  scalar : Option Pos := none
+  deriving Inhabited
 
 /-!
 The state of the walk. `env` maps each visible name to its innermost declaration. `scope` is the
 number of the current scope, and `scopes` the next free scope number. `locals` is the next local
-number of the current item, and `sites` its next call site. `dup` holds the first `S002`, and
-`unknown` the first `S003`.
+number of the current item, and `sites` its next call site. `ports` holds the port names of the
+current module body (`PortName`). `dup` holds the first `S002`, and `unknown` the first `S003`.
 -/
 structure St where
   env : Std.TreeMap String Binding compare
@@ -468,6 +501,7 @@ structure St where
   scopes : Nat
   locals : Nat
   sites : Nat
+  ports : Std.TreeMap String PortName compare
   dup : Option Error
   unknown : Option Error
 
@@ -487,20 +521,95 @@ def recordDup (e : Error) : M Unit := modify fun s => { s with dup := earlier s.
 def recordUnknown (e : Error) : M Unit :=
   modify fun s => { s with unknown := earlier s.unknown e }
 
-/-! Adds `n` to the current scope with `ref`. A name of the same scope is `S002`. -/
+/-!
+Adds `n` to the current scope with `ref`. Another declaration of the same scope is `S002` at the
+later of the two names. Only a family binder, which the body binds before its statements, can be
+the later one. An indexed declaration binds its family again in its own block, so the same family
+binder is no second declaration.
+-/
 def bind (n : Ident) (ref : Ref) : M Unit := do
   let s ← get
   if let some b := s.env.get? n.name then
-    if b.scope == s.scope then
-      recordDup ⟨.S002, n.pos, s!"`{n.name}` is already declared in this scope"⟩
-  modify fun t => { t with env := t.env.insert n.name ⟨ref, t.scope⟩ }
+    if b.scope == s.scope && !(ref matches .family .. && b.ref == ref) then
+      let p := if before n.pos b.pos then b.pos else n.pos
+      recordDup ⟨.S002, p, s!"`{n.name}` is already declared in this scope"⟩
+  modify fun t => { t with env := t.env.insert n.name ⟨ref, t.scope, n.pos⟩ }
+
+/-! The next local number. -/
+def fresh : M Nat := modifyGet fun s => (s.locals, { s with locals := s.locals + 1 })
 
 /-! Declares the local `n` with the next local number. -/
 def declare (n : Ident) : M Binder := do
-  let id := (← get).locals
-  modify fun s => { s with locals := id + 1 }
+  let id ← fresh
   bind n (.local id)
   return ⟨n, id⟩
+
+/-! The `S002` text of a family and a scalar port `x`, the earlier name at `b` (section 6.2). -/
+def familyScalarText (x : String) (b : Pos) : String :=
+  s!"`{x}` names a port family and a scalar port, here and at {b.line}:{b.col}; use one form " ++
+    "for the name"
+
+/-! The `S002` text of a family `x` with two directions, the earlier entry at `b` (section 6.2). -/
+def familyDirectionsText (x : String) (b : Pos) : String :=
+  s!"the port family `{x}` has an input entry and an output entry, here and at " ++
+    s!"{b.line}:{b.col}; give the entries of one direction another name"
+
+/-!
+The family walk sees the port name `n`, with a key if `indexed`, as an input if `input`. The
+walk runs in source order, so each `S002` is at the later name. The first indexed declaration of
+`n` takes a local number and binds the family binder in the scope of the body.
+-/
+def seePort (n : Ident) (indexed input : Bool) : M Unit := do
+  let fam (e : PortName) : M PortName := do
+    let id ← fresh
+    bind n (.family id input)
+    return { e with family := some (n.pos, id, input) }
+  let e := ((← get).ports.get? n.name).getD {}
+  let e ← match indexed, e.family, e.scalar with
+    | false, some (b, _), _ =>
+      recordDup ⟨.S002, n.pos, familyScalarText n.name b⟩
+      pure { e with scalar := e.scalar <|> some n.pos }
+    | false, none, _ => pure { e with scalar := e.scalar <|> some n.pos }
+    | true, _, some c =>
+      recordDup ⟨.S002, n.pos, familyScalarText n.name c⟩
+      if e.family.isSome then pure e else fam e
+    | true, some (b, _, i), none =>
+      if i != input then recordDup ⟨.S002, n.pos, familyDirectionsText n.name b⟩
+      pure e
+    | true, none, none => fam e
+  modify fun s => { s with ports := s.ports.insert n.name e }
+
+/-!
+The family walk of a module body (section 5.6): one pre-order walk of each statement at each
+block depth, before the statements resolve.
+-/
+mutual
+  def famStmt : Source.Stmt → M Unit
+    | .input _ n k _ => seePort n k.isSome true
+    | .output _ n k _ => seePort n k.isSome false
+    | .ctIf _ _ y n => do
+      famStmts y
+      match n with
+      | some n => famStmts n
+      | none => pure ()
+    | .ctFor _ _ _ _ b | .block _ b => famStmts b
+    | _ => pure ()
+
+  def famStmts : List Source.Stmt → M Unit
+    | [] => pure ()
+    | s :: ss => do famStmt s; famStmts ss
+end
+
+/-!
+The binder of the port `n`. An indexed declaration of a module body takes its family binder, and
+it binds the name in its own block too (section 5.6). Another port declares a local.
+-/
+def port (n : Ident) (indexed : Bool) : M Binder := do
+  if indexed then
+    if let some ⟨some (_, id, input), _⟩ := (← get).ports.get? n.name then
+      bind n (.family id input)
+      return ⟨n, id⟩
+  declare n
 
 /-! Runs `act` in a new scope. The declarations of `act` are not visible after it. -/
 def inScope (act : M α) : M α := do
@@ -554,7 +663,7 @@ def isType : Ref → M Bool
     | some (.struct ..) | some (.alias ..) | some (.enum ..) => return true
     | some _ => return false
     | none => return i - (← read).items.size < preludeCount
-  | .fn _ => return false
+  | .fn _ | .family .. => return false
 
 /-! The next call site of the current item body. -/
 def site : M Nat := modifyGet fun s => (s.sites, { s with sites := s.sites + 1 })
@@ -599,7 +708,7 @@ def variantRef (pos : Pos) (x y : Ident) : M (Nat × Nat) := do
     recordUnknown ⟨.S003, pos, s!"`{x.name}` is not an enum, so `{x.name}::{y.name}` names no " ++
       "variant; use the name of an enum"⟩
     return (0, 0)
-  let some ⟨.item i, _⟩ := (← get).env.get? x.name | notEnum
+  let some ⟨.item i, _, _⟩ := (← get).env.get? x.name | notEnum
   let some (.enum _ _ _ vs) := (← read).items[i]? | notEnum
   match vs.findIdx? (·.name.name == y.name) with
   | some j => return (i, j)
@@ -680,7 +789,7 @@ mutual
       if !inst then return (← expr x) :: (← xs.mapM expr)
       let rest (m : Expr) : M (List Expr) := return m :: (← xs.mapM expr)
       if let .name p n := x then
-        if let some ⟨.item i, _⟩ := (← get).env.get? n then
+        if let some ⟨.item i, _, _⟩ := (← get).env.get? n then
           if ← isModule i then return ← rest (.name p n (.item i))
       let old := (← get).unknown
       let m ← match x with
@@ -737,11 +846,11 @@ mutual
     | .input p n k ty => do
       let k ← k.mapM expr
       let ty ← typeExpr ty
-      return .input p (← declare n) k ty
+      return .input p (← port n k.isSome) k ty
     | .output p n k ty => do
       let k ← k.mapM expr
       let ty ← typeExpr ty
-      return .output p (← declare n) k ty
+      return .output p (← port n k.isSome) k ty
     | .inst p n m xs => do
       let i ← moduleRef m
       let xs ← xs.mapM expr
@@ -802,9 +911,12 @@ def variants (vs : List Source.Variant) : M (List Variant) := do
     out := out.push ⟨v.name, ps, ← expr v.tag⟩
   return out.toList
 
-/-! The parameters, the domain names, and the body of an item share one new scope. -/
+/-!
+The parameters, the domain names, and the body of an item share one new scope. Only a module body
+has port names (`families`).
+-/
 def body (act : M α) : M α := do
-  modify fun s => { s with locals := 0 }
+  modify fun s => { s with locals := 0, ports := {} }
   inScope act
 
 /-! The statements of an item body. Their call sites count from 0. -/
@@ -825,6 +937,7 @@ def item : Source.Item → M Item
     let ds ← match clock with
       | some c => pure [c]
       | none => (ds.getD []).mapM declare
+    famStmts b
     return .module p n ps ds (← bodyStmts b)
   | .struct p n ps fs => body do
     let ps ← ps.mapM param
@@ -846,7 +959,7 @@ def inFile (items : List Source.Item) (act : M α) : Except Error α :=
     modify fun s => { s with scopes := 1 }
     act
   let names := items.zipIdx.foldl (fun m (it, i) => m.insert (itemName it).name i) {}
-  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, none, none⟩
+  let (out, s) := (walk.run ⟨items.toArray, names⟩).run ⟨{}, 0, 0, 0, 0, {}, none, none⟩
   match s.dup, s.unknown with
   | some e, _ => .error e
   | none, some e => .error e
