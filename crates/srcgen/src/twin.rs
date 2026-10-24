@@ -195,6 +195,12 @@ impl Twin {
     }
 }
 
+/// The name in the twin of the entry `base[key]`; no generated name has an
+/// `_`, so it is new.
+fn entry_name(base: &str, key: u32) -> String {
+    format!("{base}_{key}")
+}
+
 /// The twin of `program`.
 #[must_use]
 pub fn twin(program: &Program) -> Twin {
@@ -575,7 +581,7 @@ impl Writer<'_> {
     /// generated name has no `_`, so no other name of the twin is the same.
     fn public(&self, p: &Port, fr: &Frame) -> Option<(Public, String)> {
         let entry = |base: String, k: u32| {
-            let name = format!("{base}_{k}");
+            let name = entry_name(&base, k);
             (Public { base, key: Some(k) }, name)
         };
         let scalar = |base: String| (Public::scalar(&base), base);
@@ -628,7 +634,7 @@ impl Writer<'_> {
                 self.fault.set(true);
                 fam.to_owned()
             },
-            |k| format!("{fam}_{k}"),
+            |k| entry_name(fam, k),
         )
     }
 
