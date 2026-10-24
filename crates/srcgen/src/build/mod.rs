@@ -275,6 +275,8 @@ struct Ctx {
     /// tape only, so that a program without port forms is the program of
     /// the other tapes alone; they reach the outputs through `mix_port`.
     port: Vec<Hw>,
+    /// The places in `port` of the names that read an output of a child.
+    child_reads: BTreeSet<usize>,
 }
 
 impl Ctx {
@@ -343,6 +345,9 @@ impl Ctx {
                     ..h.clone()
                 })
                 .collect(),
+            // The names of a nested frame do not reach the pool of the
+            // module, so a read there is no read that counts.
+            child_reads: BTreeSet::new(),
         }
     }
 
