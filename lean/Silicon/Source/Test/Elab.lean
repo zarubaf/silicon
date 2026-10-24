@@ -3406,7 +3406,20 @@ def unboundKeyed (r x : String) : String :=
 -- A user struct named `PortKey` is another type.
 #guard failure ("module M() {\n  input x: Bool as PortKey(\"p\");\n}\n" ++
     "struct PortKey { name: String }\n") 100000000 ==
-  s!"S010 2:20 {portKeyType "a value of `PortKey`"}"
+  s!"S010 2:20 {portKeyType "a value of `crate::PortKey`"}"
+#guard failure ("module M() {\n  input x: Bool as PortKey::A;\n}\n" ++
+    "enum PortKey: UInt[1] { A = 0 }\n") 100000000 ==
+  s!"S010 2:20 {portKeyType "a value of `crate::PortKey`"}"
+/-!
+A user type with a prelude type name prints as `crate::X` (section 5.6), so a message never
+names two types the same way. The prelude type keeps its source form.
+-/
+#guard failure ("module M() {\n  static_assert(PortInfo(PortKey(true), UInt[8], true, \"d\")" ++
+    ".is_input, \"x\");\n}\nstruct PortKey { a: Bool }\n") 100000000 ==
+  "S010 2:17 expected PortKey, but the value is crate::PortKey"
+#guard failure ("module M() {\n  let y = if (Bool(0)) { 1 } else { 2 };\n}\n" ++
+    "struct Bool { x: UInt[1] }\n") 100000000 ==
+  "S010 2:11 a condition is a Bool, not crate::Bool"
 #guard keyMod "  input x: Bool as PortKey(\"p\", false, 3);\n" == s!"S022 3:20 {scalarIndex "3"}"
 #guard keyMod "  input x: Bool as PortKey(\"p\", true, 1 << 32);\n" ==
   s!"S012 3:20 {keyRange "4294967296"}"

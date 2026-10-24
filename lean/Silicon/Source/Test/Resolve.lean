@@ -548,6 +548,10 @@ struct by its index. The user items keep their indices.
 #guard (run "struct String {}\nstruct FieldInfo {}\nstruct List {}").toOption.map (·.extract 3) ==
   some (preludeStructs 3).toArray
 #guard responseIndex (2 + preludeCount) == 2
+/-! `preludeTypeNames` is the list of the prelude types, then of the prelude structs. -/
+#guard preludeTypeNames ==
+  prelude.filterMap (fun | (x, .type _) => some x | _ => none) ++
+    (preludeStructs 0).map (·.name.name)
 def listOf (x : String) (k : Nat) : Resolve.TypeExpr :=
   .index ⟨0, 0⟩ (.name ⟨0, 0⟩ "List" (.type .list)) [.name ⟨0, 0⟩ x (.item k)]
 #guard match ((preludeStructs 2)[2]? : Option Resolve.Item) with

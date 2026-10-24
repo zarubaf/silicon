@@ -710,12 +710,20 @@ def boundText (s : String) : String :=
   else String.ofList (takeBytes s.toList textLimit) ++ "..."
 
 /-!
+The name of a struct or an enum item in a message. A user item with a prelude type name has the
+prefix `crate::` (section 5.6), so it never prints as the prelude type. A prelude struct
+(`prelude`) keeps its source form.
+-/
+def itemText (prelude : Bool) (x : String) : String :=
+  if !prelude && preludeTypeNames.contains x then "crate::" ++ x else x
+
+/-!
 The text of a type in a message, and the source text of a static argument in it. A struct type
-prints its item, with its arguments in brackets when it has any: `P[8]`. A function type prints
-in its source form, and a function value prints its item. An enum type prints its name, and an
-enum value its tag, because the value does not hold the name of its variant. A handle type
-prints in its source form: `Reg[UInt[8]]`, `Mem[UInt[8], 16]`, or `Instance[Counter, 8]`. Each
-integer prints as `intText` does.
+prints its item (`itemText`), with its arguments in brackets when it has any: `P[8]`. A function
+type prints in its source form, and a function value prints its item. An enum type prints its
+name (`itemText`), and an enum value its tag, because the value does not hold the name of its
+variant. A handle type prints in its source form: `Reg[UInt[8]]`, `Mem[UInt[8], 16]`, or
+`Instance[Counter, 8]`. Each integer prints as `intText` does.
 
 Each walk appends to the text `o` so far. Each step, of a part and of a list of parts, first
 checks the bound: it returns `o` at once when `o` has more than `textLimit` bytes. Each piece
@@ -734,12 +742,12 @@ mutual
     | .array t n => t.put (o ++ "[") ++ s!"; {intText n}]"
     | .tuple ⟨[t]⟩ => t.put (o ++ "(") ++ ",)"
     | .tuple ⟨ts⟩ => Ty.putAll (o ++ "(") ts ++ ")"
-    | .struct _ i ⟨[]⟩ _ _ => o ++ i
-    | .struct _ i ⟨xs⟩ _ _ => Value.putAll (o ++ i ++ "[") xs ++ "]"
+    | .struct _ i ⟨[]⟩ _ p => o ++ itemText p i
+    | .struct _ i ⟨xs⟩ _ p => Value.putAll (o ++ itemText p i ++ "[") xs ++ "]"
     | .string => o ++ "String"
     | .list t => t.put (o ++ "List[") ++ "]"
     | .fn ⟨ps⟩ r => r.put (TyParam.putAll (o ++ "fn (") ps ++ ") -> ")
-    | .enum _ x _ => o ++ x
+    | .enum _ x _ => o ++ itemText false x
     | .reg t => t.put (o ++ "Reg[") ++ "]"
     | .wire t => t.put (o ++ "Wire[") ++ "]"
     | .input t => t.put (o ++ "Input[") ++ "]"
