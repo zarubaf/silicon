@@ -163,15 +163,14 @@ def childKeyText (m x : String) (k : Nat) : String :=
   s!"the child `{m}` has no entry `{x}[{k}]`; select a key that `{m}` declares"
 
 /-!
-The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A negative
-key is `S012`, a key of 2^32 or more is `S012` "Family key range", and a key of another type is
-`S010` "Family key type". A static `UInt` is such a type. The key fits 32 bits, so each later
-compare and name of it takes constant work.
+The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A key below 0
+or of 2^32 or more is `S012` "Family key range", and a key of another type is `S010` "Family key
+type". A static `UInt` is such a type. The key fits 32 bits, so each later compare and name of it
+takes constant work.
 -/
 def familyKey (p : Pos) : Value → Eval.M Nat
   | .int i =>
-    if i < 0 then fail .S012 p (fitText .nat i)
-    else if i < 2 ^ 32 then pure i.toNat
+    if 0 ≤ i && i < 2 ^ 32 then pure i.toNat
     else fail .S012 p (keyRangeText i)
   | v => fail .S010 p (keyTypeText (Val.static v).about)
 
