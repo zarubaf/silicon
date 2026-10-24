@@ -1,0 +1,11 @@
+// S012: the range check of a key also applies to the `:=` target of a child entry, here for a negative key.
+// TOP M()
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    instance u = C();
+    // expected-error S012 @+2
+    // expected-message: a family key is 0 to 4294967295, not -1; use a key in this range
+    u.req[0 - 1] := true;
+}

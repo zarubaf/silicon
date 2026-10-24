@@ -1,0 +1,26 @@
+// The largest key of a family is 2^32 - 1, and a public name equal to a core keyword gets the field `0k` in the core name.
+// A child holds both kinds of port and a register. The parent binds the entry with the largest key by `u.req[4294967295]`.
+// TOP Top()
+module Child() {
+    input req[0]: UInt[4];
+    input req[4294967295]: UInt[4];
+    input a: UInt[4] as "add";
+    output o: UInt[4] as "sub";
+    output gnt[4294967295]: UInt[4];
+    reg r: UInt[4] = 0;
+    r := r +% req[0] +% req[4294967295] +% a;
+    o := r;
+    gnt[4294967295] := req[4294967295] +% a;
+}
+module Top() {
+    input x: UInt[4];
+    input y: UInt[4];
+    output p: UInt[4];
+    output q: UInt[4];
+    instance u = Child();
+    u.req[0] := x;
+    u.req[4294967295] := y;
+    u.add := x ^ y;
+    p := u.sub;
+    q := u.gnt[4294967295];
+}

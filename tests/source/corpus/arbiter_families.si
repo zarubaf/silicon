@@ -1,0 +1,29 @@
+// A fixed-priority arbiter declares the family `req` and the family `gnt` in a `comptime for`. The parent declares its own
+// families and forwards each entry with `u.req[i] := req[i]` and `gnt[i] := u.gnt[i]`. A register holds each grant and the busy bit.
+// TOP Top(4)
+module Arb(comptime N: Nat) {
+    output busy: Bool;
+    let mut taken = false;
+    reg b: Bool = false;
+    comptime for i in 0..N {
+        input req[i]: Bool;
+        output gnt[i]: Bool;
+        reg g: Bool = false;
+        g := req[i] && !taken;
+        taken = taken || req[i];
+        gnt[i] := g;
+    }
+    b := taken;
+    busy := b;
+}
+module Top(comptime N: Nat) {
+    output busy: Bool;
+    instance u = Arb(N);
+    comptime for i in 0..N {
+        input req[i]: Bool;
+        output gnt[i]: Bool;
+        u.req[i] := req[i];
+        gnt[i] := u.gnt[i];
+    }
+    busy := u.busy;
+}

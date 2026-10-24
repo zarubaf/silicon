@@ -1,0 +1,11 @@
+// S010: the type check of a key also applies to the `:=` target of a child entry.
+// TOP M()
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: a family key is a static `Nat`, not a value of `UInt[4]`; compute the key from static integers, for example a loop value
+    u.req[UInt[4](0)] := true;
+}
