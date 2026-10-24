@@ -1,0 +1,13 @@
+// S010: the type check of a key also applies to the selection of a child entry.
+// TOP M()
+module C() {
+    output gnt[0]: Bool;
+    gnt[0] := true;
+}
+module M() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: a family key is a static `Nat`, not a value of `UInt[4]`; compute the key from static integers, for example a loop value
+    o := u.gnt[UInt[4](0)];
+}

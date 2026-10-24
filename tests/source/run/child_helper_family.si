@@ -1,0 +1,34 @@
+// A helper of a child declares an entry of the family `req` and two output ports with `PortKey` and `String` keys. The child calls
+// the helper with the keys 0 and 2, so the family has sparse keys. The parent binds `u.req[0]` and `u.req[2]` and reads the
+// keyed outputs of the child through its interface.
+// TOP M()
+fn lane(comptime k: Nat) -> UInt[4] {
+    input req[k]: UInt[4];
+    output gnt: UInt[4] as PortKey("gnt", true, k);
+    output tap: UInt[4] as "tap" + str(k);
+    gnt := req[k] +% 1;
+    tap := req[k];
+    return req[k];
+}
+module C() domains() {
+    output sum: UInt[4];
+    let a = lane(0);
+    let b = lane(2);
+    sum := a +% b;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    output p: UInt[4];
+    output s: UInt[4];
+    instance u = C();
+    u.req[0] := x;
+    u.req[2] := x +% 3;
+    o := u.gnt[2];
+    p := u.tap0;
+    s := u.sum;
+}
+// STEP in=(x 1) out=(o 5 p 1 s 5)
+// STEP in=(x 14) out=(o 2 p 14 s 15)
+// STEP in=(x 15) out=(o 3 p 15 s 1)
+// STEP in=(x 0) out=(o 4 p 0 s 3)

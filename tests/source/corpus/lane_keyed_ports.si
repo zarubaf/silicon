@@ -1,0 +1,38 @@
+// A helper declares keyed ports: an indexed `PortKey` that makes a family, and a `String` key built from a parameter.
+// Each call holds its value in a register. The child `Lanes` calls the helper for each lane. The parent binds the family
+// entries by index and the other inputs by their public names, and leaves the entry `dout[1]` unread.
+// TOP Top(3)
+fn lane(comptime k: Nat) -> UInt[8] {
+    input din: UInt[8] as PortKey("din", true, k);
+    input en: Bool as "en" + str(k);
+    output dout: UInt[8] as PortKey("dout", true, k);
+    reg r: UInt[8] = 0;
+    r := if (en) { din } else { r };
+    dout := r;
+    return r;
+}
+module Lanes(comptime N: Nat) {
+    output sum: UInt[8];
+    let mut acc: UInt[8] = 0;
+    comptime for k in 0..N {
+        acc = acc +% lane(k);
+    }
+    sum := acc;
+}
+module Top(comptime N: Nat) {
+    input x: UInt[8];
+    input e0: Bool;
+    input e1: Bool;
+    input e2: Bool;
+    output y: UInt[8];
+    output s: UInt[8];
+    instance u = Lanes(N);
+    comptime for k in 0..N {
+        u.din[k] := x +% k;
+    }
+    u.en0 := e0;
+    u.en1 := e1;
+    u.en2 := e2;
+    y := u.dout[0] ^ u.dout[2];
+    s := u.sum;
+}

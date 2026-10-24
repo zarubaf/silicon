@@ -1,0 +1,34 @@
+// A crossbar declares the family `m` and the family `pick`, then adds entries from `PortKey` names that join the
+// families. A scalar `PortKey` and a record entry are ports too. The child `Sink` has record ports under public names.
+// TOP Xbar(2)
+struct Beat {
+    valid: Bool,
+    data: UInt[8],
+}
+module Sink() {
+    input b: Beat as "in_beat";
+    output q: Beat as "out_beat";
+    reg r: Beat = Beat(false, 0);
+    r := b;
+    q := r;
+}
+module Xbar(comptime N: Nat) {
+    comptime for i in 0..N {
+        input m[i]: Beat;
+        input pick[i]: Bool;
+    }
+    input extra: Beat as PortKey("m", true, N);
+    input use_extra: Bool as PortKey("pick", true, N);
+    input hold: Bool as PortKey("stall", false, 0);
+    output o: Beat as "out";
+    instance k = Sink();
+    let mut acc = Beat(false, 0);
+    let mut done = false;
+    comptime for i in 0..N + 1 {
+        let hit = pick[i] && !done;
+        acc = if (hit) { m[i] } else { acc };
+        done = done || pick[i];
+    }
+    k.in_beat := if (hold) { k.out_beat } else { acc };
+    o := k.out_beat;
+}

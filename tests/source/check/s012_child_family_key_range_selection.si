@@ -1,0 +1,13 @@
+// S012: the range check of a key also applies to the selection of a child entry.
+// TOP M()
+module C() {
+    output gnt[0]: Bool;
+    gnt[0] := true;
+}
+module M() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S012 @+2
+    // expected-message: a family key is 0 to 4294967295, not 4294967296; use a key in this range
+    o := u.gnt[4294967296];
+}
