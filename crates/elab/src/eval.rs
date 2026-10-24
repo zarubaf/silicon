@@ -717,68 +717,6 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// `read` at the call `pos` with the results `vs` of its arguments, after its node, its name,
-    /// and the copies (section 5.4, Lean `readOf`). `g` is the name of the callee. A child input
-    /// is `S017`. An own output, a memory, an instance, a domain, and a value that is not a
-    /// handle are `S010`, each with its fix (section 6.2). A register or a wire reads by the
-    /// rule of references (`read_ref`), after its depth check. The read gives a hardware name, a
-    /// lazy reference with no charge, or a new static value that charged its zero size. The
-    /// result refers to the resource, so a binding of it is a copy, and the binding pays for the
-    /// leaves before they expand. A new static value is no copy, so its zero size charges once.
-    fn read_call(&mut self, pos: Pos, g: &str, vs: &[Out]) -> Res<Option<Out>> {
-        let [v] = vs else {
-            return fail(
-                Code::S007,
-                pos,
-                format!(
-                    "`{g}` takes 1 argument(s), but it has {}; write `read(h)` with one register \
-                     or wire",
-                    vs.len()
-                ),
-            );
-        };
-        match self.store.seen(v) {
-            Seen::Handle(Handle::Res {
-                kind: Resource::Reg | Resource::Wire,
-                ty,
-                path,
-                ..
-            }) => {
-                let (t, path) = (*ty, *path);
-                let r = self.read_ref(pos, Base::Name(path), t)?;
-                Ok(Some(if matches!(r, Val::Static(_)) {
-                    Out::Made(r)
-                } else {
-                    Out::Named(r)
-                }))
-            }
-            Seen::Handle(Handle::Input { path, port, .. }) => {
-                let text = self.input_text(*path, port);
-                fail(Code::S017, pos, text)
-            }
-            s => {
-                let hint = match s {
-                    Seen::Handle(Handle::Mem(_)) => "read a word with `read_port`",
-                    Seen::Handle(Handle::Inst { .. }) => {
-                        "read an output of the instance, for example `u.q`"
-                    }
-                    Seen::Handle(Handle::Domain(_)) => {
-                        "a domain has no value, so remove the `read`"
-                    }
-                    _ => "use the value directly, without `read`",
-                };
-                fail(
-                    Code::S010,
-                    pos,
-                    format!(
-                        "`{g}` takes a register or a wire, not {}; {hint}",
-                        self.about(s)
-                    ),
-                )
-            }
-        }
-    }
-
     /// The operand `e` of the node at `pos`, at a use that reads it.
     fn operand(&mut self, pos: Pos, e: &Expr) -> Res<Opnd> {
         let o = self.eval(e)?;
