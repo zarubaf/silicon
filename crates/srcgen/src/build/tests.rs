@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::program::{Place, Ports, Radix, SBin, render_items};
+use crate::eval::concrete;
+use crate::program::{PTy, Place, Ports, Radix, SBin, render_items};
 use num_bigint::BigInt;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;
@@ -1006,4 +1007,207 @@ fn enums_have_distinct_tags() {
             assert!(def.payload_bits() <= 2 * 257, "{def:?}");
         }
     }
+}
+
+/// The forms of ports that a program holds, by name. A form counts at an
+/// executed declaration or call of a reached frame.
+fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 21] {
+    let ports = p.ports();
+    // Two keys of one family whose order as numbers differs from their order
+    // as text, in the vectors of the top: `2` and `10`.
+    let mut keys: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    for (name, _) in ports.inputs.iter().chain(&ports.outputs) {
+        let Some((base, rest)) = name.split_once('[') else {
+            continue;
+        };
+        let key: Option<u32> = rest.split(']').next().and_then(|k| k.parse().ok());
+        keys.entry(base.to_owned()).or_default().extend(key);
+    }
+    let sort_pair = keys.values().any(|ks| {
+        ks.iter()
+            .any(|a| ks.iter().any(|b| a < b && a.to_string() > b.to_string()))
+    });
+    let as_keys = s.as_strings + s.as_computed + s.as_portkeys + s.as_joins;
+    [
+        ("family in a loop", s.fam_loops > 0),
+        ("family in an arm", s.fam_arms > 0),
+        ("family at the top", s.fam_tops > 0),
+        ("own input entry selected", s.own_selects > 0),
+        ("own output entry bound", s.own_targets > 0),
+        ("second loop reads the keys", s.second_loops > 0),
+        ("child input entry bound", s.child_binds > 0),
+        ("child output entry read", s.child_reads > 0),
+        ("as String key", s.as_strings > 0),
+        ("as computed key", s.as_computed > 0),
+        ("as scalar PortKey", s.as_portkeys > 0),
+        ("as PortKey joins a family", s.as_joins > 0),
+        ("as core keyword", s.as_core > 0),
+        ("helper with a name", s.helper_names > 0),
+        ("helper with a family", s.helper_families > 0),
+        ("helper entry selected by another call", s.helper_chains > 0),
+        ("empty entry", s.empty_entries > 0),
+        ("key sort pair in the top", sort_pair),
+        ("family entry", s.fam_loops + s.fam_arms + s.fam_tops > 0),
+        ("as key", as_keys > 0),
+        ("family in an arm that does not run", s.skipped_families > 0),
+    ]
+}
+
+/// Each form of ports occurs in at least 10% of 256 programs, a family entry
+/// in at least 40%, and an `as` key in at least 30%. The forms of the
+/// arm that does not run have their own test of mutants (`ScalarFamily`
+/// finds a family with no executed entry).
+#[test]
+fn programs_cover_families() {
+    const TAPES: usize = 256;
+    let mut with = BTreeMap::<&str, usize>::new();
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let p = b.program();
+        assert!(p.is_ok(), "a program faults: {p:?}");
+        let Ok(p) = p else { continue };
+        for (form, seen) in port_forms(&p, &b.stats) {
+            *with.entry(form).or_default() += usize::from(seen);
+        }
+        assert_eq!(b.stats.port_lost, 0, "a name of the pool reaches no output");
+    }
+    assert_eq!(with.len(), 21, "{with:?}");
+    for (form, n) in &with {
+        let least = match *form {
+            "family entry" => 40,
+            "as key" => 30,
+            "family in an arm that does not run" => 5,
+            _ => 10,
+        };
+        assert!(
+            n * 100 >= TAPES * least,
+            "{form} occurs in {n} of {TAPES} programs: {with:?}"
+        );
+    }
+}
+
+/// The port forms draw from their own tape: a program with handle forms
+/// has port forms at about the rate of all programs.
+#[test]
+fn port_forms_do_not_follow_the_handle_forms() {
+    const TAPES: usize = 256;
+    let (mut ports, mut hands, mut both) = (0, 0, 0);
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let Ok(p) = b.program() else { continue };
+        let s = &b.stats;
+        let port = port_forms(&p, s).iter().any(|(_, seen)| *seen);
+        let hand = s.bind_wire_calls
+            + s.bind_reg_calls
+            + s.bind_input_calls
+            + s.bind_mem_calls
+            + s.direct_mems
+            + s.declare_calls
+            + s.list_groups
+            > 0;
+        ports += usize::from(port);
+        hands += usize::from(hand);
+        both += usize::from(port && hand);
+    }
+    // Compare `both / hands` with `ports / TAPES`, within a factor of 1.3.
+    assert!(hands >= 32 && ports >= 32, "{ports} {hands}");
+    assert!(
+        both * TAPES * 10 >= ports * hands * 7,
+        "ports {ports}, hands {hands}, both {both}"
+    );
+    assert!(
+        both * TAPES * 7 <= ports * hands * 10,
+        "ports {ports}, hands {hands}, both {both}"
+    );
+}
+
+/// The caps of the port forms hold for the plans of 256 programs: at most
+/// 3 families and 6 entries of a family, at most 4 keyed ports, and at most
+/// 2 calls of helpers that declare a port in a module, at most 24 ports in
+/// a program, and each key below 32.
+#[test]
+fn port_forms_stay_in_caps() {
+    use ports::Form;
+    let mut most = (0, 0, 0, 0, 0);
+    for tape in tapes(256) {
+        let mut b = Builder::new(tape);
+        let Ok(_) = b.program() else { continue };
+        let mut all = 0;
+        for sig in &b.sigs {
+            let declared = sig.plan.declared(&b.port_helpers);
+            all += declared.len();
+            let mut entries = BTreeMap::<&str, usize>::new();
+            for d in &declared {
+                if let Some(k) = d.public.key {
+                    assert!(k < 32, "{:?}", d.public);
+                    *entries.entry(d.public.base.as_str()).or_default() += 1;
+                }
+            }
+            let keyed: usize = sig
+                .plan
+                .forms
+                .iter()
+                .map(|f| match f {
+                    Form::Keyed { .. } => 1,
+                    Form::KeyedLoop { count, .. } => *count as usize,
+                    _ => 0,
+                })
+                .sum();
+            let calls = sig
+                .plan
+                .forms
+                .iter()
+                .filter(|f| matches!(f, Form::Call { .. }))
+                .count();
+            let families = sig
+                .plan
+                .forms
+                .iter()
+                .filter(|f| matches!(f, Form::Family { .. }))
+                .count();
+            assert!(entries.values().all(|&n| n <= 6), "{entries:?}");
+            assert!(families <= 3 && keyed <= 4 && calls <= 2, "{:?}", sig.plan);
+            most = (
+                most.0.max(families),
+                most.1.max(entries.values().copied().max().unwrap_or(0)),
+                most.2.max(keyed),
+                most.3.max(calls),
+                most.4.max(all),
+            );
+        }
+        assert!(all <= 24, "{all} ports");
+    }
+    // The caps are in reach.
+    assert!(
+        most.0 >= 2 && most.1 >= 3 && most.2 >= 2 && most.3 >= 2,
+        "{most:?}"
+    );
+}
+
+/// The ports of the top follow the plan of its signature: each entry and
+/// keyed port of the plan with a type is a port with that type, and the
+/// walk of the twin finds no other port with a key.
+#[test]
+fn the_plan_gives_the_ports_of_the_top() {
+    let mut checked = 0;
+    for tape in tapes(256) {
+        let mut b = Builder::new(tape);
+        let Ok(p) = b.program() else { continue };
+        let Some(sig) = b.sigs.first() else { continue };
+        let env = Env::of(&sig.params, &p.args);
+        let ports = p.ports();
+        let mut keyed = 0;
+        for d in sig.plan.declared(&b.port_helpers) {
+            let PTy::Data(t) = &d.ty else { continue };
+            let want = (d.public.to_string(), concrete(t, &env, &b.scope).unwrap());
+            let side = match d.dir {
+                ports::Dir::In => &ports.inputs,
+                ports::Dir::Out => &ports.outputs,
+            };
+            assert!(side.contains(&want), "{want:?} missing in {side:?}");
+            keyed += 1;
+        }
+        checked += keyed;
+    }
+    assert!(checked > 100, "{checked}");
 }

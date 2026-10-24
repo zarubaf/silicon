@@ -1320,8 +1320,7 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
     let mut by_kind = std::collections::BTreeMap::<usize, usize>::new();
     for tape in 0..256u32 {
         let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
-        let own = KINDS.iter().enumerate().skip(15);
-        for (k, kind) in own.take(KINDS.len() - PORT_KINDS - 15) {
+        for (k, kind) in KINDS.iter().enumerate().skip(15) {
             if sites(*kind, &p.items, &p.top) == 0 {
                 continue;
             }
@@ -1341,7 +1340,7 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
             "{code}: {counts:?}"
         );
     }
-    assert_eq!(by_kind.len(), KINDS.len() - PORT_KINDS - 15, "{by_kind:?}");
+    assert_eq!(by_kind.len(), KINDS.len() - 15, "{by_kind:?}");
 }
 
 /// `enum E0: UInt[2] { V0(UInt[4], Bool) = 1, V1 = 2 }`.
@@ -1956,5 +1955,94 @@ fn a_bad_name_or_index_is_s022() {
         bad.iter().any(|b| m[0].text.contains(&format!("as {b};"))),
         "{}",
         m[0].text
+    );
+}
+
+/// What the mutants of the ports predict, by the text of the mutation.
+fn kind_of_prediction(m: &Mutant) -> Option<&'static str> {
+    m.expect?;
+    let w = m.what.as_str();
+    Some(
+        if w.starts_with("duplicate statement") && m.expect == Some("S019") {
+            "indexed Duplicate"
+        } else if w.starts_with("make a family key 2^32") {
+            "KeyRange"
+        } else if w.starts_with("make a family key a value") {
+            "KeyType key"
+        } else if w.starts_with("make an `as` key an integer") {
+            "KeyType as"
+        } else if w.starts_with("give the scalar port") {
+            "ScalarFamily"
+        } else if w.starts_with("break the name rule") || w.starts_with("give a scalar PortKey") {
+            "BadName"
+        } else {
+            return None;
+        },
+    )
+}
+
+/// A fixed set of 256 programs has at least 5 predictions of each kind of
+/// ports, and at least 5 `ScalarFamily` predictions whose family has no entry
+/// before the port: the table holds the family from the start.
+#[test]
+fn the_fixed_set_of_mutants_reaches_the_codes_of_ports() {
+    let mut runner = TestRunner::deterministic();
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    let mut codes = std::collections::BTreeMap::<&str, usize>::new();
+    let mut first = 0;
+    for _ in 0..256 {
+        let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
+        for kind in [
+            Kind::Duplicate,
+            Kind::KeyRange,
+            Kind::KeyType,
+            Kind::ScalarFamily,
+            Kind::BadName,
+        ] {
+            for m in all(&p, kind) {
+                let lexed = syntax::lex(&m.text, usize::MAX);
+                assert!(lexed.errors.is_empty(), "{:?} in\n{}", lexed.errors, m.text);
+                let Some(what) = kind_of_prediction(&m) else {
+                    continue;
+                };
+                *counts.entry(what).or_default() += 1;
+                *codes.entry(m.expect.unwrap_or_default()).or_default() += 1;
+                if what == "ScalarFamily" {
+                    let family = m.what.split(" the key of the family ").nth(1);
+                    let family = family.and_then(|f| f.split(" in ").next()).unwrap_or("");
+                    let at = m.text.find(&format!(" as \"{family}\";"));
+                    let entry = m
+                        .text
+                        .find(&format!("put {family}["))
+                        .or_else(|| m.text.find(&format!("tput {family}[")));
+                    if matches!((at, entry), (Some(a), Some(e)) if a < e) {
+                        first += 1;
+                    }
+                }
+            }
+        }
+    }
+    for what in [
+        "indexed Duplicate",
+        "KeyRange",
+        "KeyType key",
+        "KeyType as",
+        "ScalarFamily",
+        "BadName",
+    ] {
+        assert!(
+            counts.get(what).copied().unwrap_or(0) >= 5,
+            "{what}: {counts:?}"
+        );
+    }
+    for code in ["S010", "S012", "S019", "S022"] {
+        assert!(
+            codes.get(code).copied().unwrap_or(0) >= 5,
+            "{code}: {codes:?}"
+        );
+    }
+    assert!(
+        first >= 5,
+        "{first} families with no entry before the port: {counts:?}"
     );
 }
