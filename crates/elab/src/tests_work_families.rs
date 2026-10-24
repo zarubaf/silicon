@@ -104,8 +104,10 @@ fn w4_a_second_key_is_found_without_a_scan() {
 
 /// W5. The instance `u` nests in `d` arrays, and `n` targets `h[0]...[0].req[i] := x;` bind the
 /// `n` inputs of `u`. The family key is taken in the step of the field, so a target walks its
-/// path once. The work at `(n, d)` and `(n, 2d)` at most doubles. A walk from the root at the
-/// family field gives `d` more steps for each target.
+/// path once. The work at `(n, d)` and `(n, 2d)` at most doubles. A walk from the root at each
+/// step gives `d^2` for a target and fails this check. A second walk of the path at the family
+/// field only adds a constant factor, so a second check bounds the work of one target: it is
+/// `c * d` with `c` just above the measured 7.3, and a second walk makes it 8.1.
 #[test]
 fn w5_targets_of_a_nested_child_family_walk_the_path_once() {
     let at = |n: usize, d: usize, key: u64| {
@@ -126,6 +128,13 @@ fn w5_targets_of_a_nested_child_family_walk_the_path_once() {
     let (a, b) = (n.counts.total(), twice.counts.total());
     assert!(a < b && b <= 2 * a, "the work {a} at d and {b} at 2d");
     assert!(twice.counts.total() <= 40 * twice.used);
+    let d = 128;
+    let (few, many) = (at(64, d, 32), at(128, d, 33));
+    let per_target = (many.counts.total() - few.counts.total()) / 64;
+    assert!(
+        per_target * 100 <= 775 * d as u64,
+        "a target costs {per_target} at the depth {d}"
+    );
 }
 
 /// W6. A child with `n` input entries. The parent binds all but the last. The error `S018` comes
