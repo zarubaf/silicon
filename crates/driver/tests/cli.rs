@@ -986,6 +986,33 @@ fn outer() -> Nat {
     Ok(())
 }
 
+/// The text "Hardware in `eval`" of `S011` for a port of a helper, with and without an `as` key.
+/// No corpus design can pin it, because a corpus file runs as a module.
+#[test]
+fn eval_of_a_port_in_a_helper_is_s011_with_the_function_that_declares() -> Test {
+    for (decl, hw) in [
+        ("input p: UInt[8];", "input"),
+        ("output p: UInt[8];", "output"),
+        ("input p: UInt[8] as \"x\";", "input"),
+        ("output p: UInt[8] as \"x\";", "output"),
+    ] {
+        let src = format!("fn mk() -> Nat {{\n    {decl}\n    return 1;\n}}\n");
+        let expected = format!(
+            "error[S011]: 2:5: the `eval` command makes no hardware, but its expression \
+             reaches this {hw} in `mk`; evaluate an expression that makes no hardware, or \
+             elaborate a module that calls `mk`\n"
+        );
+        assert_eq!(
+            eval(&src, "mk()", &[])?,
+            (expected.clone(), Some(1)),
+            "{decl}"
+        );
+        let out = agree("eval", &["mk()"], &file("eval-port.si", src.as_bytes())?)?;
+        assert_eq!(text(&out), expected, "{decl}");
+    }
+    Ok(())
+}
+
 /// Runs `silicon cost FILE --top TOP` with the flags `flags`. Each call has its own file.
 fn cost(src: &str, top: &str, flags: &[&str]) -> std::io::Result<(String, Option<i32>)> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
