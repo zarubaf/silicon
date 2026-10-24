@@ -86,8 +86,16 @@ def roundtrip (items : List Item) : Bool :=
 #guard st "u.d := x;" == "(connect (field (name \"u\") \"d\") (name \"x\"))"
 #guard st "reg r: UInt[4] = 0;" == "(reg \"r\" (index (name \"UInt\") ((num 4))) (num 0))"
 #guard st "wire w: Bool;" == "(wire \"w\" (name \"Bool\"))"
-#guard st "input i: Bool;" == "(input \"i\" (name \"Bool\"))"
-#guard st "output o: Bool;" == "(output \"o\" (name \"Bool\"))"
+#guard st "input i: Bool;" == "(input \"i\" none (name \"Bool\"))"
+#guard st "output o: Bool;" == "(output \"o\" none (name \"Bool\"))"
+
+/-! A family entry has one key expression in `[ ]`. `[]` and `[a, b]` are `S001`. -/
+#guard st "input req[i]: T;" == "(input \"req\" (some (name \"i\")) (name \"T\"))"
+#guard st "output g[N + 1]: T;" ==
+  "(output \"g\" (some (binary add (name \"N\") (num 1))) (name \"T\"))"
+#guard stFails "input req[]: T;" .S001 11
+#guard stFails "input req[a, b]: T;" .S001 12
+#guard stFails "input req[a: T;" .S001 12
 #guard st "instance u = M(8, true);" == "(inst \"u\" \"M\" ((num 8) (bool true)))"
 #guard st "instance u = M();" == "(inst \"u\" \"M\" ())"
 #guard st "return;" == "(ret none)"
@@ -389,7 +397,8 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard stFails "wire w: T in d;" .S004 11
 #guard stFails "mem m: [T; 4] in d;" .S004 15
 #guard stFails "input i: T in d;" .S004 12
-#guard stFails "input i[0]: T;" .S004 8
+#guard stFails "input i[0]: T in d;" .S004 15
+#guard stFails "output o[0]: T as k;" .S004 16
 #guard stFails "output o: T as k;" .S004 13
 #guard stFails "instance u = M() with { clock = d };" .S004 18
 #guard stFails "instance u = p::M();" .S004 15
@@ -788,7 +797,7 @@ def exprs : List Expr :=
 
 def counter : Item :=
   .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
-    [.input p (nm "en") (t "Bool"), .output p (nm "q") (uint (v "W")),
+    [.input p (nm "en") none (t "Bool"), .output p (nm "q") none (uint (v "W")),
      .reg p (nm "r") (uint (v "W")) (n 0), .wire p (nm "w") (t "Bool"),
      .connect p (v "q") (v "r"), .connect p (.field p (v "u") (nm "d")) (v "w"),
      .inst p (nm "u") (nm "Child") [bin .add (v "W") (n 1)],

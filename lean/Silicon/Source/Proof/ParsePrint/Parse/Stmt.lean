@@ -379,25 +379,46 @@ theorem Runs.stmt_mem (p : Pos) (n : Ident) (ty : TypeExpr) (v : Expr) :
   refine Runs.sym_bind w4.tail.head (Runs.idx (by omega) (Runs.pure ?_))
   simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hv', hty']
 
-/-! The head of a port: the keyword and a name that no `[` follows. -/
-theorem Runs.portHead {ctx : Ctx} {i : Nat} {k : Kind} (n : Ident) (R : List Kind)
-    (hw : Win ctx.input i (k :: .ident n.name :: .symbol ":" :: R)) :
-    Runs portHead ctx i (i + 2) (fun id => id.name = n.name) := by
+/-! The kinds of the key of a port: `[`, the key, and `]`, or nothing for a scalar port. -/
+def portKey (k : Option Expr) : List Kind :=
+  (k.map fun e => .symbol "[" :: e.toks 0 ++ [.symbol "]"]).getD []
+
+/-! The head of a port: the keyword, a name, and the key of a family entry. -/
+theorem Runs.portHead {ctx : Ctx} {i f : Nat} {k : Kind} (n : Ident) (key : Option Expr)
+    (hk : key.all Expr.printable = true) (R : List Kind)
+    (hw : Win ctx.input i (k :: .ident n.name :: (portKey key ++ .symbol ":" :: R)))
+    (hf : 4 * (portKey key).length + 1 ≤ f) (hd : (portKey key).length ≤ ctx.depth) :
+    Runs (portHead f) ctx i (i + 2 + (portKey key).length)
+      (fun h => h.1.name = n.name ∧ h.2.map Expr.erase = key.map Expr.erase) := by
   unfold Parse.portHead
   refine Runs.bump_bind ?_
   refine Runs.bind (Runs.ident hw.tail.head) fun id hid => ?_
-  refine Runs.peek_bind ?_
-  simp only [isSym_of hw.tail.tail.head]
-  reduce_checks
-  exact Runs.pure hid
+  have w := hw.tail.tail
+  cases key with
+  | none =>
+    simp only [portKey, Option.map, Option.getD, List.nil_append, List.length_nil] at w ⊢
+    refine Runs.bind (Runs.acceptSym_false (by rw [w.head]; decide)) fun b hb => ?_
+    subst b
+    reduce_checks
+    exact Runs.pure ⟨hid, rfl⟩
+  | some e =>
+    simp only [portKey, Option.map, Option.getD, Option.all_some, List.cons_append,
+      List.append_assoc, List.length_cons, List.length_append, List.length_nil] at w hk hf hd ⊢
+    refine Runs.bind (Runs.acceptSym_true w.head) fun b hb => ?_
+    subst b
+    reduce_checks
+    refine Runs.bind (Runs.value e hk ctx _ f _ _ w.tail (After.close (Or.inr rfl)) (by omega)
+      (by omega)) fun v hv => ?_
+    exact Runs.sym_bind w.tail.drop.head (Runs.idx (by omega) (Runs.pure ⟨hid, by simp [hv]⟩))
 
 /-! The tail of a port: `:`, a type, and `;`. -/
-theorem Runs.portTail {ctx : Ctx} {i f : Nat} (p : Pos) (n : Ident) (ty : TypeExpr)
-    (hty : ty.printable = true) (make : Pos → Ident → TypeExpr → Stmt) (t : Kind)
+theorem Runs.portTail {ctx : Ctx} {i f : Nat} (p : Pos) (n : Ident) (k : Option Expr)
+    (ty : TypeExpr) (hty : ty.printable = true)
+    (make : Pos → Ident → Option Expr → TypeExpr → Stmt) (t : Kind)
     (R : List Kind) (hw : Win ctx.input i (.symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R)))
     (hf : 4 * ty.toks.length ≤ f) (hd : ty.toks.length ≤ ctx.depth) :
-    Runs (portTail f p n make) ctx i (i + (ty.toks.length + 2))
-      (fun s' => ∃ ty', ty'.erase = ty.erase ∧ s' = make p n ty') := by
+    Runs (portTail f p n k make) ctx i (i + (ty.toks.length + 2))
+      (fun s' => ∃ ty', ty'.erase = ty.erase ∧ s' = make p n k ty') := by
   unfold Parse.portTail
   refine Runs.bind (Runs.typeAnnotation ty hty ctx _ f _ _ hw (by decide) hf hd)
     fun ty' hty' => ?_
@@ -408,60 +429,66 @@ theorem Runs.portTail {ctx : Ctx} {i f : Nat} (p : Pos) (n : Ident) (ty : TypeEx
   reduce_checks
   exact Runs.sym_bind w2.head (Runs.idx (by omega) (Runs.pure ⟨ty', hty', rfl⟩))
 
-/-! A port: `input` or `output`, a name, and a type. -/
-theorem Runs.port {ctx : Ctx} {i f : Nat} {k : Kind} (n : Ident) (ty : TypeExpr)
-    (hty : ty.printable = true) (make : Pos → Ident → TypeExpr → Stmt) (t : Kind)
-    (R : List Kind) (hw : Win ctx.input i (k :: .ident n.name :: .symbol ":" ::
-      (ty.toks ++ .symbol ";" :: t :: R)))
-    (hf : 4 * ty.toks.length + 1 ≤ f) (hd : ty.toks.length ≤ ctx.depth) :
-    Runs (port f (tokenAt ctx.input i) make) ctx i (i + (ty.toks.length + 4))
-      (fun s' => ∃ id ty', id.name = n.name ∧ ty'.erase = ty.erase ∧
-        s' = make (tokenAt ctx.input i).pos id ty') := by
+/-! A port: `input` or `output`, a name, the key of a family entry, and a type. -/
+theorem Runs.port {ctx : Ctx} {i f : Nat} {k : Kind} (n : Ident) (key : Option Expr)
+    (hk : key.all Expr.printable = true) (ty : TypeExpr) (hty : ty.printable = true)
+    (make : Pos → Ident → Option Expr → TypeExpr → Stmt) (t : Kind) (R : List Kind)
+    (hw : Win ctx.input i (k :: .ident n.name :: (portKey key ++ .symbol ":" ::
+      (ty.toks ++ .symbol ";" :: t :: R))))
+    (hf : 4 * (portKey key).length + 4 * ty.toks.length + 2 ≤ f)
+    (hd : (portKey key).length + ty.toks.length ≤ ctx.depth) :
+    Runs (port f (tokenAt ctx.input i) make) ctx i
+      (i + ((portKey key).length + ty.toks.length + 4))
+      (fun s' => ∃ id k' ty', id.name = n.name ∧ k'.map Expr.erase = key.map Expr.erase ∧
+        ty'.erase = ty.erase ∧ s' = make (tokenAt ctx.input i).pos id k' ty') := by
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.port]
-  refine Runs.bind (Runs.portHead n _ hw) fun id hid => ?_
-  refine Runs.idx (by omega) (Runs.mono (Runs.portTail _ id ty hty make t R hw.tail.tail
-    (by omega) hd) ?_)
+  refine Runs.bind (Runs.portHead n key hk _ hw (by omega) (by omega)) fun h hh => ?_
+  have w := hw.tail.tail.drop
+  refine Runs.start (by omega) (Runs.idx (by omega) (Runs.mono (Runs.portTail _ h.1 h.2 ty hty
+    make t R w (by omega) (by omega)) ?_))
   rintro _ ⟨ty', hty', rfl⟩
-  exact ⟨id, ty', hid, hty', rfl⟩
+  exact ⟨h.1, h.2, ty', hh.1, hh.2, hty', rfl⟩
 
-theorem Runs.stmt_input (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.input p n ty) := by
+theorem Runs.stmt_input (p : Pos) (n : Ident) (k : Option Expr) (ty : TypeExpr) :
+    SGoal (.input p n k ty) := by
   intro ctx i f t R hp hw ht hf hd
   simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨hpl, hn⟩, hty⟩ := hp
-  have e : (Stmt.input p n ty).toks ++ t :: R = .keyword "input" :: .ident n.name ::
-      .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R) := by
-    simp [Stmt.toks]
-  have hT : (Stmt.input p n ty).toks.length = ty.toks.length + 4 := by
-    simp [Stmt.toks] <;> omega
+  obtain ⟨⟨⟨hpl, hn⟩, hk⟩, hty⟩ := hp
+  have e : (Stmt.input p n k ty).toks ++ t :: R = .keyword "input" :: .ident n.name ::
+      (portKey k ++ .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R)) := by
+    simp [Stmt.toks, portKey]
+  have hT : (Stmt.input p n k ty).toks.length = (portKey k).length + ty.toks.length + 4 := by
+    simp [Stmt.toks, portKey] <;> omega
   rw [e] at hw
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
   simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
-  refine Runs.mono (Runs.port n ty hty _ t R hw (by omega) (by omega)) ?_
-  rintro _ ⟨id, ty', hid, hty', rfl⟩
-  simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty']
+  refine Runs.mono (Runs.port n k hk ty hty _ t R hw (by omega) (by omega)) ?_
+  rintro _ ⟨id, k', ty', hid, hk', hty', rfl⟩
+  simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty', hk']
 
-theorem Runs.stmt_output (p : Pos) (n : Ident) (ty : TypeExpr) : SGoal (.output p n ty) := by
+theorem Runs.stmt_output (p : Pos) (n : Ident) (k : Option Expr) (ty : TypeExpr) :
+    SGoal (.output p n k ty) := by
   intro ctx i f t R hp hw ht hf hd
   simp only [Stmt.printable, Bool.and_eq_true, Bool.not_eq_true'] at hp
-  obtain ⟨⟨hpl, hn⟩, hty⟩ := hp
-  have e : (Stmt.output p n ty).toks ++ t :: R = .keyword "output" :: .ident n.name ::
-      .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R) := by
-    simp [Stmt.toks]
-  have hT : (Stmt.output p n ty).toks.length = ty.toks.length + 4 := by
-    simp [Stmt.toks] <;> omega
+  obtain ⟨⟨⟨hpl, hn⟩, hk⟩, hty⟩ := hp
+  have e : (Stmt.output p n k ty).toks ++ t :: R = .keyword "output" :: .ident n.name ::
+      (portKey k ++ .symbol ":" :: (ty.toks ++ .symbol ";" :: t :: R)) := by
+    simp [Stmt.toks, portKey]
+  have hT : (Stmt.output p n k ty).toks.length = (portKey k).length + ty.toks.length + 4 := by
+    simp [Stmt.toks, portKey] <;> omega
   rw [e] at hw
   rw [hT] at hf hd ⊢
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   rw [Parse.stmt]
   refine Runs.peek_bind (Runs.read_bind ?_)
   simp only [stmt_res (Or.inl hpl), hw.head, Bool.false_eq_true, ite_false]
-  refine Runs.mono (Runs.port n ty hty _ t R hw (by omega) (by omega)) ?_
-  rintro _ ⟨id, ty', hid, hty', rfl⟩
-  simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty']
+  refine Runs.mono (Runs.port n k hk ty hty _ t R hw (by omega) (by omega)) ?_
+  rintro _ ⟨id, k', ty', hid, hk', hty', rfl⟩
+  simp [Stmt.erase, Ident.erase_of_name (b := n) hid, hty', hk']
 
 theorem Runs.stmt_inst (p : Pos) (n m : Ident) (xs : List Expr) : SGoal (.inst p n m xs) := by
   intro ctx i f t R hp hw ht hf hd
@@ -1005,8 +1032,8 @@ theorem Runs.stmt_of (s : Stmt) (hIH : ∀ x : Stmt, x.toks.length < s.toks.leng
   | reg p n ty v => exact Runs.stmt_reg p n ty v
   | wire p n ty => exact Runs.stmt_wire p n ty
   | mem p n ty v => exact Runs.stmt_mem p n ty v
-  | input p n ty => exact Runs.stmt_input p n ty
-  | output p n ty => exact Runs.stmt_output p n ty
+  | input p n k ty => exact Runs.stmt_input p n k ty
+  | output p n k ty => exact Runs.stmt_output p n k ty
   | inst p n m xs => exact Runs.stmt_inst p n m xs
   | ret p o => cases o with
     | none => exact Runs.stmt_ret_none p

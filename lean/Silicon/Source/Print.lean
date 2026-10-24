@@ -170,8 +170,10 @@ mutual
     | .reg _ n ty i => i.dumpTo (ty.dumpTo (acc ++ "(reg " ++ ident n ++ " ") ++ " ") ++ ")"
     | .wire _ n ty => ty.dumpTo (acc ++ "(wire " ++ ident n ++ " ") ++ ")"
     | .mem _ n ty d => d.dumpTo (ty.dumpTo (acc ++ "(mem " ++ ident n ++ " ") ++ " ") ++ ")"
-    | .input _ n ty => ty.dumpTo (acc ++ "(input " ++ ident n ++ " ") ++ ")"
-    | .output _ n ty => ty.dumpTo (acc ++ "(output " ++ ident n ++ " ") ++ ")"
+    | .input _ n k ty =>
+      ty.dumpTo (optionTo Expr.dumpTo (acc ++ "(input " ++ ident n ++ " ") k ++ " ") ++ ")"
+    | .output _ n k ty =>
+      ty.dumpTo (optionTo Expr.dumpTo (acc ++ "(output " ++ ident n ++ " ") k ++ " ") ++ ")"
     | .inst _ n m xs =>
       listTo Expr.dumpTo (acc ++ "(inst " ++ ident n ++ " " ++ ident m ++ " ") xs ++ ")"
     | .ret _ v => optionTo Expr.dumpTo (acc ++ "(ret ") v ++ ")"
@@ -361,8 +363,12 @@ mutual
     | .wire _ n ty => indent d ++ "wire " ++ n.name ++ ": " ++ ty.print ++ ";\n"
     | .mem _ n ty e => indent d ++ "mem " ++ n.name ++ ": [" ++ ty.print ++ "; " ++ e.print 0
       ++ "];\n"
-    | .input _ n ty => indent d ++ "input " ++ n.name ++ ": " ++ ty.print ++ ";\n"
-    | .output _ n ty => indent d ++ "output " ++ n.name ++ ": " ++ ty.print ++ ";\n"
+    | .input _ n k ty =>
+      let k := (k.map fun e => "[" ++ e.print 0 ++ "]").getD ""
+      indent d ++ "input " ++ n.name ++ k ++ ": " ++ ty.print ++ ";\n"
+    | .output _ n k ty =>
+      let k := (k.map fun e => "[" ++ e.print 0 ++ "]").getD ""
+      indent d ++ "output " ++ n.name ++ k ++ ": " ++ ty.print ++ ";\n"
     | .inst _ n m xs => indent d ++ "instance " ++ n.name ++ " = " ++ m.name ++ "("
       ++ args (xs.map (Expr.print 0)) ++ ");\n"
     | .ret _ none => indent d ++ "return;\n"

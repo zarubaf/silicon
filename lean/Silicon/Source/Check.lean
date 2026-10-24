@@ -579,8 +579,8 @@ mutual
       typeExpr w
       expr true d
       declare b (.resource .mem)
-    | .input p b ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
-    | .output p b ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
+    | .input p b _ ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
+    | .output p b _ ty => do placement o p "port"; typeExpr ty; declare b (.resource .port)
     | .inst p b m i xs => do
       placement o p "instance"
       if let some (.module k) := (← read)[i]? then arity p s!"`{m.name}`" k xs.length

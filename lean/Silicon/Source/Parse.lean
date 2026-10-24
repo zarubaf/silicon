@@ -723,29 +723,34 @@ def portFnText : String :=
   "a helper cannot declare a port; declare the port in the module body and pass its value to " ++
     "the helper"
 
-/-! The head of a port declaration: the keyword and the name. -/
-def portHead : P Ident := do
+/-!
+The head of a port declaration: the keyword, the name, and the key of a family entry in `[ ]`.
+The key is one expression (section 5.6), so `[]` and `[a, b]` are `S001`.
+-/
+def portHead (f : Nat) : P (Ident × Option Expr) := do
   bump
   let n ← ident
-  let u ← peek
-  if isSym "[" u then later u "a port family"
-  return n
+  if ← acceptSym "[" then
+    let k ← value f
+    sym "]"
+    return (n, some k)
+  return (n, none)
 
 /-! The tail of a port declaration: the type, the domain check, and `;`. -/
-def portTail (f : Nat) (p : Pos) (n : Ident) (make : Pos → Ident → TypeExpr → Stmt) :
-    P Stmt := do
+def portTail (f : Nat) (p : Pos) (n : Ident) (k : Option Expr)
+    (make : Pos → Ident → Option Expr → TypeExpr → Stmt) : P Stmt := do
   let ty ← typeAnnotation f
   noDomain
   let u ← peek
   if isKw "as" u then later u "a port key"
   sym ";"
-  return make p n ty
+  return make p n k ty
 
-def port : Nat → Token → (Pos → Ident → TypeExpr → Stmt) → P Stmt
+def port : Nat → Token → (Pos → Ident → Option Expr → TypeExpr → Stmt) → P Stmt
   | 0, _, _ => exhausted
   | f + 1, t, make => do
-    let n ← portHead
-    portTail f t.pos n make
+    let h ← portHead f
+    portTail f t.pos h.1 h.2 make
 
 mutual
   def stmt : Nat → P Stmt

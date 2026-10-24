@@ -257,8 +257,8 @@ inductive Stmt where
   | reg (pos : Pos) (name : Binder) (ty : TypeExpr) (init : Expr)
   | wire (pos : Pos) (name : Binder) (ty : TypeExpr)
   | mem (pos : Pos) (name : Binder) (word : TypeExpr) (depth : Expr)
-  | input (pos : Pos) (name : Binder) (ty : TypeExpr)
-  | output (pos : Pos) (name : Binder) (ty : TypeExpr)
+  | input (pos : Pos) (name : Binder) (index : Option Expr) (ty : TypeExpr)
+  | output (pos : Pos) (name : Binder) (index : Option Expr) (ty : TypeExpr)
   | inst (pos : Pos) (name : Binder) (module : Ident) (item : Nat) (args : List Expr)
   | ret (pos : Pos) (value : Option Expr)
   | ctIf (pos : Pos) (cond : Expr) (yes : List Stmt) (no : Option (List Stmt))
@@ -734,8 +734,14 @@ mutual
       let w ← typeExpr w
       let d ← expr d
       return .mem p (← declare n) w d
-    | .input p n ty => do let ty ← typeExpr ty; return .input p (← declare n) ty
-    | .output p n ty => do let ty ← typeExpr ty; return .output p (← declare n) ty
+    | .input p n k ty => do
+      let k ← k.mapM expr
+      let ty ← typeExpr ty
+      return .input p (← declare n) k ty
+    | .output p n k ty => do
+      let k ← k.mapM expr
+      let ty ← typeExpr ty
+      return .output p (← declare n) k ty
     | .inst p n m xs => do
       let i ← moduleRef m
       let xs ← xs.mapM expr
