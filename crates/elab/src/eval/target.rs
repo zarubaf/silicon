@@ -10,7 +10,7 @@
 //! type with the handle flag charge 1, then the step gets the checks of a selection. The target
 //! is an identity, so it opens no window and charges no held root.
 
-use super::inst::family_value;
+use super::inst::{FamKey, child_key, family_value};
 use super::place::{Key, Sel, chain, key_pos};
 use super::{Evaluator, GuardKind, Out, Res, fail, need};
 use crate::Code;
@@ -46,7 +46,7 @@ impl Evaluator<'_> {
             let out = self.eval(root)?;
             Ok(need(root, out)?)
         };
-        let keys = self.target_keys(&steps)?;
+        let (keys, fams) = self.target_keys(&steps)?;
         let cur = match start {
             Ok(out) => out,
             Err(decl) => Out::Ref(Ref {
@@ -54,19 +54,21 @@ impl Evaluator<'_> {
                 path: Vec::new(),
             }),
         };
-        self.target_walk(e.pos(), cur, &keys)
+        self.target_walk(e.pos(), cur, (&keys, &fams))
     }
 
     /// The index of each step of a target, in source order (Lean `targetKeys`). An index step
     /// charges 1, then its index evaluates in a structural context and is static (`S011`).
-    fn target_keys<'e>(&mut self, steps: &[Sel<'e>]) -> Res<Vec<Key<'e>>> {
+    fn target_keys<'e>(&mut self, steps: &[Sel<'e>]) -> Res<(Vec<Key<'e>>, Vec<Option<FamKey>>)> {
         let mut keys = Vec::with_capacity(steps.len());
+        let mut fams = Vec::with_capacity(steps.len());
         for step in steps {
             if matches!(step, Sel::Index(..)) {
                 self.charge(step.pos(), 1)?;
             }
             let Sel::Index(q, args) = *step else {
                 keys.push(self.key(step)?);
+                fams.push(None);
                 continue;
             };
             let [i] = args else {
@@ -82,8 +84,9 @@ impl Evaluator<'_> {
             })?;
             self.check_static(i.pos(), &o)?;
             keys.push(Key::Index(q, i.pos(), self.index_of(&o)));
+            fams.push(Some(self.fam_key(self.store.value(&o))));
         }
-        Ok(keys)
+        Ok((keys, fams))
     }
 
     /// The part that the `:=` target with the start `start` selects, when its root is the own
@@ -101,25 +104,44 @@ impl Evaluator<'_> {
             self.charge(q, 1)?;
             let o = self.key_out(i)?;
             let k = self.selection_key(rp, i.pos(), x, &o)?;
-            let keys = self.target_keys(steps.get(1..).unwrap_or_default())?;
+            let (keys, fams) = self.target_keys(steps.get(1..).unwrap_or_default())?;
             let v = self.entry_val(i.pos(), x, family, k)?;
-            return self.target_walk(start, Out::Named(v), &keys);
+            return self.target_walk(start, Out::Named(v), (&keys, &fams));
         }
         self.target_keys(steps)?;
         family_value(rp, x)
     }
 
     /// The walk of the steps `keys` of a target that starts at `start`, from the base `cur`
-    /// outward (Lean `targetWalk`).
-    fn target_walk(&mut self, start: Pos, mut cur: Out, keys: &[Key<'_>]) -> Res<Out> {
-        let mut rest = keys;
-        while let Some(key) = rest.first() {
-            let (out, taken) = self.target_run(cur, rest)?;
+    /// outward (Lean `targetWalk`). A field that names a family of the child behind `cur` waits
+    /// for the next step, whose key selects the entry (`child_target`), so the walk does not start
+    /// again from the root. Else that step is `S010` "Family as a value" at `start`.
+    fn target_walk(
+        &mut self,
+        start: Pos,
+        mut cur: Out,
+        (keys, fams): (&[Key<'_>], &[Option<FamKey>]),
+    ) -> Res<Out> {
+        let mut at = 0;
+        while let Some(key) = keys.get(at) {
+            if let Key::Field(_, f) = key
+                && self.child_family(&cur, f)
+            {
+                let (Some(Key::Index(_, xp, _)), Some(Some(fk))) =
+                    (keys.get(at + 1), fams.get(at + 1))
+                else {
+                    return family_value(start, &f.name);
+                };
+                cur = self.child_target(start, &cur, f, (*xp, fk))?;
+                at += 2;
+                continue;
+            }
+            let (out, taken) = self.target_run(cur, keys.get(at..).unwrap_or_default())?;
             cur = out;
-            rest = rest.get(taken..).unwrap_or_default();
+            at += taken;
             if taken == 0 {
                 cur = self.target_step(start, cur, key)?;
-                rest = rest.get(1..).unwrap_or_default();
+                at += 1;
             }
         }
         Ok(cur)
@@ -207,20 +229,51 @@ impl Evaluator<'_> {
                 path,
                 port,
             }))),
-            Some(_) => fail(
-                Code::S017,
-                start,
-                format!(
-                    "`{}` is an output of the child, not a target; the child drives its outputs, \
-                     so bind an input of the child",
-                    f.name
-                ),
-            ),
+            Some(port) => fail(Code::S017, start, self.output_text(&port)),
             None => fail(
                 Code::S010,
                 q,
                 format!("the instance has no port `{}`", f.name),
             ),
+        }
+    }
+
+    /// The `S017` text "Child output as a `:=` target" of section 6.2, for the output `port`. An
+    /// entry is named with its key, for example `req[3]`.
+    fn output_text(&self, port: &crate::hw::Port) -> String {
+        format!(
+            "`{}` is an output of the child, not a target; the child drives its outputs, so bind \
+             an input of the child",
+            self.port_text(port)
+        )
+    }
+
+    /// The entry of the family `f` of the child behind the `Instance` handle `cur`, with the
+    /// static key `fk` at `xp`, in a `:=` target that starts at `start` (section 5.2). The key
+    /// gets the type and range checks of a family selection. A key that the child did not declare
+    /// is `S013` "Child family key". An input entry gives its handle, and an output entry is
+    /// `S017`.
+    fn child_target(
+        &mut self,
+        start: Pos,
+        cur: &Out,
+        f: &Ident,
+        (xp, fk): (Pos, &FamKey),
+    ) -> Res<Out> {
+        let key = fk.key(xp)?;
+        let Seen::Handle(Handle::Inst { id, path, inst, ty }) = self.store.seen(cur) else {
+            return fail(Code::S017, start, PART_TEXT.to_owned());
+        };
+        let (id, path, inst, ty) = (*id, *path, *inst, *ty);
+        let sym = self.port_sym(f).unwrap_or(0);
+        match self.elab.port(inst, (sym, Some(key))) {
+            Some(port) if port.input => Ok(Out::Made(Val::Handle(Handle::Input {
+                inst: id,
+                path,
+                port,
+            }))),
+            Some(port) => fail(Code::S017, start, self.output_text(&port)),
+            None => child_key(xp, &self.tys.text(ty), &f.name, key),
         }
     }
 }

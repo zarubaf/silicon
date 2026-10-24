@@ -503,14 +503,20 @@ impl Evaluator<'_> {
                 vec![Piece::Instance(module), name(*path), Piece::Text(")")]
             }
             Handle::Input { path, port, .. } => {
-                let port_name = self.syms.texts.get(port.sym).map_or("", String::as_str);
-                vec![
+                let mut pieces = vec![
                     Piece::Text("(input "),
                     Piece::Node(self.tys.get(port.ty)),
                     Piece::Text(" "),
                     name(*path),
-                    Piece::Port(port_name),
-                ]
+                ];
+                match port.key {
+                    // An entry renders as `x[k]`.
+                    Some(_) => pieces.push(Piece::Owned(format!(" {})", self.port_text(port)))),
+                    None => pieces.push(Piece::Port(
+                        self.syms.texts.get(port.sym).map_or("", String::as_str),
+                    )),
+                }
+                pieces
             }
             Handle::Domain(d) => vec![Piece::Domain(self.domain_name(*d))],
         };

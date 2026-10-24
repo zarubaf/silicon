@@ -5,7 +5,7 @@
 //! node holds the indices of its operands.
 
 use crate::agg::Agg;
-use crate::names::{Name, PathId, Sym};
+use crate::names::{Field, Name, PathId, Sym};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Value, width_size};
 use parse::ast::{BinOp, Pos, UnOp};
@@ -15,13 +15,14 @@ use resolve::DeclId;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HwId(usize);
 
-/// The core name of the port with the source name `x`. A port keeps its source name.
-pub(crate) fn port_name(x: &str) -> Name {
+/// The core name of the port with the source name `x` and the key `key` of a family entry. A
+/// port keeps its source name, and an entry has the field `<k>f` (section 7.2).
+pub(crate) fn port_name(x: &str, key: Option<u32>) -> Name {
     #[cfg(test)]
     crate::counters::add(crate::counters::Count::TextBytes, x.len() as u64);
     Name {
         head: x.to_owned(),
-        rest: Vec::new(),
+        rest: key.map(Field::Family).into_iter().collect(),
     }
 }
 
@@ -194,6 +195,8 @@ pub(crate) struct Port {
     pub input: bool,
     pub ty: TyId,
     pub pos: Pos,
+    /// The number of the port in the declaration order at run time.
+    pub order: usize,
 }
 
 impl Port {

@@ -229,7 +229,7 @@ impl Evaluator<'_> {
             ),
             Handle::Inst { path, .. } => held("instance", &source(*path)),
             Handle::Input { path, port, .. } => {
-                let name = self.syms.texts.get(port.sym).map_or("", String::as_str);
+                let name = self.port_text(port);
                 held("input", &format!("{}.{name}", source(*path)))
             }
             Handle::Domain(d) => format!(

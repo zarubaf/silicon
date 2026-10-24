@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The port families of design section 5.6, as Lean `Elab.entry`, `Eval.entryDecl`,
-//! `Eval.familySel`, and `Eval.familyTarget` define them.
+//! `Eval.familySel`, `Eval.childSel`, `Eval.familyTarget`, and `Elab.childTarget` define them.
 //!
 //! A family `req` holds one port for each key. An entry `input req[k]: T;` is one whole port with
 //! the core name `req$<k>f`. It goes into the table `Work::entries` by its family binder and its
@@ -13,12 +13,12 @@
 //! node and its name node, evaluates its key, takes the checks of a key, and then looks up the
 //! entry. A selection refers to the port: it charges no size and copies nothing.
 
-use super::{Elab, PortDecl};
+use super::{Elab, PortDecl, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
-use crate::eval::{Evaluator, GuardKind, Out, Res, fail, need};
-use crate::hw::{Kind, Seen, Val};
-use crate::names::Step;
+use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
+use crate::hw::{Handle, Kind, Port, Seen, Val};
+use crate::names::{PathId, Step, Sym};
 use crate::ops::int_text;
 use crate::types::TyId;
 use crate::value::Value;
@@ -32,6 +32,48 @@ pub(in crate::eval) fn family_value<T>(pos: Pos, x: &str) -> Res<T> {
         pos,
         format!("`{x}` is a port family, not a value; select one port with `{x}[k]`"),
     )
+}
+
+/// The `S013` error "Child family key" of section 6.2 at `pos`, for the key `k` of the family `x`
+/// of a child of the instance type `m`.
+pub(in crate::eval) fn child_key<T>(pos: Pos, m: &str, x: &str, k: u32) -> Res<T> {
+    fail(
+        Code::S013,
+        pos,
+        format!("the child `{m}` has no entry `{x}[{k}]`; select a key that `{m}` declares"),
+    )
+}
+
+/// A static family key as the typed use at `Nat` sees it: a key, a number out of range with its
+/// text, or a value of another type with its description.
+pub(in crate::eval) enum FamKey {
+    Key(u32),
+    Range(String),
+    Other(String),
+}
+
+impl FamKey {
+    /// The key, or the error at `pos`. A key below 0 or of 2^32 or more is `S012` "Family key
+    /// range", and a key of another type is `S010` "Family key type". A static `UInt` is such a
+    /// type.
+    pub(in crate::eval) fn key(&self, pos: Pos) -> Res<u32> {
+        match self {
+            FamKey::Key(k) => Ok(*k),
+            FamKey::Range(i) => fail(
+                Code::S012,
+                pos,
+                format!("a family key is 0 to 4294967295, not {i}; use a key in this range"),
+            ),
+            FamKey::Other(a) => fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a family key is a static `Nat`, not {a}; compute the key from static \
+                     integers, for example a loop value"
+                ),
+            ),
+        }
+    }
 }
 
 impl Elab {
@@ -54,32 +96,52 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The typed use of the static family key `v` at `Nat`, at the key `pos` (section 5.6). A
-    /// key below 0 or of 2^32 or more is `S012` "Family key range", and a key of another type is
-    /// `S010` "Family key type". A static `UInt` is such a type.
-    fn family_key(&self, pos: Pos, v: &Value) -> Res<u32> {
+    /// The symbol of the field name `f`, if the file scope has one.
+    pub(in crate::eval) fn port_sym(&self, f: &Ident) -> Option<Sym> {
+        match self.names {
+            Names::Top => None,
+            Names::File => self.syms.fields.get(&f.id).copied(),
+        }
+    }
+
+    /// Whether the done instantiation `inst` has a port family with the symbol `sym`.
+    pub(in crate::eval) fn has_family(&self, inst: usize, sym: Sym) -> bool {
+        self.elab
+            .interface(inst)
+            .and_then(|i| self.syms.families.get(i.item))
+            .is_some_and(|m| m.contains_key(&sym))
+    }
+
+    /// The family of a child that the field `f` of the base `b` names, when `b` is an `Instance`
+    /// handle (Lean `childFamily`).
+    pub(in crate::eval) fn child_family(&self, b: &Out, f: &Ident) -> bool {
+        let Seen::Handle(Handle::Inst { inst, .. }) = self.store.seen(b) else {
+            return false;
+        };
+        self.port_sym(f).is_some_and(|s| self.has_family(*inst, s))
+    }
+
+    /// The text of the port `port`: its name, or the entry `x[k]`.
+    pub(in crate::eval) fn port_text(&self, port: &Port) -> String {
+        let name = self.syms.texts.get(port.sym).map_or("", String::as_str);
+        entry_text(name, port.key)
+    }
+
+    /// The family key that the static value `v` stands for. The text of an error renders here,
+    /// when the key is out of range or of another type, so a key in range makes no text.
+    pub(in crate::eval) fn fam_key(&self, v: &Value) -> FamKey {
         match v {
             Value::Int(i) => match i.to_u64().and_then(|k| u32::try_from(k).ok()) {
-                Some(k) => Ok(k),
-                None => fail(
-                    Code::S012,
-                    pos,
-                    format!(
-                        "a family key is 0 to 4294967295, not {}; use a key in this range",
-                        int_text(i)
-                    ),
-                ),
+                Some(k) => FamKey::Key(k),
+                None => FamKey::Range(int_text(i)),
             },
-            v => fail(
-                Code::S010,
-                pos,
-                format!(
-                    "a family key is a static `Nat`, not {}; compute the key from static \
-                     integers, for example a loop value",
-                    self.about(Seen::Static(v))
-                ),
-            ),
+            v => FamKey::Other(self.about(Seen::Static(v))),
         }
+    }
+
+    /// The typed use of the static family key `v` at `Nat`, at the key `pos` (section 5.6).
+    fn family_key(&self, pos: Pos, v: &Value) -> Res<u32> {
+        self.fam_key(v).key(pos)
     }
 
     /// The key `o` at `kp` of a selection of the family `x` with its name at `np` (section 6.2).
@@ -240,5 +302,59 @@ impl Evaluator<'_> {
         let number = self.selection_key(*name_pos, key.pos(), name, &out)?;
         self.entry_at(pos, key.pos(), (name, family), number)
             .map(Some)
+    }
+
+    /// The port `port` of the child number `id` with the path `path`, at `pos`: an input gives
+    /// its handle, and an output refers to it, unless it has no hardware leaf and is a new static
+    /// value. An output entry has the field `<k>f` (section 7.2).
+    pub(in crate::eval) fn port_out(
+        &mut self,
+        pos: Pos,
+        (id, path): (usize, PathId),
+        port: Port,
+    ) -> Res<Out> {
+        if port.input {
+            return Ok(Out::Named(Val::Handle(Handle::Input {
+                inst: id,
+                path,
+                port,
+            })));
+        }
+        let mut name = self.paths.child(None, port.sym);
+        if let Some(key) = port.key {
+            name = self.paths.push(name, Step::Family(key));
+        }
+        let value = self.read_ref(pos, Base::Out(path, name), port.ty)?;
+        Ok(if matches!(value, Val::Static(_)) {
+            Out::Made(value)
+        } else {
+            Out::Named(value)
+        })
+    }
+
+    /// The selection `u.f[k]` at the index node `p` of the family `f` of the child behind the
+    /// base `b`, with the field node at `q` (section 6.2). The index node and the field node
+    /// charged 1, and `u` evaluated once. The base is an `Instance` handle whose module has the
+    /// family `f` (`child_family`). The key evaluates in a structural context, gets the checks of
+    /// a selection key with `S010` at `q`, and selects the entry of the child. A key that the
+    /// child did not declare is `S013` "Child family key".
+    pub(in crate::eval) fn child_sel(
+        &mut self,
+        (p, q): (Pos, Pos),
+        b: &Out,
+        f: &Ident,
+        key: &Expr,
+    ) -> Res<Out> {
+        let Seen::Handle(Handle::Inst { id, path, inst, ty }) = self.store.seen(b) else {
+            return family_value(q, &f.name);
+        };
+        let (id, path, inst, ty) = (*id, *path, *inst, *ty);
+        let out = self.key_out(key)?;
+        let number = self.selection_key(q, key.pos(), &f.name, &out)?;
+        let sym = self.port_sym(f).unwrap_or(0);
+        match self.elab.port(inst, (sym, Some(number))) {
+            Some(port) => self.port_out(p, (id, path), port),
+            None => child_key(key.pos(), &self.tys.text(ty), &f.name, number),
+        }
     }
 }

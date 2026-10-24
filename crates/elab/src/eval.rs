@@ -1456,32 +1456,17 @@ impl Evaluator<'_> {
     }
 
     /// A port of an instance: a child input is a target, and a child output refers to its
-    /// name. An output without a hardware leaf is a new static value.
+    /// name. An output without a hardware leaf is a new static value. A family of the child
+    /// without a key is `S010` "Family as a value" (section 5.6).
     fn port_of(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let Seen::Handle(Handle::Inst { id, path, inst, .. }) = self.store.seen(&b) else {
             return self.record_field(pos, b, field);
         };
         let (id, path, inst) = (*id, *path, *inst);
-        let port = match self.names {
-            Names::Top => None,
-            Names::File => self.syms.fields.get(&field.id).copied(),
-        }
-        .and_then(|s| self.elab.port(inst, (s, None)));
-        match port {
-            Some(q) if q.input => Ok(Out::Named(Val::Handle(Handle::Input {
-                inst: id,
-                path,
-                port: q,
-            }))),
-            Some(q) => {
-                let name = self.paths.child(None, q.sym);
-                let v = self.read_ref(pos, Base::Out(path, name), q.ty)?;
-                Ok(if matches!(v, Val::Static(_)) {
-                    Out::Made(v)
-                } else {
-                    Out::Named(v)
-                })
-            }
+        let sym = self.port_sym(field);
+        match sym.and_then(|s| self.elab.port(inst, (s, None))) {
+            Some(q) => self.port_out(pos, (id, path), q),
+            None if sym.is_some_and(|s| self.has_family(inst, s)) => family_value(pos, &field.name),
             None => fail(
                 Code::S010,
                 pos,

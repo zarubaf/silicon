@@ -62,6 +62,10 @@ pub(crate) struct Syms {
     /// The symbol of each field of each struct item, in the order of its declaration. An item
     /// that is not a struct has none. The name of a field in a leaf name comes from it.
     pub field_order: Vec<Vec<Sym>>,
+    /// The port families of each module item by the symbol of their name, in the order of the
+    /// items: `true` for an input. The resolver finds them in the whole body, also in the arm of a
+    /// `comptime if` that does not run. An item that is not a module has none.
+    pub families: Vec<BTreeMap<Sym, bool>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
     /// The symbols of `tag` and `payload`, the names of the parts of an enum.
@@ -92,6 +96,7 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         nodes: 0,
         table: BTreeMap::new(),
         syms: Syms::default(),
+        families: BTreeMap::new(),
     };
     if let Some(top) = top {
         walk.expr(top.expr(), 1);
@@ -129,6 +134,8 @@ struct Walk<'a> {
     nodes: u64,
     table: BTreeMap<String, Sym>,
     syms: Syms,
+    /// The port families of the module item that the walk is in.
+    families: BTreeMap<Sym, bool>,
 }
 
 impl Walk<'_> {
@@ -175,9 +182,23 @@ impl Walk<'_> {
         }
     }
 
+    /// Notes the port family of an indexed declaration. Its name node targets the family, whose
+    /// kind tells the direction of its first entry.
+    fn family(&mut self, name: &Ident) {
+        let Some(Target::Decl(id)) = self.file.target(name.id) else {
+            return;
+        };
+        if let Kind::Family { input } = self.file.decl(id).kind
+            && let Some(&s) = self.syms.decls.get(&id)
+        {
+            self.families.insert(s, input);
+        }
+    }
+
     fn item(&mut self, item: &Item) {
         let mut struct_fields = BTreeMap::new();
         let mut field_order = Vec::new();
+        self.families = BTreeMap::new();
         match item {
             Item::Const { ty, value, .. } => {
                 self.ty(ty, 1);
@@ -235,6 +256,7 @@ impl Walk<'_> {
         }
         self.syms.struct_fields.push(struct_fields);
         self.syms.field_order.push(field_order);
+        self.syms.families.push(std::mem::take(&mut self.families));
     }
 
     fn stmts(&mut self, ss: &[Stmt], depth: usize) {
@@ -283,6 +305,7 @@ impl Walk<'_> {
                 }
                 self.ty(ty, d);
                 self.binder(name);
+                self.family(name);
             }
             Stmt::Wire { name, ty, .. } | Stmt::Alias { name, ty, .. } => {
                 self.ty(ty, d);
