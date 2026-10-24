@@ -251,17 +251,18 @@ def staticHandle (pos : Pos) (s : String) (t : Ty) : M Unit := do
 /-!
 The text of the handle `h` at the static position `s` (section 6.2). A handle gives "Handle at a
 static position" with its kind `{k}` and its source name `{r}`. A child input names its instance
-and its port, as in `u.p`, and an entry has its key, as in `u.req[0]`. An own output has no
+and its port, as in `u.p`, and an entry has its key, as in `u.req[0]`. The public name of a port
+has the limit of a string in a message. An own output has no
 handle type, but it is not static either, so it gives this text too. A domain has no data, so it
 gives "Domain at a static position".
 -/
 def Handle.staticText (s : String) : Handle → String
   | .res .reg _ _ path => held "register" (sourceOf path)
   | .res .wire _ _ path => held "wire" (sourceOf path)
-  | .res .output _ _ path => held "output" (sourceOf path)
+  | .res .output _ _ path => held "output" (strText (sourceOf path))
   | .mem _ path .. => held "memory" (sourceOf path)
   | .inst _ path .. => held "instance" (sourceOf path)
-  | .input _ path q => held "input" s!"{sourceOf path}.{q.text}"
+  | .input _ path q => held "input" s!"{sourceOf path}.{strText q.text}"
   | .domain x =>
     s!"{s} holds the domain `{x}`, but a domain is never static; remove it from this static " ++
       "position"
