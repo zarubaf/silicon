@@ -13,7 +13,7 @@ use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, family_text, need, 
 use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
-use crate::ops;
+use crate::ops::{self, str_text};
 use crate::types::{EnumStatus, Meta, Ty, TyId, TyParam, Types, Variant};
 use crate::value::Value;
 use crate::{Code, Error};
@@ -221,7 +221,11 @@ impl Evaluator<'_> {
                     Resource::Wire => "wire",
                     Resource::Output => "output",
                 },
-                &source(*path),
+                &if matches!(kind, Resource::Output) {
+                    str_text(&source(*path))
+                } else {
+                    source(*path)
+                },
             ),
             Handle::Mem(id) => held(
                 "memory",

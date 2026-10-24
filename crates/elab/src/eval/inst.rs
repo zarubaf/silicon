@@ -33,11 +33,12 @@
 
 use super::typed::Whole;
 use super::{Evaluator, Let, Mode, Out, ROOT, Res, Slot, fail, need};
-use crate::agg::{Agg, Base};
+use crate::agg::Agg;
 use crate::hw::{Graph, Handle, Kind, Port, PortId, Seen, Val};
 use crate::int::Int;
 pub(super) use crate::names::entry_text;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
+use crate::ops::str_text;
 use crate::scan::Scan;
 use crate::types::{Ty, TyId, Types};
 use crate::value::{InstantiationId, Value, int_size};
@@ -48,7 +49,9 @@ use resolve::{Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod family;
+mod public;
 pub(super) use family::{child_key, family_value};
+use public::Public;
 
 /// A port declaration. A port keeps its source name. A family entry has its key.
 pub(crate) struct PortDecl {
@@ -151,10 +154,13 @@ impl Body {
 }
 
 /// A resource that needs one binding: its name, its declaration, its bindings, and the position
-/// of the first one with its call frame number.
+/// of the first one with its call frame number. An own output (`port`) has its public name. An
+/// output with an `as` key has its `binder` for the fix of its `S018` text.
 struct Need {
     name: Sym,
     key: Option<u32>,
+    port: bool,
+    binder: Option<Sym>,
     pos: Pos,
     count: u64,
     first: Option<Here>,
@@ -162,10 +168,11 @@ struct Need {
 
 /// A resource in an `S018` text (section 6.2): an own resource by its source name, or the input
 /// `port` of the child number `child`, which renders as `u.p`. The key of a family entry renders
-/// as `x[k]`.
+/// as `x[k]`. An own output (the flag) and a child input have their public name, with the limit of
+/// a string in a message.
 #[derive(Clone, Copy)]
 enum Subject {
-    Own(Sym, Option<u32>),
+    Own(Sym, Option<u32>, bool),
     Input {
         child: usize,
         port: Sym,
@@ -187,7 +194,8 @@ enum Breach {
         r: Subject,
         h: usize,
     },
-    Unbound(Sym, Option<u32>),
+    /// An own resource with no binding. An output with an `as` key also names its binder.
+    Unbound(Subject, Option<Sym>),
     /// The first child with a free input, by its number.
     Input(usize),
     NoPort {
@@ -206,13 +214,6 @@ enum Breach {
     },
 }
 
-/// The form of a public name of the owner (section 5.6): a scalar port, or a port family.
-#[derive(Clone, Copy)]
-enum Public {
-    Scalar,
-    Family,
-}
-
 /// The work of the current instantiation. The resource number indexes `needs`, and the instance
 /// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
 /// `inputs` counts the bindings of each child input, with the position and the call frame number of the first one. `dup`
@@ -221,7 +222,8 @@ enum Public {
 /// public name and the key: the value of each entry and the position of its declaration. A family
 /// binder has no frame slot. `publics` is the table of the public names of the owner. It holds the
 /// form of each name by its symbol, with the position and the call frame number of its first
-/// declaration.
+/// declaration. `owner` is the module item of the instantiation, whose static families the table
+/// does not copy (`public_of`).
 struct Work {
     body: Body,
     needs: Vec<Need>,
@@ -229,12 +231,13 @@ struct Work {
     inputs: BTreeMap<(usize, PortId), (u64, Here)>,
     entries: BTreeMap<(Sym, u32), (Val, Pos)>,
     publics: BTreeMap<Sym, (Public, Pos, usize)>,
+    owner: usize,
     dup: Option<(Pos, Breach)>,
     spent: u64,
 }
 
 impl Work {
-    fn new(domain: Option<Sym>) -> Work {
+    fn new(domain: Option<Sym>, owner: usize) -> Work {
         Work {
             body: Body::new(domain),
             needs: Vec::new(),
@@ -242,6 +245,7 @@ impl Work {
             inputs: BTreeMap::new(),
             entries: BTreeMap::new(),
             publics: BTreeMap::new(),
+            owner,
             dup: None,
             spent: 0,
         }
@@ -298,7 +302,7 @@ impl Iface {
             domain: b.domain,
             families: publics
                 .iter()
-                .filter(|(_, (form, ..))| matches!(form, Public::Family))
+                .filter(|(_, (form, ..))| matches!(form, Public::Family(_)))
                 .map(|(&sym, _)| sym)
                 .collect(),
         }
@@ -338,7 +342,7 @@ impl Elab {
             table: BTreeMap::new(),
             names: BTreeSet::new(),
             done: Vec::new(),
-            work: Work::new(None),
+            work: Work::new(None, usize::MAX),
         }
     }
 
@@ -579,6 +583,8 @@ impl Evaluator<'_> {
             Stmt::Wire { .. } => "wire",
             Stmt::Mem { .. } => "memory",
             Stmt::Inst { .. } => "instance",
+            Stmt::Input { .. } => "input",
+            Stmt::Output { .. } => "output",
             _ => "`:=`",
         };
         match self.mode {
@@ -619,13 +625,17 @@ impl Evaluator<'_> {
                 form,
                 ty,
             } => {
+                let input = matches!(s, Stmt::Input { .. });
                 if let PortForm::Indexed(k) = form {
-                    return self.entry_decl(*pos, matches!(s, Stmt::Input { .. }), name, k, ty);
+                    return self.entry_decl(*pos, input, name, k, ty);
                 }
                 let tid = self.type_expr(ty)?;
                 let t = self.data_type(*pos, tid)?;
-                let v = self.port(*pos, matches!(s, Stmt::Input { .. }), name, (t, tid))?;
                 let id = self.decl(name)?;
+                let v = match form {
+                    PortForm::Keyed(k) => self.keyed_port(*pos, input, id, (t, tid), k)?,
+                    _ => self.port(*pos, input, self.sym(id), (t, tid), None)?,
+                };
                 self.bind(
                     id,
                     Slot {
@@ -654,7 +664,7 @@ impl Evaluator<'_> {
                 let path = self.fresh(id);
                 #[cfg(test)]
                 self.elab.work.body.wires.push(path);
-                let w = self.resource(Kind::Wire, path, tid, *pos, (self.sym(id), None));
+                let w = self.resource(Kind::Wire, path, tid, *pos, (self.sym(id), None), None);
                 self.bind(
                     id,
                     Slot {
@@ -733,7 +743,7 @@ impl Evaluator<'_> {
             init,
             pos,
         });
-        let reg = self.resource(Kind::Reg, path, tid, pos, (self.sym(id), None));
+        let reg = self.resource(Kind::Reg, path, tid, pos, (self.sym(id), None), None);
         self.bind(
             id,
             Slot {
@@ -857,7 +867,8 @@ impl Evaluator<'_> {
         Ok(())
     }
 
-    /// A resource that needs one binding. The result is its handle.
+    /// A resource that needs one binding. An output has the `binder` of its `as` key for its
+    /// `S018` text. The result is its handle.
     fn resource(
         &mut self,
         kind: Kind,
@@ -865,11 +876,14 @@ impl Evaluator<'_> {
         tid: TyId,
         pos: Pos,
         (name, key): (Sym, Option<u32>),
+        binder: Option<Sym>,
     ) -> Val {
         let id = self.elab.work.needs.len();
         self.elab.work.needs.push(Need {
             name,
             key,
+            port: kind == Kind::Output,
+            binder,
             pos,
             count: 0,
             first: None,
@@ -880,67 +894,6 @@ impl Evaluator<'_> {
             ty: tid,
             path,
         })
-    }
-
-    /// Enters the public name `sym` with the form `form`, declared at `pos`, into the table of
-    /// the owner. The first declaration of a name keeps its position and its call frame.
-    fn publish(&mut self, sym: Sym, form: Public, pos: Pos) {
-        let call = self.call;
-        self.elab
-            .work
-            .publics
-            .entry(sym)
-            .or_insert((form, pos, call));
-    }
-
-    /// The port `name`. Its core name is its source name. The root frame counts it with the
-    /// bindings of its name, so a name that is taken is `S019`.
-    fn port(&mut self, pos: Pos, input: bool, name: &Ident, (ty, tid): (Ty, TyId)) -> Res<Val> {
-        let id = self.decl(name)?;
-        let sym = self.sym(id);
-        self.publish(sym, Public::Scalar, pos);
-        let key = (ROOT.id, sym);
-        let v = self.naming.versions.get(&key).copied().unwrap_or(0);
-        self.naming.versions.insert(key, v + 1);
-        if v != 0 {
-            return fail(
-                Code::S019,
-                pos,
-                format!("two declarations have the core name `{}`", name.name),
-            );
-        }
-        self.elab.work.body.ports.push(PortDecl {
-            sym,
-            key: None,
-            input,
-            ty: ty.clone(),
-            tid,
-            pos,
-        });
-        let path = self.paths.child(None, sym);
-        self.port_value(pos, input, path, tid, (sym, None))
-    }
-
-    /// The value of the port at `path`, scalar or family entry (`key`). An input refers to its
-    /// name. An empty one stays a reference, so only a read of it pays its zero (`name`). An
-    /// output is a resource that needs one binding.
-    fn port_value(
-        &mut self,
-        pos: Pos,
-        input: bool,
-        path: PathId,
-        tid: TyId,
-        name: (Sym, Option<u32>),
-    ) -> Res<Val> {
-        if !input {
-            return Ok(self.resource(Kind::Output, path, tid, pos, name));
-        }
-        let r = Agg::Ref(Base::Name(path), tid);
-        if self.tys.meta(tid).leaves.is_zero() {
-            Ok(Val::Agg(Box::new(r)))
-        } else {
-            self.normalize(pos, r)
-        }
     }
 
     /// The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
@@ -1035,15 +988,11 @@ impl Evaluator<'_> {
         let sink = match t {
             Target::Own { kind, id, ty, path } => {
                 let need = self.elab.work.needs.get(id);
-                let seen = need.map(|n| (n.count, n.first, (n.name, n.key), n.pos));
-                if let Some((count, first, name, decl)) = seen {
+                let seen =
+                    need.map(|n| (n.count, n.first, Subject::Own(n.name, n.key, n.port), n.pos));
+                if let Some((count, first, subject, decl)) = seen {
                     if count == 1 {
-                        let x = self.second_binding(
-                            pos,
-                            Subject::Own(name.0, name.1),
-                            first.unwrap_or(here),
-                            decl,
-                        );
+                        let x = self.second_binding(pos, subject, first.unwrap_or(here), decl);
                         self.breach(pos, x);
                     }
                     if let Some(n) = self.elab.work.needs.get_mut(id) {
@@ -1112,7 +1061,8 @@ impl Evaluator<'_> {
         let mut first = work.dup;
         for need in &work.needs {
             if need.count == 0 {
-                first = first_of(first, need.pos, Breach::Unbound(need.name, need.key));
+                let r = Subject::Own(need.name, need.key, need.port);
+                first = first_of(first, need.pos, Breach::Unbound(r, need.binder));
             }
         }
         for (k, mem) in work.body.mems.iter().enumerate() {
@@ -1159,7 +1109,7 @@ impl Evaluator<'_> {
                 .filter(|q| q.input && !work.inputs.contains_key(&(k, q.id())))
                 .min_by_key(|q| (q.pos.line, q.pos.col, q.order))
         });
-        let name = port.map_or_else(String::new, |q| entry_text(text(q.sym), q.key));
+        let name = port.map_or_else(String::new, |q| str_text(&entry_text(text(q.sym), q.key)));
         let inst = work.body.children.get(k).map_or("", |c| c.name.as_str());
         format!(
             "the input `{name}` of the instance `{inst}` has no binding; \
@@ -1173,14 +1123,15 @@ impl Evaluator<'_> {
         let sym_text = |sym: Sym| self.syms.texts.get(sym).map_or("", String::as_str);
         let at = |p: Pos| format!("{}:{}", p.line, p.col);
         let subject = |r: Subject| match r {
-            Subject::Own(sym, key) => entry_text(sym_text(sym), key),
+            Subject::Own(sym, key, true) => str_text(&entry_text(sym_text(sym), key)),
+            Subject::Own(sym, key, false) => entry_text(sym_text(sym), key),
             Subject::Input { child, port, key } => {
                 let u = work
                     .body
                     .children
                     .get(child)
                     .map_or("", |c| c.name.as_str());
-                format!("{u}.{}", entry_text(sym_text(port), key))
+                format!("{u}.{}", str_text(&entry_text(sym_text(port), key)))
             }
         };
         let mem_name = |k: usize| work.body.mems.get(k).map_or("", |m| sym_text(m.name));
@@ -1201,8 +1152,14 @@ impl Evaluator<'_> {
                 item(h),
                 item(h)
             ),
-            Breach::Unbound(sym, key) => {
-                let r = entry_text(sym_text(sym), key);
+            Breach::Unbound(r, Some(binder)) => format!(
+                "the output `{}` has no binding; bind its binder with `{} := ...;`, or remove its \
+                 declaration",
+                subject(r),
+                sym_text(binder)
+            ),
+            Breach::Unbound(r, None) => {
+                let r = subject(r);
                 format!(
                     "`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
                 )
@@ -1356,7 +1313,7 @@ impl Evaluator<'_> {
             ev.elab.table.insert(key.clone(), Status::InProgress);
             ev.emitted.push(text.clone());
             ev.elab.names.insert(text);
-            let parent = std::mem::replace(&mut ev.elab.work, Work::new(domain));
+            let parent = std::mem::replace(&mut ev.elab.work, Work::new(domain, i));
             let naming = std::mem::take(&mut ev.naming);
             let start = ev.fuel.left();
             let args = id.args.clone();

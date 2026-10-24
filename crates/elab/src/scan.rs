@@ -16,7 +16,7 @@
 use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
-use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Pattern, PortForm, Stmt, TypeExpr};
+use parse::ast::{Expr, FnParam, Ident, Item, NodeId, Pattern, PortForm, Pos, Stmt, TypeExpr};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -66,9 +66,10 @@ pub(crate) struct Syms {
     /// that is not a struct has none. The name of a field in a leaf name comes from it.
     pub field_order: Vec<Vec<Sym>>,
     /// The port families of each module item by the symbol of their name, in the order of the
-    /// items: `true` for an input. The resolver finds them in the whole body, also in the arm of a
-    /// `comptime if` that does not run. An item that is not a module has none.
-    pub families: Vec<BTreeMap<Sym, bool>>,
+    /// items: `true` for an input, with the position of the first indexed declaration in the
+    /// source. The resolver finds them in the whole body, also in the arm of a `comptime if`
+    /// that does not run. An item that is not a module has none.
+    pub families: Vec<BTreeMap<Sym, (bool, Pos)>>,
     /// The symbol of `clock`, the default domain.
     pub clock: Sym,
     /// The symbols of `tag` and `payload`, the names of the parts of an enum.
@@ -155,7 +156,7 @@ struct Walk<'a> {
     nodes: u64,
     syms: Syms,
     /// The port families of the module item that the walk is in.
-    families: BTreeMap<Sym, bool>,
+    families: BTreeMap<Sym, (bool, Pos)>,
 }
 
 impl Walk<'_> {
@@ -196,16 +197,20 @@ impl Walk<'_> {
         }
     }
 
-    /// Notes the port family of an indexed declaration. Its name node targets the family, whose
-    /// kind tells the direction of its first entry.
-    fn family(&mut self, name: &Ident) {
+    /// Notes the port family of an indexed declaration at `pos`. Its name node targets the family,
+    /// whose kind tells the direction of its first entry. The earliest position in the source
+    /// stays.
+    fn family(&mut self, name: &Ident, pos: Pos) {
         let Some(Target::Decl(id)) = self.file.target(name.id) else {
             return;
         };
         if let Kind::Family { input } = self.file.decl(id).kind
             && let Some(&s) = self.syms.decls.get(&id)
         {
-            self.families.insert(s, input);
+            let first = self.families.entry(s).or_insert((input, pos));
+            if pos < first.1 {
+                first.1 = pos;
+            }
         }
     }
 
@@ -308,7 +313,18 @@ impl Walk<'_> {
                 self.expr(depth, d);
                 self.binder(name);
             }
-            Stmt::Input { name, form, ty, .. } | Stmt::Output { name, form, ty, .. } => {
+            Stmt::Input {
+                pos,
+                name,
+                form,
+                ty,
+            }
+            | Stmt::Output {
+                pos,
+                name,
+                form,
+                ty,
+            } => {
                 if let PortForm::Indexed(k) = form {
                     self.expr(k, d);
                 }
@@ -317,7 +333,7 @@ impl Walk<'_> {
                     self.expr(k, d);
                 }
                 self.binder(name);
-                self.family(name);
+                self.family(name, *pos);
             }
             Stmt::Wire { name, ty, .. } | Stmt::Alias { name, ty, .. } => {
                 self.ty(ty, d);

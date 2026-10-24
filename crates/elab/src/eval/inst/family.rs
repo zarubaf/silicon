@@ -13,14 +13,16 @@
 //! node and its name node, evaluates its key, takes the checks of a key, and then looks up the
 //! entry. A selection refers to the port: it charges no size and copies nothing.
 
+use super::public::{directions, scalar_family};
 use super::{Elab, PortDecl, Public, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
 use crate::hw::{Handle, Port, Seen, Val};
+use crate::int::Int;
 use crate::names::{PathId, Step, Sym};
-use crate::ops::int_text;
-use crate::types::TyId;
+use crate::ops::{int_text, str_text};
+use crate::types::{Ty, TyId};
 use crate::value::Value;
 use parse::ast::{Expr, Ident, NodeId, Pos, TypeExpr};
 use resolve::{DeclId, Target};
@@ -40,7 +42,10 @@ pub(in crate::eval) fn child_key<T>(pos: Pos, m: &str, x: &str, k: u32) -> Res<T
     fail(
         Code::S013,
         pos,
-        format!("the child `{m}` has no entry `{x}[{k}]`; select a key that `{m}` declares"),
+        format!(
+            "the child `{m}` has no entry `{}[{k}]`; select a key that `{m}` declares",
+            str_text(x)
+        ),
     )
 }
 
@@ -53,6 +58,15 @@ pub(in crate::eval) enum FamKey {
 }
 
 impl FamKey {
+    /// The key that the integer `i` stands for. It reads the bit length only, and it renders the
+    /// integer only when it is out of range.
+    pub(in crate::eval) fn of_int(i: &Int) -> FamKey {
+        match i.to_u64().and_then(|k| u32::try_from(k).ok()) {
+            Some(k) => FamKey::Key(k),
+            None => FamKey::Range(int_text(i)),
+        }
+    }
+
     /// The key, or the error at `pos`. A key below 0 or of 2^32 or more is `S012` "Family key
     /// range", and a key of another type is `S010` "Family key type". A static `UInt` is such a
     /// type.
@@ -126,20 +140,18 @@ impl Evaluator<'_> {
         self.port_sym(f).is_some_and(|s| self.has_family(*inst, s))
     }
 
-    /// The text of the port `port`: its name, or the entry `x[k]`.
+    /// The text of the port `port` in a message: its public name, or the entry `x[k]`, with the
+    /// limit of a string (section 5.5).
     pub(in crate::eval) fn port_text(&self, port: &Port) -> String {
         let name = self.syms.texts.get(port.sym).map_or("", String::as_str);
-        entry_text(name, port.key)
+        str_text(&entry_text(name, port.key))
     }
 
     /// The family key that the static value `v` stands for. The text of an error renders here,
     /// when the key is out of range or of another type, so a key in range makes no text.
     pub(in crate::eval) fn fam_key(&self, v: &Value) -> FamKey {
         match v {
-            Value::Int(i) => match i.to_u64().and_then(|k| u32::try_from(k).ok()) {
-                Some(k) => FamKey::Key(k),
-                None => FamKey::Range(int_text(i)),
-            },
+            Value::Int(i) => FamKey::of_int(i),
             v => FamKey::Other(self.about(Seen::Static(v))),
         }
     }
@@ -194,16 +206,44 @@ impl Evaluator<'_> {
         let t = self.data_type(pos, tid)?;
         let id = self.decl(name)?;
         let sym = self.sym(id);
-        self.publish(sym, Public::Family, pos);
+        self.declare_entry(pos, input, (sym, k), (t, tid), None)?;
+        Ok(())
+    }
+
+    /// The entry `key` of the family with the public name `sym`, declared at `pos` (section 6.2,
+    /// steps 7 and 8 of the entry order). The table of public names holds the name. A scalar port
+    /// there is "Scalar port and port family". A family of the other direction is "Public family
+    /// with two directions". A key that the family has already is "Family key twice". A new family
+    /// enters the table. The entry is one whole port with the core name `<x>$<k>f`, and it goes
+    /// into the table of entries by its public identity. An output with an `as` key has its
+    /// `binder` for its `S018` text.
+    pub(in crate::eval) fn declare_entry(
+        &mut self,
+        pos: Pos,
+        input: bool,
+        (sym, k): (Sym, u32),
+        (t, tid): (Ty, TyId),
+        binder: Option<Sym>,
+    ) -> Res<Val> {
+        match self.public_of(sym) {
+            Some((Public::Scalar, b, _)) => {
+                return scalar_family(pos, self.name_text(sym), b);
+            }
+            Some((Public::Family(first), b, _)) if first != input => {
+                return directions(pos, self.name_text(sym), b);
+            }
+            Some(_) => {}
+            None => self.publish(sym, Public::Family(input), pos),
+        }
         if let Some((_, first)) = self.elab.entry(sym, k) {
             let (line, col) = (first.line, first.col);
+            let x = str_text(self.name_text(sym));
             return fail(
                 Code::S019,
                 pos,
                 format!(
-                    "the port `{}[{k}]` is declared here and at {line}:{col}; declare each key \
-                     of `{}` once",
-                    name.name, name.name
+                    "the port `{x}[{k}]` is declared here and at {line}:{col}; declare each key \
+                     of `{x}` once"
                 ),
             );
         }
@@ -217,9 +257,9 @@ impl Evaluator<'_> {
         });
         let outer = self.paths.child(None, sym);
         let path = self.paths.push(outer, Step::Family(k));
-        let v = self.port_value(pos, input, path, tid, (sym, Some(k)))?;
-        self.elab.work.entries.insert((sym, k), (v, pos));
-        Ok(())
+        let v = self.port_value(pos, input, path, tid, (sym, Some(k)), binder)?;
+        self.elab.work.entries.insert((sym, k), (v.clone(), pos));
+        Ok(v)
     }
 
     /// The value of the entry `k` of the family `x` with the binder `id`, at the key `kp`. A key

@@ -68,6 +68,8 @@ pub enum Code {
     /// A `match` that does not cover its scrutinee, or an arm that no value reaches, or a tag
     /// value that two variants of an enum share.
     S021,
+    /// A computed port name that breaks the name rule, or a scalar key with an index.
+    S022,
 }
 
 impl fmt::Display for Code {
@@ -88,6 +90,7 @@ impl fmt::Display for Code {
             Code::S019 => "S019",
             Code::S020 => "S020",
             Code::S021 => "S021",
+            Code::S022 => "S022",
         })
     }
 }
@@ -353,6 +356,9 @@ mod tests_work_families;
 
 #[cfg(test)]
 mod tests_work_helpers;
+
+#[cfg(test)]
+mod tests_work_keys;
 
 #[cfg(test)]
 mod tests_work_match;
