@@ -1,0 +1,22 @@
+// T2 of the work-counter tests of the ports with `as` keys (issue #339). A child has N entries `as PortKey("req", true, i)`,
+// built once. The parent reads `u.req[i]` in a nested loop of N times N steps. Each selection charges its nodes and finds
+// the entry in the interface of the child by its symbol and key, so the work follows the fuel. A scan of the public
+// names of the child for each selection makes N more work for each use, and the work escapes the bound.
+// SCALE port_key_entry_select 4 8 16 32 64
+// TOP M()
+module C(comptime n: Nat) {
+    comptime for i in 0..n {
+        output g: UInt[8] as PortKey("req", true, i);
+        g := 0;
+    }
+}
+module M() {
+    output o: UInt[8];
+    instance u = C({N});
+    comptime for j in 0..{N} {
+        comptime for i in 0..{N} {
+            let b = u.req[i];
+        }
+    }
+    o := 0;
+}
