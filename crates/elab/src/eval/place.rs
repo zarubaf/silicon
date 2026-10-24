@@ -611,12 +611,11 @@ impl Evaluator<'_> {
     /// container ends the segment at an index, because the scan of the string charges before a
     /// later index evaluates. A step on a base of unknown type ends it too: that base is a new
     /// value, and its part can be an instance, which the next step reads as a handle before it
-    /// applies.
+    /// applies. This one rule covers the index, the selector, and the field.
     fn ends_segment(&self, step: &Sel<'_>, known: Option<TyId>) -> bool {
         match step {
             Sel::Index(..) => known.is_none_or(|t| matches!(self.tys.get(t), Ty::String)),
-            Sel::Select(..) => known.is_none(),
-            Sel::Field(..) => false,
+            Sel::Select(..) | Sel::Field(..) => known.is_none(),
         }
     }
 
