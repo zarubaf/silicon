@@ -1189,9 +1189,16 @@ fn port_forms_stay_in_caps() {
 
 /// The ports of the top follow the plan of its signature: each entry and
 /// keyed port of the plan with a type is a port with that type, and the
-/// walk of the twin finds no other port with a key.
+/// walk of the twin finds no other port than these and the plain ports of
+/// the signature.
 #[test]
 fn the_plan_gives_the_ports_of_the_top() {
+    // The owner of a leaf name: `a0[3].tag` belongs to `a0[3]`.
+    let owners = |side: &[(String, Scalar)]| -> BTreeSet<String> {
+        side.iter()
+            .map(|(n, _)| n.split('.').next().unwrap_or(n).to_owned())
+            .collect()
+    };
     let mut checked = 0;
     for tape in tapes(256) {
         let mut b = Builder::new(tape);
@@ -1199,18 +1206,31 @@ fn the_plan_gives_the_ports_of_the_top() {
         let Some(sig) = b.sigs.first() else { continue };
         let env = Env::of(&sig.params, &p.args);
         let ports = p.ports();
-        let mut keyed = 0;
+        let mut inputs: BTreeSet<String> = sig
+            .inputs
+            .iter()
+            .map(|(n, _)| n.clone())
+            .chain(sig.enum_inputs.iter().map(|(n, _)| n.clone()))
+            .collect();
+        let mut outputs: BTreeSet<String> = sig
+            .outputs
+            .iter()
+            .map(|(n, _)| n.clone())
+            .chain(sig.enum_outputs.iter().map(|(n, _)| n.clone()))
+            .collect();
         for d in sig.plan.declared(&b.port_helpers) {
             let PTy::Data(t) = &d.ty else { continue };
             let want = (d.public.to_string(), concrete(t, &env, &b.scope).unwrap());
-            let side = match d.dir {
-                ports::Dir::In => &ports.inputs,
-                ports::Dir::Out => &ports.outputs,
+            let (side, names) = match d.dir {
+                ports::Dir::In => (&ports.inputs, &mut inputs),
+                ports::Dir::Out => (&ports.outputs, &mut outputs),
             };
             assert!(side.contains(&want), "{want:?} missing in {side:?}");
-            keyed += 1;
+            names.insert(want.0);
+            checked += 1;
         }
-        checked += keyed;
+        assert_eq!(owners(&ports.inputs), inputs, "{:?}", sig.plan);
+        assert_eq!(owners(&ports.outputs), outputs, "{:?}", sig.plan);
     }
     assert!(checked > 100, "{checked}");
 }
