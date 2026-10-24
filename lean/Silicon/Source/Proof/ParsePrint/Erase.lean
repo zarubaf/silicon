@@ -22,6 +22,9 @@ a check here:
 - A `domains` declaration has at most one name: `Item.printable` at `module`.
 - Each assignment and connection target is a place: `Expr.place`.
 - No port is in a `fn` without `comptime`: the flag `plain` of `Stmt.printable`.
+- The key of an indexed port is an expression, so `Stmt.printable` applies `Expr.printable` to
+  it. The height bound `N` holds for the key as for each expression, because `N` is at least the
+  length of the printed text.
 - Each body has only the statement kinds that the parser accepts in that body. The parser
   accepts each statement kind in each body, except a port in a `fn` without `comptime`.
   Thus the flag `plain` also covers this clause.
@@ -96,8 +99,8 @@ def Stmt.erase : Stmt → Stmt
   | .reg _ n ty i => .reg Pos.zero n.erase ty.erase i.erase
   | .wire _ n ty => .wire Pos.zero n.erase ty.erase
   | .mem _ n ty d => .mem Pos.zero n.erase ty.erase d.erase
-  | .input _ n ty => .input Pos.zero n.erase ty.erase
-  | .output _ n ty => .output Pos.zero n.erase ty.erase
+  | .input _ n k ty => .input Pos.zero n.erase (k.map Expr.erase) ty.erase
+  | .output _ n k ty => .output Pos.zero n.erase (k.map Expr.erase) ty.erase
   | .inst _ n m xs => .inst Pos.zero n.erase m.erase (xs.map Expr.erase)
   | .ret _ v => .ret Pos.zero (v.map Expr.erase)
   | .ctIf _ c y none => .ctIf Pos.zero c.erase (y.map Stmt.erase) none
@@ -234,8 +237,8 @@ mutual
     | .reg _ n ty i => validName n.name && ty.printable && i.printable
     | .wire _ n ty => validName n.name && ty.printable
     | .mem _ n ty d => validName n.name && ty.printable && d.printable
-    | .input _ n ty => !plain && validName n.name && ty.printable
-    | .output _ n ty => !plain && validName n.name && ty.printable
+    | .input _ n k ty => !plain && validName n.name && k.all Expr.printable && ty.printable
+    | .output _ n k ty => !plain && validName n.name && k.all Expr.printable && ty.printable
     | .inst _ n m xs =>
       validName n.name && validName m.name && Expr.printableAll xs
     | .ret _ v => v.all Expr.printable
@@ -655,6 +658,7 @@ private theorem printable_erase_all :
     rw [all_congr_mem ih]
   | case1 _ _ _ ty _ => cases ty <;> simp [Stmt.erase, Stmt.printable]
   | case10 _ v => cases v <;> simp [Stmt.erase, Stmt.printable]
+  | case7 _ _ k _ | case8 _ _ k _ => cases k <;> simp [Stmt.erase, Stmt.printable]
   | _ => simp [Stmt.erase, Stmt.printable, Expr.printableAll_eq, List.all_map,
       Function.comp_def]
 

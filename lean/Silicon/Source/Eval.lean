@@ -2951,7 +2951,8 @@ mutual
   -/
   def hwStmt (n : Nat) (s : Resolve.Stmt) : M Unit :=
     match s with
-    | .input p x ty | .output p x ty => do
+    | .input p x k ty | .output p x k ty => do
+      if let some k := k then fail .S004 k.pos "a port family is not supported yet"
       let t ← Elab.dataType p (← typeExpr n ty)
       let v ← Elab.port p (s matches .input ..) x t
       bindLocal x.id ⟨some t, false, v⟩
@@ -3136,7 +3137,8 @@ mutual
       scanBinder b
     | .assign _ t v | .connect _ t v => do scanExpr t; scanExpr v
     | .reg _ b ty i => do scanType ty; scanExpr i; scanBinder b
-    | .wire _ b ty | .input _ b ty | .output _ b ty => do scanType ty; scanBinder b
+    | .wire _ b ty => do scanType ty; scanBinder b
+    | .input _ b k ty | .output _ b k ty => do k.forM scanExpr; scanType ty; scanBinder b
     | .mem _ b w d => do scanType w; scanExpr d; scanBinder b
     | .inst _ b _ _ xs => do
       for x in xs do scanExpr x

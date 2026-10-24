@@ -101,8 +101,8 @@ def mat : Expr := .match p (v "x") [arm (.int p false 0) (n 1), arm (.int p true
 #guard stmtDump (.wire p (nm "w") (t "Bool")) == "(wire \"w\" (name \"Bool\"))"
 #guard stmtDump (.mem p (nm "m") u8 (n 4)) ==
   "(mem \"m\" (index (name \"UInt\") ((num 8))) (num 4))"
-#guard stmtDump (.input p (nm "i") (t "Bool")) == "(input \"i\" (name \"Bool\"))"
-#guard stmtDump (.output p (nm "o") (t "Bool")) == "(output \"o\" (name \"Bool\"))"
+#guard stmtDump (.input p (nm "i") none (t "Bool")) == "(input \"i\" none (name \"Bool\"))"
+#guard stmtDump (.output p (nm "o") none (t "Bool")) == "(output \"o\" none (name \"Bool\"))"
 #guard stmtDump (.inst p (nm "u") (nm "M") [n 8]) == "(inst \"u\" \"M\" ((num 8)))"
 #guard stmtDump (.ret p none) == "(ret none)"
 #guard stmtDump (.ret p (some (n 1))) == "(ret (some (num 1)))"
@@ -146,7 +146,7 @@ def fnU8 : TypeExpr := .fn p [.mk false u8, .mk true (t "Bool")] (.unit p)
 /-! Each item kind and the parameter structure. -/
 def counter : Item :=
   .module p (nm "Counter") [⟨p, .comptime, nm "W", t "Nat"⟩] (some [nm "clk"])
-    [.output p (nm "q") (.index p (t "UInt") [v "W"])]
+    [.output p (nm "q") none (.index p (t "UInt") [v "W"])]
 
 def inc : Item :=
   .fn p false (nm "inc") [⟨p, .none, nm "x", u8⟩] u8 [.ret p (some (bin .addw (v "x") (n 1)))]
@@ -161,7 +161,7 @@ def inc : Item :=
   "(unit) ())"
 #guard counter.dump ==
   "(module \"Counter\" ((param comptime \"W\" (name \"Nat\"))) (some (\"clk\")) " ++
-  "((output \"q\" (index (name \"UInt\") ((name \"W\"))))))"
+  "((output \"q\" none (index (name \"UInt\") ((name \"W\"))))))"
 
 /-! A struct with parameters and fields, a struct without either, and a type alias. -/
 def packet : Item :=
@@ -369,5 +369,19 @@ def helper : Item :=
   "}\n"
 #guard (Parse.parseSource Lex.defaultSyntaxDepth (Print.print [helper])).toOption.map Print.dump ==
   some (Print.dump [helper])
+
+/-! A family entry prints its key in `[ ]` after the name, and the text parses again. -/
+def family : Item :=
+  .module p (nm "F") [⟨p, .comptime, nm "N", t "Nat"⟩] none
+    [.ctFor p (nm "i") (n 0) (v "N") [.input p (nm "req") (some (v "i")) (t "T")],
+     .output p (nm "g") (some (bin .add (v "N") (n 1))) (t "T")]
+
+#guard (Stmt.input p (nm "req") (some (v "i")) (t "T")).print 0 == "input req[i]: T;\n"
+#guard (Stmt.output p (nm "g") (some (bin .add (v "N") (n 1))) (t "T")).print 1 ==
+  "    output g[N + 1]: T;\n"
+#guard stmtDump (.input p (nm "req") (some (v "i")) (t "T")) ==
+  "(input \"req\" (some (name \"i\")) (name \"T\"))"
+#guard (Parse.parseSource Lex.defaultSyntaxDepth (Print.print [family])).toOption.map Print.dump ==
+  some (Print.dump [family])
 
 end Silicon.Source.Test.Print
