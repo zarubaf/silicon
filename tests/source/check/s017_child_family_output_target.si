@@ -1,0 +1,12 @@
+// S017: an output entry of a child is no `:=` target, and the text names the entry.
+// TOP M()
+module C() {
+    output gnt[3]: Bool;
+    gnt[3] := true;
+}
+module M() {
+    instance u = C();
+    // expected-error S017 @+2
+    // expected-message: `gnt[3]` is an output of the child, not a target; the child drives its outputs, so bind an input of the child
+    u.gnt[3] := true;
+}

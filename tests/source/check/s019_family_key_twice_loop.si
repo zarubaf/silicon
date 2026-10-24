@@ -1,0 +1,8 @@
+// S019: two iterations of a loop give one key. The second iteration is the second declaration.
+// TOP M()
+module M() {
+    comptime for i in 0..3 {
+        // expected-error S019 @+1
+        input req[i % 2]: Bool;
+    }
+}

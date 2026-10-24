@@ -1,0 +1,8 @@
+// S002: a family and a scalar port with one name, in the order scalar port first. The error is at the name of the second declaration.
+// TOP M()
+module M() {
+    input req: Bool;
+    // expected-error S002 @+2
+    // expected-message: `req` names a port family and a scalar port, here and at 4:11; use one form for the name
+    input req[0]: Bool;
+}

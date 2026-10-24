@@ -1,0 +1,6 @@
+// S002: a family with the name of a parameter. The parameter comes first, so the error is at the family.
+// TOP M(1)
+module M(comptime req: Nat) {
+    // expected-error S002 @+1
+    input req[0]: Bool;
+}

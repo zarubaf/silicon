@@ -1,0 +1,8 @@
+// S017: the same part target on a scalar output, for the text to compare with `s017_family_part_target`.
+// TOP M()
+module M() {
+    output gnt: (Bool, Bool);
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
+    gnt.0 := true;
+}

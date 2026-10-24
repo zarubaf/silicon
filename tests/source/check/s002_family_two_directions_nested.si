@@ -1,0 +1,11 @@
+// S002: the two directions of one family sit in two blocks. The error is at the later declaration.
+// TOP M()
+module M() {
+    comptime for i in 0..2 {
+        output gnt[i]: Bool;
+    }
+    comptime if (true) {
+        // expected-error S002 @+1
+        input gnt[2]: Bool;
+    }
+}

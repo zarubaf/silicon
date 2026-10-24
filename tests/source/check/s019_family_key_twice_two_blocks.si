@@ -1,0 +1,11 @@
+// S019: one key from two blocks, with different types. The type is not part of the key.
+// TOP M()
+module M() {
+    comptime if (true) {
+        input req[1]: Bool;
+    }
+    comptime if (true) {
+        // expected-error S019 @+1
+        input req[1]: UInt[8];
+    }
+}

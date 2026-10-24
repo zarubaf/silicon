@@ -1,0 +1,7 @@
+// S018: an output entry without a driver, at the end of the body. The text names the entry by its public name.
+// TOP M()
+module M() {
+    // expected-error S018 @+2
+    // expected-message: `gnt[2]` has no binding; bind it with `gnt[2] := ...;`, or remove its declaration
+    output gnt[2]: Bool;
+}

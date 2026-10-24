@@ -1,0 +1,12 @@
+// S016: the key of a selection has the same rule as the key of a declaration.
+// TOP M()
+fn idx() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a port family key has no graph effect such as `diagnostic`; call `diagnostic` before this statement, keep the result in a `let`, and use that name in the key
+    diagnostic("idx", 0);
+    return 0;
+}
+module M() {
+    input req[0]: Bool;
+    let a = req[idx()];
+}

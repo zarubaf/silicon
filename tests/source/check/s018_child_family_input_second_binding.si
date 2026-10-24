@@ -1,0 +1,12 @@
+// S018: a child input entry with two bindings. The text names the entry as `u.req[0]`.
+// TOP M()
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    instance u = C();
+    u.req[0] := true;
+    // expected-error S018 @+2
+    // expected-message: `u.req[0]` has a second binding; the first binding is at 8:5, and the declaration is at 7:5; remove one of the two bindings
+    u.req[0] := false;
+}

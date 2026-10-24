@@ -1,0 +1,8 @@
+// S017: a part of an entry as a `:=` target is a part target, as for a scalar output.
+// TOP M()
+module M() {
+    output gnt[0]: (Bool, Bool);
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
+    gnt[0].0 := true;
+}

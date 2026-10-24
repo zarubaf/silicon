@@ -1,0 +1,7 @@
+// S005: a family name in a static position names a port, here the length of an array type.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S005 @+1
+    let a: [Bool; req] = [];
+}

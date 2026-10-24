@@ -1,0 +1,9 @@
+// S002: a scalar port in a block and a family at the top of the module body. The family scope is the whole body, so the two names collide at any block depth, and the error is at the later declaration.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    comptime if (true) {
+        // expected-error S002 @+1
+        input req: Bool;
+    }
+}

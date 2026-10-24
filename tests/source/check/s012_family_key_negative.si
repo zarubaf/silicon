@@ -1,0 +1,8 @@
+// S012: a negative key is outside the range of a key.
+// TOP M()
+module M() {
+    let k: Int = 0 - 1;
+    // expected-error S012 @+2
+    // expected-message: a family key is 0 to 4294967295, not -1; use a key in this range
+    input req[k]: Bool;
+}

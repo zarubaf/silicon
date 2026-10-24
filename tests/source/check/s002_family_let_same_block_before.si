@@ -1,0 +1,9 @@
+// S002: a `let` and an indexed declaration with one name in one block, the `let` first. An indexed declaration declares its name in its own block, and this name is the family.
+// TOP M()
+module M() {
+    {
+        let req = 1;
+        // expected-error S002 @+1
+        input req[0]: Bool;
+    }
+}

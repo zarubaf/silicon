@@ -1,0 +1,10 @@
+// S010: a hardware key in the `:=` target of an own family, with the checks of a family selection.
+// TOP M()
+module M() {
+    input a: UInt[2];
+    output gnt[0]: Bool;
+    let h = a +% 1;
+    // expected-error S010 @+2
+    // expected-message: `gnt` is a port family, not a value; select one port with `gnt[k]`
+    gnt[h] := true;
+}

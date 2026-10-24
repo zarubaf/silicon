@@ -1,0 +1,8 @@
+// S019: one key of one family twice. The error is at the second declaration, and the text names both positions.
+// TOP M()
+module M() {
+    input req[2]: Bool;
+    // expected-error S019 @+2
+    // expected-message: the port `req[2]` is declared here and at 4:5; declare each key of `req` once
+    input req[2]: Bool;
+}

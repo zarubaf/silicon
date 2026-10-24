@@ -1,0 +1,9 @@
+// S002: a family with the name of a `let` of the body that comes before the first indexed declaration.
+// TOP M()
+module M() {
+    let req = 1;
+    comptime if (true) {
+        // expected-error S002 @+1
+        input req[0]: Bool;
+    }
+}

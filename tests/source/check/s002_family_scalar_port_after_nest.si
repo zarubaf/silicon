@@ -1,0 +1,9 @@
+// S002: a family in a `comptime for` body and a scalar port declared after the loop. The later declaration is the scalar port.
+// TOP M()
+module M() {
+    comptime for i in 0..2 {
+        input req[i]: Bool;
+    }
+    // expected-error S002 @+1
+    input req: Bool;
+}

@@ -1,0 +1,13 @@
+// S010: an index of `u.req` with two arguments is `S010` at the index node, as for each index.
+// TOP M()
+module C() {
+    output gnt[0]: Bool;
+    gnt[0] := true;
+}
+module M() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: an index of a value has one argument
+    o := u.gnt[0, 1];
+}

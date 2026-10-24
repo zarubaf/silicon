@@ -1,0 +1,9 @@
+// S018: an output entry with two bindings.
+// TOP M()
+module M() {
+    output gnt[2]: Bool;
+    gnt[2] := true;
+    // expected-error S018 @+2
+    // expected-message: `gnt[2]` has a second binding; the first binding is at 5:5, and the declaration is at 4:5; remove one of the two bindings
+    gnt[2] := false;
+}

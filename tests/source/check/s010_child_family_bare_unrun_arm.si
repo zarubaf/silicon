@@ -1,0 +1,13 @@
+// S010: a family in a `comptime if` arm that does not run is still part of the interface of the child, so `u.req` alone is "Family as a value".
+// TOP M()
+module C() {
+    comptime if (false) {
+        input req[0]: Bool;
+    }
+}
+module M() {
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `req` is a port family, not a value; select one port with `req[k]`
+    let a = u.req;
+}

@@ -1,0 +1,17 @@
+// S016: an index of a `:=` target that changes a list of the body. The text names the changed binding.
+// TOP M()
+fn grow(mut l: List[Nat]) -> Nat {
+    l.push(1);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = [r, r];
+    let mut l = list(Nat);
+    // expected-error S016 @+2
+    // expected-message: a `:=` target index cannot change `l`; change `l` before the `:=`, keep the result in a `let`, and use that name in the index
+    a[grow(l)] := x;
+    o := true;
+}

@@ -1,0 +1,7 @@
+// S010: the data type of the entry is checked before the duplicate check, so the second declaration of a key with a bad type is `S010`, not `S019`.
+// TOP M()
+module M() {
+    input req[1]: Bool;
+    // expected-error S010 @+1
+    input req[1]: Nat;
+}

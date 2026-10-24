@@ -1,0 +1,13 @@
+// S011: the key of a child input entry in a `:=` target passed the static check of the index first, so a hardware key there is `S011`.
+// TOP M()
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    input a: UInt[2];
+    instance u = C();
+    let h = a +% 1;
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[2]`; compute the value from static values, for example from constants and `comptime` parameters
+    u.req[h] := true;
+}

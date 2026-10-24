@@ -1,0 +1,10 @@
+// S010: an index with two arguments is `S010` at the index node, before the base or a key is looked at, so a hardware first key does not change the text.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    input a: UInt[2];
+    let h = a +% 1;
+    // expected-error S010 @+2
+    // expected-message: an index of a value has one argument
+    let b = req[h, 1];
+}
