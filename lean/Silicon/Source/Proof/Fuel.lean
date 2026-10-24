@@ -818,9 +818,13 @@ theorem nested_f (p : Pos) {x y : M α} (h : Follows cap x y) :
     Follows cap (nested p x) (nested p y) := by
   unfold nested; follows [h]
 
+theorem guardedBy_f (k : GuardKind) {x y : M α} (h : Follows cap x y) :
+    Follows cap (guardedBy k x) (guardedBy k y) := by
+  unfold guardedBy; follows [h]
+
 theorem structural_f {x y : M α} (h : Follows cap x y) :
     Follows cap (structural x) (structural y) := by
-  unfold structural; follows [h]
+  unfold structural; follows [guardedBy_f, h]
 
 theorem inFrame_f (r : Option Ty) {x y : M α} (h : Follows cap x y) :
     Follows cap (inFrame r x) (inFrame r y) := by

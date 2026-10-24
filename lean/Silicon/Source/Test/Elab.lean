@@ -3140,9 +3140,12 @@ def undeclared (x k : String) : String :=
   s!"the port family `{x}` has no key {k} here; declare `{x}[{k}]` before this use"
 def keyTwice (x k b : String) : String :=
   s!"the port `{x}[{k}]` is declared here and at {b}; declare each key of `{x}` once"
-def effect : String :=
-  "a type or a constant has no graph effect such as `diagnostic`; call it before and use the " ++
-    "result"
+def keyEffect : String :=
+  "a port family key has no graph effect such as `diagnostic`; call `diagnostic` before this " ++
+    "statement, keep the result in a `let`, and use that name in the key"
+def indexEffect : String :=
+  "a `:=` target index has no graph effect such as `diagnostic`; call `diagnostic` before the " ++
+    "`:=`, keep the result in a `let`, and use that name in the index"
 def sel (ss : String) : String :=
   fam ("  input req[0]: Bool;\n  output o: Bool;\n" ++ ss)
 
@@ -3159,7 +3162,10 @@ def sel (ss : String) : String :=
 #guard sel "  let h = a;\n  o := req[h];\n" == s!"S010 6:8 {famValue "req"}"
 
 /-! The entry order of section 6.2: the key checks in order, then the type, then `S019`. -/
-#guard fam "  input req[diagnostic(\"k\", 0)]: fn () -> Bool;\n" == s!"S016 3:13 {effect}"
+#guard fam "  input req[diagnostic(\"k\", 0)]: fn () -> Bool;\n" == s!"S016 3:13 {keyEffect}"
+#guard fam "  let mut l = list(Nat);\n  push(l, 0);\n  input req[pop(l)]: Bool;\n" ==
+  "S016 5:13 a port family key cannot change `l`; change `l` before this statement, keep the " ++
+    "result in a `let`, and use that name in the key"
 #guard fam "  let h = a;\n  input req[h]: fn () -> Bool;\n" ==
   s!"S011 4:13 {notStatic "a value of `Bool`"}"
 #guard fam "  input req[UInt[8](1)]: fn () -> Bool;\n" ==
@@ -3178,7 +3184,7 @@ def sel (ss : String) : String :=
 /-! The selection order of section 6.2: the index arity, the key checks in order, then `S013`. -/
 #guard sel "  o := req[0, diagnostic(\"k\", 0)];\n" ==
   "S010 5:8 an index of a value has one argument"
-#guard sel "  o := req[diagnostic(\"k\", 7)];\n" == s!"S016 5:12 {effect}"
+#guard sel "  o := req[diagnostic(\"k\", 7)];\n" == s!"S016 5:12 {keyEffect}"
 #guard sel "  let h = a;\n  o := req[h];\n" == s!"S010 6:8 {famValue "req"}"
 #guard sel "  o := req[UInt[4](7)];\n" == s!"S010 5:12 {keyType "a value of `UInt[4]`"}"
 #guard sel "  o := req[0 - 7];\n" == s!"S012 5:12 {keyRange "-7"}"
@@ -3195,7 +3201,7 @@ is `S017`. A family root without a key is "Family as a value".
 #guard fam "  output g[0]: Bool;\n  let h = a;\n  g[h] := a;\n" == s!"S010 5:3 {famValue "g"}"
 #guard fam "  output g[0]: Bool;\n  g[UInt[2](0)] := a;\n" ==
   s!"S010 4:5 {keyType "a value of `UInt[2]`"}"
-#guard fam "  output g[0]: Bool;\n  g[diagnostic(\"k\", 0)] := a;\n" == s!"S016 4:5 {effect}"
+#guard fam "  output g[0]: Bool;\n  g[diagnostic(\"k\", 0)] := a;\n" == s!"S016 4:5 {keyEffect}"
 #guard fam "  output g[0]: Bool;\n  g[0, 1] := a;\n" ==
   "S010 4:3 an index of a value has one argument"
 #guard fam "  output g[0]: Bool;\n  g := a;\n" == s!"S010 4:3 {famValue "g"}"
@@ -3209,11 +3215,11 @@ Each index of a `:=` target evaluates in a structural context (sections 5.2 and 
 without a family. A graph effect or a change of an earlier binding there is `S016`.
 -/
 #guard fam ("  reg r: Bool = false;\n  r := a;\n  let rs = [r];\n" ++
-    "  rs[diagnostic(\"k\", 0)] := a;\n") == s!"S016 6:6 {effect}"
+    "  rs[diagnostic(\"k\", 0)] := a;\n") == s!"S016 6:6 {indexEffect}"
 #guard fam ("  reg r: Bool = false;\n  r := a;\n  let mut l = list(Nat);\n  push(l, 0);\n" ++
     "  let rs = [r];\n  rs[pop(l)] := a;\n") ==
-  "S016 8:6 a type or a constant cannot change `l`; change `l` before it, keep the result in " ++
-    "a `let`, and use that name here"
+  "S016 8:6 a `:=` target index cannot change `l`; change `l` before the `:=`, keep the " ++
+    "result in a `let`, and use that name in the index"
 
 /-!
 The core names of section 7.2: an entry has the made field `<k>f`, and its leaves follow. An
@@ -3264,7 +3270,7 @@ def kidBinds : String := "  u.req[0] := a;\n  u.req[1] := a;\n"
 /-! The order of a child selection: the index arity, then the key checks, then `S013`. -/
 #guard par (kidBinds ++ "  o := u.gnt[3, diagnostic(\"k\", 3)];\n") ==
   "S010 17:8 an index of a value has one argument"
-#guard par (kidBinds ++ "  o := u.gnt[diagnostic(\"k\", 3)];\n") == s!"S016 17:14 {effect}"
+#guard par (kidBinds ++ "  o := u.gnt[diagnostic(\"k\", 3)];\n") == s!"S016 17:14 {keyEffect}"
 #guard par (kidBinds ++ "  let h = a;\n  o := u.gnt[h];\n") == s!"S010 18:8 {famValue "gnt"}"
 #guard par (kidBinds ++ "  o := u.gnt[UInt[2](3)];\n") ==
   s!"S010 17:14 {keyType "a value of `UInt[2]`"}"
@@ -3288,7 +3294,7 @@ index step. The key passed check 1 (`S011`) before the walk, so a hardware key i
 #guard par (kidBinds ++ "  u.req[0, 1] := a;\n  o := a;\n") ==
   "S010 17:3 an index of a value has one argument"
 #guard par (kidBinds ++ "  o := a;\n  u.req[diagnostic(\"k\", 0)] := a;\n") ==
-  s!"S016 18:9 {effect}"
+  s!"S016 18:9 {indexEffect}"
 
 /-! A container of instance handles selects a child with `us[i].req[k]`. -/
 #guard par ("  instance v = C();\n  let us = [u, v];\n  comptime for j in 0..2 {\n" ++
