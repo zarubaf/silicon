@@ -917,11 +917,11 @@ def known : Val → M Unit
 /-!
 The error at `pos` of a typed use of `v` at the type `t` with the handle flag: `S010` with the
 text of `handleUseText`. An own output has no handle type, so its text names the fix: use it as
-data.
+data. Its public name has the limit of a string in a message.
 -/
 def handleWrong (pos : Pos) (t : Ty) (v : Val) : M α := do
   if let .handle (.res .output _ _ path) := v then
-    let r := sourceOf path
+    let r := strText (sourceOf path)
     fail .S010 pos
       s!"`{r}` is an output, and an output has no handle type; use `{r}` directly as data"
   fail .S010 pos (handleUseText t v.about)
@@ -1040,7 +1040,8 @@ The assignment at `pos` of the result `o` to a local without a type that holds `
 5.4). The local has the type of its value. A handle with a handle type thus gives the typed use
 at that type (`typedUse`). Another value keeps its form after the copy (`sameForm`). A local
 that holds an own output takes only an own output of the same data type. Its text names the
-fix: use the output directly.
+fix: use the output directly. The public name of the output has the limit of a string in a
+message.
 -/
 def heldUse (pos : Pos) (held : Val) (o : Out) : M Val := do
   if let .handle h := held then
@@ -1048,7 +1049,7 @@ def heldUse (pos : Pos) (held : Val) (o : Out) : M Val := do
   copy pos o
   if sameForm held o.value then return o.value
   if let .handle (.res .output _ t path) := held then
-    let r := sourceOf path
+    let r := strText (sourceOf path)
     fail .S010 pos (s!"the local holds the output `{r}`, so it takes only an output of " ++
       s!"`{t.text}`, not {o.value.about}; use the output `{r}` directly")
   fail .S010 pos s!"expected {held.text}, but the value is {o.value.text}"

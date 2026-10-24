@@ -595,11 +595,12 @@ def sourceOf (path : Path) : String :=
 
 /-!
 The value `{a}` of a message (section 6.2). A handle names its handle type (section 5.1), an own
-output its source name, and a domain its name. A literal that waits for its type is `[]`. Each
-other value names its type. Thus the text reads no value in full, and each type text is bounded.
+output its public name, and a domain its name. The public name has the limit of a string in a
+message. A literal that waits for its type is `[]`. Each other value names its type. Thus the
+text reads no value in full, and each type text is bounded.
 -/
 def Val.about : Val → String
-  | .handle (.res .output _ _ path) => s!"the output `{sourceOf path}`"
+  | .handle (.res .output _ _ path) => s!"the output `{strText (sourceOf path)}`"
   | .handle (.domain x) => s!"the domain `{x}`"
   | .handle h => match h.ty? with
     | some t => s!"a handle of `{t.text}`"

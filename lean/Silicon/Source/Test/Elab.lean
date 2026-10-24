@@ -3459,6 +3459,26 @@ does not run and after the keyed port.
   s!"S019 4:3 {publicTwice (String.ofList (List.replicate 64 'a') ++ "... (70 characters)") "3:3"}"
 #guard keyMod s!"  output o: Bool as \"{String.ofList (List.replicate 65 'b')}\";\n" ==
   s!"S018 3:3 {unboundKeyed (String.ofList (List.replicate 64 'b') ++ "... (65 characters)") "o"}"
+-- The limit holds in each text that names an own output or a child input by its public name.
+def longKey : String := String.ofList (List.replicate 70 'c')
+def longText : String := String.ofList (List.replicate 64 'c') ++ "... (70 characters)"
+#guard keyMod (s!"  output o: Bool as \"{longKey}\";\n  o := a;\n  let h = o;\n" ++
+    "  instance w = D(h);\n") "module D(comptime b: Bool) {\n}\n" ==
+  s!"S011 6:3 {heldStatic "a module argument" "output" longText}"
+#guard keyMod (s!"  instance u = C();\n  u.{longKey} := a;\n  let h = u.{longKey};\n" ++
+    "  instance w = D(h);\n")
+    s!"module C() \{\n  input x: Bool as \"{longKey}\";\n}\nmodule D(comptime b: Bool) \{\n}\n" ==
+  s!"S011 6:3 {heldStatic "a module argument" "input" s!"u.{longText}"}"
+#guard keyMod s!"  output o: Bool as \"{longKey}\";\n  o := a;\n  let v = read(o);\n" ==
+  s!"S010 5:11 `read` takes a register or a wire, not the output `{longText}`; use the value " ++
+    "directly, without `read`"
+#guard keyMod (s!"  output o: Bool as \"{longKey}\";\n  output p: UInt[8];\n  o := a;\n" ++
+    "  p := 0;\n  let mut l = o;\n  l = p;\n") ==
+  s!"S010 8:3 the local holds the output `{longText}`, so it takes only an output of `Bool`, " ++
+    s!"not the output `p`; use the output `{longText}` directly"
+#guard keyMod s!"  output o: Bool as \"{longKey}\";\n  o := a;\n  let x: Reg[Bool] = o;\n" ==
+  s!"S010 5:3 `{longText}` is an output, and an output has no handle type; use `{longText}` " ++
+    "directly as data"
 
 /-!
 The `S018` texts of section 6.2 name a keyed port by its public name. An own output with an `as`
