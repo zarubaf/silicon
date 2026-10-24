@@ -586,6 +586,14 @@ impl Evaluator<'_> {
             {
                 break;
             }
+            // A selector of a new value reaches a part of unknown type. A field after it can
+            // name a port of an instance, which the next segment reads as a handle.
+            if matches!(step, Sel::Select(..))
+                && known.is_none()
+                && matches!(steps.get(n + 1), Some(Sel::Field(..)))
+            {
+                break;
+            }
             known = after;
         }
         let Followed {
