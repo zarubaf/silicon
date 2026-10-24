@@ -36,6 +36,7 @@ use super::{Evaluator, Let, Mode, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
 use crate::hw::{Graph, Handle, Kind, Port, PortId, Seen, Val};
 use crate::int::Int;
+pub(super) use crate::names::entry_text;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
 use crate::types::{Ty, TyId, Types};
@@ -64,15 +65,6 @@ pub(crate) struct RegDecl {
     pub ty: Ty,
     pub init: Value,
     pub pos: Pos,
-}
-
-/// The public name of the port `x` with the family key `key` in a message: `x`, or the entry
-/// `x[k]` (section 6.2). Only an error renders it.
-pub(super) fn entry_text(x: &str, key: Option<u32>) -> String {
-    match key {
-        Some(k) => format!("{x}[{k}]"),
-        None => x.to_owned(),
-    }
 }
 
 /// A position with the number of the call frame that ran it (`Ev::call`).
