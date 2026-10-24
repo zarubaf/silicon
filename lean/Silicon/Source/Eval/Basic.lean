@@ -986,7 +986,8 @@ first `S018` of a second binding or a second port call by position. `spent` is t
 new children. `entries` holds the declared family entries by the symbol of the public name and
 the key. It holds the value of each entry and the position of its declaration. A family binder
 has no frame slot. `publics` is the table of public names of the owner (section 5.6). It holds
-the form of each public name by its symbol, and the position of its first declaration. The
+the form of each public name by its symbol, and the position and the call frame number of its
+first declaration. The
 families of the module item `owner` are in the table from the start. `publics` does not copy
 them: a look-up reads `publics`, then those families (`Elab.publicOf`).
 -/
@@ -996,7 +997,7 @@ structure Work where
   bound : Array Nat := #[]
   inputs : Std.HashMap (Nat × PortId) (Nat × Pos × Nat) := {}
   entries : Std.HashMap (Nat × Nat) (Val × Pos) := {}
-  publics : Std.HashMap Nat (Public × Pos) := {}
+  publics : Std.HashMap Nat (Public × Pos × Nat) := {}
   owner : Nat := 0
   dup : Option (Pos × Breach) := none
   spent : Nat := 0

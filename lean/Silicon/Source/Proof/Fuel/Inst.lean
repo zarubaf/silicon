@@ -51,7 +51,7 @@ theorem publicOf_f (y : Nat) : Follows cap (Elab.publicOf y) (Elab.publicOf y) :
 theorem port_f (p : Pos) (input : Bool) (x : String) (y : Nat) (t : Ty) (b : Option String) :
     Follows cap (Elab.port p input x y t b) (Elab.port p input x y t b) := by
   unfold Elab.port
-  follows [publicOf_f, publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
+  follows [publicOf_f, again_f, publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
 
 theorem entry_f (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (b : Option String) :
     Follows cap (Elab.entry p input x y k t b) (Elab.entry p input x y k t b) := by

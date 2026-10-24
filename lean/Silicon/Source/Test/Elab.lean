@@ -3453,6 +3453,19 @@ does not run and after the keyed port.
 #guard keyMod "  reg x: Bool = false;\n  x := a;\n  input p: Bool as \"x\";\n" ==
   s!"S019 5:3 {taken "x"}"
 #guard keyMod "  input y: Bool;\n  let x = y;\n  { input x: Bool; }\n" == s!"S019 5:5 {taken "x"}"
+-- One statement of a helper that runs in two calls names the helper (section 6.2).
+def laneFn (body : String) : String := "fn lane() -> () {\n" ++ body ++ "  return ();\n}\n"
+def publicAgain (h x : String) : String :=
+  s!"`{h}` declares the port `{x}` again in a second call; give each call its own port name, " ++
+    "for example from a parameter in the `as` key"
+#guard keyMod "  lane();\n  lane();\n" (laneFn "  input y: Bool as \"y\";\n") ==
+  s!"S019 7:3 {publicAgain "lane" "y"}"
+-- Two statements, or one statement that one call runs twice, keep "Public name twice".
+#guard keyMod "  lane();\n" (laneFn "  input y: Bool as \"y\";\n  input z: Bool as \"y\";\n") ==
+  s!"S019 7:3 {publicTwice "y" "6:3"}"
+#guard keyMod "  lane();\n"
+    (laneFn "  comptime for i in 0..2 {\n    input y: Bool as \"y\";\n  }\n") ==
+  s!"S019 7:5 {publicTwice "y" "7:5"}"
 -- A public name in a message has the limit of a string (section 5.5).
 #guard keyMod (s!"  input x: Bool as \"{String.ofList (List.replicate 70 'a')}\";\n" ++
     s!"  input y: Bool as \"{String.ofList (List.replicate 70 'a')}\";\n") ==
@@ -3508,12 +3521,13 @@ def keyNames : String :=
 /-!
 Ports in helpers (sections 5.6 and 9.4). A port in a helper is a graph effect, so a guard gives
 `S016`. The static mode gives `S011` with the kind `input` or `output`. A fixed port name of a
-helper that runs twice is "Public name twice". A name of a binding of the module body is "Port
-name taken".
+helper that runs twice is "Public name twice in a helper". A name of a binding of the module
+body is "Port name taken".
 -/
 def lane : String := "fn f() -> Nat {\n  input p: Bool;\n  return 1;\n}\n"
 #guard keyMod "  let z = f();\n" lane == "ok"
-#guard keyMod "  let z = f();\n  let y = f();\n" lane == s!"S019 7:3 {publicTwice "p" "7:3"}"
+#guard keyMod "  let z = f();\n  let y = f();\n" lane ==
+  s!"S019 7:3 {publicAgain "f" "p"}"
 #guard keyMod "  let p = a;\n  let z = f();\n" lane == s!"S019 7:3 {taken "p"}"
 #guard keyMod "  let z = if (a) { f() } else { 1 };\n" lane ==
   "S016 6:3 a hardware arm has no graph effect such as `f`; call `f` before the `if` or " ++

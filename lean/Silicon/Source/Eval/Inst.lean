@@ -123,24 +123,35 @@ def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) (key : Opt
   return .handle (.res k id t path)
 
 /-!
-Inserts the public name with the symbol `y` and the form `f`, declared at `p`, into the table of
-public names of the owner (section 5.6).
+The helper of a second binding or port call at `p` whose first one is at `b` in the call frame
+`f`. When both are at `p`, one `:=` or call runs again. When the first one also ran in another
+call, the text names the function (section 6.2). A repeat in one call, for example in a
+`comptime for` of the function, keeps the plain text.
 -/
-def publish (y : Nat) (f : Public) (p : Pos) : Eval.M Unit :=
-  modify fun s => { s with inst.work.publics := s.inst.work.publics.insert y (f, p) }
+def again (p : Pos) (b : Pos × Nat) : Eval.M (Option Nat) := do
+  let c ← read
+  if b.1 == p && b.2 != c.call then return c.helper else return none
 
 /-!
-The form and the first position of the public name with the symbol `y` in the table of public
-names of the owner (section 5.6). The table holds each family that the resolver found in the
-module body from the start, at its first indexed declaration. These families are in the static
-`Syms.families`, so the look-up reads `publics` and then them, with no copy for each
-instantiation. Each is one map operation.
+Inserts the public name with the symbol `y` and the form `f` into the table of public names of
+the owner (section 5.6). The table keeps its position `p` and the current call frame.
 -/
-def publicOf (y : Nat) : Eval.M (Option (Public × Pos)) := do
+def publish (y : Nat) (f : Public) (p : Pos) : Eval.M Unit := do
+  let n := (← read).call
+  modify fun s => { s with inst.work.publics := s.inst.work.publics.insert y (f, p, n) }
+
+/-!
+The public name with the symbol `y` in the table of public names of the owner (section 5.6). It
+has its form, its first position, and the call frame of that declaration. The table holds each
+family of the module body from the start, at its first indexed declaration, in the frame 0.
+These families are in the static `Syms.families`. Thus the look-up reads `publics` and then
+them, with no copy for each instantiation. Each is one map operation.
+-/
+def publicOf (y : Nat) : Eval.M (Option (Public × Pos × Nat)) := do
   let w := (← get).inst.work
   if let some e := w.publics[y]? then return some e
   let fams := (← read).syms.families[w.owner]?
-  return (fams.bind (·[y]?)).map fun (i, p) => (.family i, p)
+  return (fams.bind (·[y]?)).map fun (i, p) => (.family i, p, 0)
 
 /-!
 Reserves the core name with the symbol `y` in the root frame, as the bindings of the name count
@@ -161,6 +172,14 @@ def publicTwiceText (x : String) (b : Pos) : String :=
   s!"the port name `{strText x}` is declared here and at {atText b}; give one of them another " ++
     "key with `as`, for example from a parameter"
 
+/-!
+The `S019` text "Public name twice in a helper" of section 6.2, for the public name `x` and the
+function `h`.
+-/
+def publicAgainText (h x : String) : String :=
+  s!"`{h}` declares the port `{strText x}` again in a second call; give each call its own port " ++
+    "name, for example from a parameter in the `as` key"
+
 /-! The `S019` text "Scalar port and port family" of section 6.2, for the public name `x`. -/
 def scalarFamilyText (x : String) (b : Pos) : String :=
   s!"`{strText x}` names a scalar port and a port family, here and at {atText b}; give one of " ++
@@ -179,7 +198,9 @@ def takenText (x : String) : String :=
 /-!
 The port at `p` with the public name `x` of the symbol `y` (section 6.2, steps 9 to 11 of the
 port order). The table of public names of the owner holds no other port of the name. A scalar
-port there is "Public name twice", and a family is "Scalar port and port family". Then the name
+port there is "Public name twice". When one statement of a function runs again in another call,
+it is "Public name twice in a helper" (`again`). A family there is "Scalar port and port
+family". Then the name
 takes its core name in the root frame. An earlier binding of the module body with the name
 gives "Port name taken". The port has no call frame (section 7.3). An output with an `as` key
 has its `binder` for its `S018` text.
@@ -187,8 +208,11 @@ has its `binder` for its `S018` text.
 def port (p : Pos) (input : Bool) (x : String) (y : Nat) (t : Ty) (binder : Option String) :
     Eval.M Val := do
   match ← publicOf y with
-  | some (.scalar, b) => fail .S019 p (publicTwiceText x b)
-  | some (.family _, b) => fail .S019 p (scalarFamilyText x b)
+  | some (.scalar, b, n) =>
+    match ← again p (b, n) with
+    | some h => fail .S019 p (publicAgainText ((← read).itemName h) x)
+    | none => fail .S019 p (publicTwiceText x b)
+  | some (.family _, b, _) => fail .S019 p (scalarFamilyText x b)
   | none => publish y .scalar p
   if ← reserve y then fail .S019 p (takenText x)
   modifyBody fun d => { d with ports := d.ports.push ⟨x, y, none, input, t, p⟩ }
@@ -277,8 +301,8 @@ entry.
 def entry (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (binder : Option String) :
     Eval.M Val := do
   match ← publicOf y with
-  | some (.scalar, b) => fail .S019 p (scalarFamilyText x b)
-  | some (.family i, b) => if i != input then fail .S019 p (directionsText x b)
+  | some (.scalar, b, _) => fail .S019 p (scalarFamilyText x b)
+  | some (.family i, b, _) => if i != input then fail .S019 p (directionsText x b)
   | none => publish y (.family input) p
   if let some (_, q) := (← get).inst.work.entries[(y, k)]? then
     fail .S019 p (keyTwiceText x k q)
@@ -444,16 +468,6 @@ def breach (p : Pos) (x : Breach) : Eval.M Unit :=
   modify fun s => { s with inst.work.dup := firstBreach s.inst.work.dup p x }
 
 /-!
-The helper of a second binding or port call at `p` whose first one is at `b` in the call frame
-`f`. When both are at `p`, one `:=` or call runs again. When the first one also ran in another
-call, the text names the function (section 6.2). A repeat in one call, for example in a
-`comptime for` of the function, keeps the plain text.
--/
-def again (p : Pos) (b : Pos × Nat) : Eval.M (Option Nat) := do
-  let c ← read
-  if b.1 == p && b.2 != c.call then return c.helper else return none
-
-/-!
 The `S018` data of a second binding at `p` of `r`, with the first binding at `b` in the call
 frame of `b.2` and its declaration at `d`.
 -/
@@ -525,12 +539,12 @@ of public names `pub` of its body (section 5.6). It holds the entries that the b
 run time, and each family of `fams` or of `pub`.
 -/
 def iface (name : Name) (b : Body) (fams : Std.HashMap Nat (Bool × Pos))
-    (pub : Std.HashMap Nat (Public × Pos)) : Iface :=
+    (pub : Std.HashMap Nat (Public × Pos × Nat)) : Iface :=
   ⟨name,
    b.ports.zipIdx.foldl (fun m (q, j) =>
      m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos, j⟩) {},
    (b.ports.filter (·.input)).size, b.domain,
-   pub.fold (init := fams) fun m y (f, p) => match f with
+   pub.fold (init := fams) fun m y (f, p, _) => match f with
      | .family i => m.insert y (i, p)
      | .scalar => m⟩
 
