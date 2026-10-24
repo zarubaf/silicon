@@ -21,6 +21,7 @@ mod lift;
 mod memory;
 mod mutate;
 mod program;
+mod public;
 mod records;
 mod shape;
 mod twin;
