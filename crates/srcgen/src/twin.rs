@@ -2343,32 +2343,33 @@ mod tests {
             };
             let mapped = t.input_line(&line).unwrap();
             assert_eq!(mapped.starts_with("in=(clock$0rst false"), ports.clocked);
-            let (twin_order, _) = t.leaf_names(false);
-            let want: Vec<(String, String)> = twin_order
-                .iter()
+            // The twin sorts its scalar ports by the bytes of their names,
+            // the leaves of one port in packing order.
+            let sorted = |output: bool| {
+                let mut names: Vec<&TwinPort> =
+                    t.ports.iter().filter(|p| p.output == output).collect();
+                names.sort_by(|a, b| a.name.cmp(&b.name));
+                names
+                    .into_iter()
+                    .flat_map(|p| {
+                        p.leaves.iter().map(|(sfx, _)| {
+                            (format!("{}{sfx}", p.public), format!("{}{sfx}", p.name))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            };
+            // Each value stays with its port: it is the place of the leaf
+            // in the program line.
+            let want: Vec<(String, String)> = sorted(false)
+                .into_iter()
                 .map(|(program, twin)| {
-                    let at = ports.inputs.iter().position(|(n, _)| n == program).unwrap();
-                    (twin.clone(), at.to_string())
+                    let at = ports.inputs.iter().position(|(n, _)| *n == program);
+                    (twin, at.unwrap().to_string())
                 })
                 .collect();
             assert_eq!(entries(&mapped), want, "{line}");
-            // The twin sorts its scalar ports by the bytes of their names,
-            // the leaves of one port in packing order.
-            let mut names: Vec<&TwinPort> = t.ports.iter().filter(|p| !p.output).collect();
-            names.sort_by(|a, b| a.name.cmp(&b.name));
-            let flat: Vec<String> = names
-                .iter()
-                .flat_map(|p| p.leaves.iter().map(|(sfx, _)| format!("{}{sfx}", p.name)))
-                .collect();
-            assert_eq!(
-                entries(&mapped)
-                    .into_iter()
-                    .map(|e| e.0)
-                    .collect::<Vec<_>>(),
-                flat
-            );
             // The outputs go back to the layout of the program.
-            let (twin_out, _) = t.leaf_names(true);
+            let twin_out = sorted(true);
             let out = format!(
                 "out=({})",
                 twin_out
@@ -2383,11 +2384,8 @@ mod tests {
             let program: Vec<&str> = ports.outputs.iter().map(|(n, _)| n.as_str()).collect();
             assert_eq!(names, program, "{out}");
             for (name, value) in &back {
-                let at = twin_out
-                    .iter()
-                    .position(|(program, _)| program == name)
-                    .unwrap();
-                assert_eq!(value, &at.to_string());
+                let at = twin_out.iter().position(|(program, _)| program == name);
+                assert_eq!(value, &at.unwrap().to_string());
             }
         }
     }
