@@ -326,18 +326,18 @@ impl Evaluator<'_> {
             ev.naming = naming;
             let used = start - ev.fuel.left();
             let w = std::mem::replace(&mut ev.elab.work, parent);
-            let mut body = w.body;
+            let (mut body, publics, spent) = w.close();
             body.lets = lets;
-            let iface = Iface::of(name, &body, i, &w.publics);
+            let iface = Iface::of(name, &body, i, &publics);
             let k = ev.elab.done.len();
             ev.elab.table.insert(key, Status::Done(k));
             ev.elab.done.push(Inst {
                 iface,
                 body,
-                units: used - w.spent,
+                units: used - spent,
                 pos: *mp,
             });
-            ev.elab.work.spent += used;
+            ev.elab.work.charge_child(used);
             Ok(k)
         })
     }
