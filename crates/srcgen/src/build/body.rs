@@ -192,6 +192,7 @@ impl Builder {
             called: BTreeSet::new(),
             looped: false,
             port: Vec::new(),
+            child_reads: BTreeSet::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -408,6 +409,7 @@ impl Builder {
             called: BTreeSet::new(),
             looped: false,
             port: Vec::new(),
+            child_reads: BTreeSet::new(),
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {

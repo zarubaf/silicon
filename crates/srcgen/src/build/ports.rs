@@ -185,6 +185,34 @@ impl PortPlan {
         }
         out
     }
+
+    /// The families that only an arm that does not run declares: no
+    /// declaration of the plan runs for them, so the table of public names
+    /// holds them from the start and nothing else (spec 5.6).
+    #[cfg(test)]
+    pub(super) fn untaken_families(&self, helpers: &[PortHelper]) -> BTreeSet<String> {
+        let running: BTreeSet<String> = self
+            .declared(helpers)
+            .into_iter()
+            .map(|d| d.public.base)
+            .collect();
+        self.forms
+            .iter()
+            .filter_map(|f| match f {
+                Form::Family {
+                    shape:
+                        Shape::Arm {
+                            skipped_fam,
+                            skipped,
+                            ..
+                        },
+                    ..
+                } if !skipped.is_empty() => Some(skipped_fam.clone()),
+                _ => None,
+            })
+            .filter(|fam| !running.contains(fam))
+            .collect()
+    }
 }
 
 fn entry(fam: &str, key: u32) -> Public {
@@ -776,6 +804,11 @@ impl Builder {
         out: &mut Vec<Stmt>,
     ) -> Built {
         self.on_port(|b| {
+            #[cfg(test)]
+            {
+                b.stats.skipped_families +=
+                    u32::try_from(plan.untaken_families(&b.port_helpers).len()).unwrap_or(u32::MAX);
+            }
             for form in &plan.forms {
                 match form {
                     Form::Family { dir, fam, shape } => {
@@ -888,7 +921,6 @@ impl Builder {
                 };
                 out.push(Stmt::If(SExpr::Bool(*then_runs), then, Some(els)));
                 note!(self, fam_arms);
-                note!(self, skipped_families, !skipped.is_empty());
                 if !output {
                     for (k, ty) in run {
                         let read = HExpr::Entry(fam.to_owned(), lit(*k));
@@ -1092,13 +1124,13 @@ impl Builder {
                 ty: None,
                 value: expr,
             });
+            ctx.child_reads.insert(ctx.port.len());
             ctx.port.push(Hw {
                 expr: HExpr::Name(l),
                 ty: None,
                 types,
                 mutable: false,
             });
-            note!(self, child_reads);
         }
         Ok(())
     }
@@ -1135,6 +1167,7 @@ impl Builder {
                 let old = std::mem::replace(value, HExpr::Unit);
                 *value = HExpr::Binary(op, Box::new(read), Box::new(old));
                 note!(b, port_reaches);
+                note!(b, child_reads, ctx.child_reads.contains(&i));
             }
         });
     }
