@@ -6,7 +6,7 @@ mod lexer;
 mod number;
 
 pub use kind::{SiliconLanguage, SyntaxKind, SyntaxNode, SyntaxToken};
-pub use lexer::{LexError, Lexed, Token, lex};
+pub use lexer::{LexError, Lexed, Token, is_identifier, lex};
 
 #[cfg(test)]
 mod tests {

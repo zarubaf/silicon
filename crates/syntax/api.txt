@@ -1,5 +1,6 @@
 enum syntax::SiliconLanguage
 enum syntax::SyntaxKind
+fn syntax::is_identifier
 fn syntax::lex
 method syntax::SyntaxKind::is_trivia
 method syntax::SyntaxKind::keyword
