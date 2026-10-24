@@ -137,10 +137,7 @@ impl Evaluator<'_> {
     /// the owner. Its call frame is the current one.
     pub(in crate::eval) fn publish(&mut self, sym: Sym, form: Public, pos: Pos) {
         let call = self.call;
-        self.elab
-            .work
-            .publics
-            .insert(PubKey(sym), (form, pos, call));
+        self.elab.work.publish(sym, form, pos, call);
     }
 
     /// The public name `sym` in the table of the owner: its form, the position of its first
@@ -149,12 +146,7 @@ impl Evaluator<'_> {
     /// are in `Syms::families`, so the look-up reads the table and then them, with no copy for an
     /// instantiation.
     pub(in crate::eval) fn public_of(&self, sym: Sym) -> Option<(Public, Pos, usize)> {
-        let work = &self.elab.work;
-        if let Some(&e) = work.publics.get(&PubKey(sym)) {
-            return Some(e);
-        }
-        let (input, pos) = *self.syms.families.get(work.owner)?.get(&sym)?;
-        Some((Public::Family(input), pos, 0))
+        self.elab.work.public_of(sym, &self.syms.families)
     }
 
     /// Reserves the core name `sym` in the root frame, as the bindings of the name count it. The

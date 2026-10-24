@@ -15,7 +15,7 @@
 
 use super::public::Public;
 use super::public::{directions, scalar_family};
-use super::{Elab, PortDecl, entry_text};
+use super::{PortDecl, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
@@ -88,14 +88,6 @@ impl FamKey {
                 ),
             ),
         }
-    }
-}
-
-impl Elab {
-    /// The value and the declaration position of the entry `key` of the family with the public
-    /// name `sym`.
-    fn entry(&self, sym: Sym, key: u32) -> Option<&(Val, Pos)> {
-        self.work.entries.get(&(sym, key))
     }
 }
 
@@ -236,7 +228,7 @@ impl Evaluator<'_> {
             Some(_) => {}
             None => self.publish(sym, Public::Family(input), pos),
         }
-        if let Some((_, first)) = self.elab.entry(sym, k) {
+        if let Some((_, first)) = self.elab.work.entry(sym, k) {
             let (line, col) = (first.line, first.col);
             let x = str_text(self.name_text(sym));
             return fail(
@@ -259,14 +251,14 @@ impl Evaluator<'_> {
         let outer = self.paths.child(None, sym);
         let path = self.paths.push(outer, Step::Family(k));
         let v = self.port_value(pos, input, path, tid, (sym, Some(k)), binder)?;
-        self.elab.work.entries.insert((sym, k), (v.clone(), pos));
+        self.elab.work.add_entry(sym, k, v.clone(), pos);
         Ok(v)
     }
 
     /// The value of the entry `k` of the family `x` with the binder `id`, at the key `kp`. A key
     /// that the body did not declare before is `S013` "Undeclared family key".
     pub(in crate::eval) fn entry_val(&self, kp: Pos, x: &str, id: DeclId, k: u32) -> Res<Val> {
-        match self.elab.entry(self.sym(id), k) {
+        match self.elab.work.entry(self.sym(id), k) {
             Some((v, _)) => Ok(v.clone()),
             None => fail(
                 Code::S013,
