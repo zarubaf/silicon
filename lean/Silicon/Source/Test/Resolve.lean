@@ -804,8 +804,8 @@ def familyLoops : String :=
   | _ => false
 
 /-!
-Outside a module body, an indexed port declares a local at its statement. A plain `fn` with a
-port is `S004` in the parser, and a `comptime fn` is `S006` in `Check`.
+In a `comptime fn`, an indexed port declares a local at its statement, and `Check` reports it
+(`S006`).
 -/
 #guard match users "comptime fn f(p: Bool) -> Bool {\ninput req[0]: Bool;\nreturn p;\n}" with
   | some #[.fn _ _ _ _ _ [.input _ ⟨_, 1⟩ (.indexed _) _, _]] => true
@@ -846,5 +846,44 @@ name in that block is `S002` in each order. The loop value and the loop body sha
 #guard message (modBody "{\ninput req[0]: Bool;\nlet req = 1;\n}") ==
   "`req` is already declared in this scope"
 #guard fails (modBody "comptime for req in 0..2 {\ninput req[req]: Bool;\n}") .S002 3 7
+
+/-!
+The walk also runs on the body of a `fn` without `comptime` (section 5.6). A family of a helper
+has the scope of the helper body: a loop declares the entries, and a later statement selects one.
+The parameter `p` is the local 0, so the family takes the local 1 before the loop value.
+-/
+#guard match users (fnBody "comptime for i in 0..2 {\ninput req[i]: Bool;\n}\nreturn req[0];") with
+  | some #[.fn _ false _ _ _ [.ctFor _ ⟨_, 2⟩ _ _ [.input _ ⟨_, 1⟩ (.indexed _) _],
+      .ret _ (some (.index _ (.name _ _ (.family 1 true)) _))]] => true
+  | _ => false
+
+/-! A use before the first declaration resolves in a helper too. -/
+#guard match users (fnBody "let x = req[0];\ninput req[0]: Bool;\nreturn p;") with
+  | some #[.fn _ _ _ _ _ [.local _ _ _ _ (.index _ (.name _ _ (.family 1 true)) _), _, _]] => true
+  | _ => false
+
+/-! A helper body has the collisions of a module body, at the later name. -/
+#guard fails (fnBody "input req: Bool;\n{\ninput req[0]: Bool;\n}\nreturn p;") .S002 4 7
+#guard message (fnBody "input req: Bool;\n{\ninput req[0]: Bool;\n}\nreturn p;") ==
+  "`req` names a port family and a scalar port, here and at 2:7; use one form for the name"
+#guard fails (fnBody "input req[0]: Bool;\noutput req[1]: Bool;\nreturn p;") .S002 3 8
+#guard fails (fnBody "let req = 1;\ninput req[0]: Bool;\nreturn p;") .S002 3 7
+#guard fails "fn f(req: Bool) -> Bool {\ninput req[0]: Bool;\nreturn req;\n}" .S002 2 7
+
+/-!
+The module body cannot select a family that only a helper declares. There, the name has no
+declaration, so it is `S003`.
+-/
+#guard fails ("fn lane() -> Nat {\ninput req[0]: Bool;\nreturn 0;\n}\n" ++
+  "module M() {\nlet x = lane();\nlet y = req[0];\n}") .S003 7 9
+
+/-!
+A port with an `as` key is no port name of the walk. Its binder is a name of the body only, so a
+family with the name of the binder is the ordinary `S002`.
+-/
+#guard fails (modBody "input req: Bool as \"x\";\ninput req[0]: Bool;") .S002 3 7
+#guard message (modBody "input req: Bool as \"x\";\ninput req[0]: Bool;") ==
+  "`req` is already declared in this scope"
+#guard fails (fnBody "input req[0]: Bool;\noutput req: Bool as \"x\";\nreturn p;") .S002 3 8
 
 end Silicon.Source.Test.Resolve
