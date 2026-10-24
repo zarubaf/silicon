@@ -1,0 +1,10 @@
+// S010: a user struct with the name of a prelude struct is another type. A message writes it as `crate::PortKey`.
+// TOP M()
+struct PortKey {
+    a: Bool,
+}
+module M() {
+    // expected-error S010 @+2
+    // expected-message: an `as` key is a static `String` or `PortKey`, not a value of `crate::PortKey`; write the public name as a string, for example `as "req_0"`
+    input a: Bool as PortKey(true);
+}

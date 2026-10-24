@@ -1,0 +1,10 @@
+// S007: the arity text names a user `struct Reg` by its source name `Reg`, not by `crate::Reg`.
+// TOP M()
+struct Reg(comptime T: Type) {
+    a: T,
+}
+module M() domains() {
+    // expected-error S007 @+2
+    // expected-message: `Reg` takes 1 argument(s), but it has 0; pass one argument for each `comptime` parameter of `Reg`
+    let r = Reg(1);
+}

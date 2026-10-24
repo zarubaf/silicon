@@ -1,0 +1,10 @@
+// S010: a user `struct PortKey` is not the prelude `PortKey`. The message writes the user type as `crate::PortKey`.
+// TOP M()
+struct PortKey {
+    a: Bool,
+}
+module M() {
+    // expected-error S010 @+2
+    // expected-message: expected PortKey, but the value is crate::PortKey
+    let p = PortInfo(PortKey(true), Bool, true, "clk");
+}

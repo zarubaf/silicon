@@ -1,0 +1,10 @@
+// S021: a message names a variant by its source path `Bool::B`, not by `crate::Bool::B`.
+// TOP M()
+enum Bool: UInt[1] { A = 0, B = 1 }
+module M() {
+    input x: Bool;
+    output y: UInt[4];
+    // expected-error S021 @+2
+    // expected-message: the `match` does not cover `Bool::B` of `crate::Bool`; add an arm for it, or add `_ => ...` as the last arm
+    y := match (x) { Bool::A => 1 };
+}

@@ -1,0 +1,11 @@
+// S010: a message names a pattern by its source text `Bool::A`, not by `crate::Bool::A`.
+// TOP M()
+enum Bool: UInt[1] { A = 0, B = 1 }
+enum Other: UInt[1] { A = 0 }
+module M() {
+    input x: Other;
+    output y: UInt[4];
+    // expected-error S010 @+2
+    // expected-message: a pattern of `Other` is a variant of `Other`, not `Bool::A`; write a variant of `Other`, or `_`
+    y := match (x) { Bool::A => 1, _ => 2 };
+}
