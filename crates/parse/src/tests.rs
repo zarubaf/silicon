@@ -505,7 +505,6 @@ fn later_slice_syntax_is_s004() {
         ("module M() { @field(x, \"f\") = 1; }", 1, 14),
         ("module M() { reg r: T in d = 0; }", 1, 23),
         ("module M() { wire w: T in d; }", 1, 24),
-        ("module M() { input i: T as 1; }", 1, 25),
         ("module M() { instance u = A() with { }; }", 1, 31),
         ("module M() { instance u = a::A(); }", 1, 28),
         ("const X: T = @typeInfo(T);", 1, 14),
@@ -584,25 +583,18 @@ fn the_first_error_is_the_first_in_position_order() {
 }
 
 #[test]
-fn a_plain_fn_has_no_port() {
-    for stmt in ["input a: Bool;", "output a: Bool;"] {
-        let src = format!("fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
-        assert_eq!(first_error(&src), Some((Code::S004, 2, 3)), "{stmt}");
-        let parsed = parse(&src);
-        assert_eq!(
-            parsed.errors[0].message,
-            "a helper cannot declare a port; declare the port in the module body and pass its \
-             value to the helper"
-        );
-        // `comptime fn` and `module` keep the statement. `typeck` checks the first.
-        let comptime = format!("comptime fn f() -> Nat {{\n  {stmt}\n  return 1;\n}}\n");
-        assert_eq!(first_error(&comptime), None, "{stmt}");
-        let module = format!("module M() {{\n  {stmt}\n}}\n");
-        assert_eq!(first_error(&module), None, "{stmt}");
+fn every_body_parses_a_port() {
+    for stmt in [
+        "input a: Bool;",
+        "output a: Bool;",
+        "input a[1]: Bool;",
+        "output a: Bool as \"b\";",
+    ] {
+        for head in ["fn f() -> Nat", "comptime fn f() -> Nat", "module M()"] {
+            let src = format!("{head} {{\n  {stmt}\n}}\n");
+            assert_eq!(first_error(&src), None, "{src}");
+        }
     }
-    // The rule ends with the body.
-    let src = "fn f() -> Nat { return 1; }\nmodule M() { input w: Bool; }\n";
-    assert_eq!(first_error(src), None);
 }
 
 #[test]
@@ -1267,7 +1259,6 @@ fn container_forms_give_s001_and_s004_like_lean() {
         ("module M() { a.x(1) = 1; }", Code::S001, 1, 21),
         ("module M() { x.f().g = 1; }", Code::S001, 1, 22),
         ("module M() { mem m: [T; 4] in d; }", Code::S004, 1, 28),
-        ("fn f() -> T { input a: T; }", Code::S004, 1, 15),
         ("const A: (,) = 0;", Code::S001, 1, 11),
         ("const A: (T U) = 0;", Code::S001, 1, 13),
         ("const A: (T, U V) = 0;", Code::S001, 1, 16),
@@ -1634,11 +1625,35 @@ fn the_key_of_a_port_family_is_one_expression() {
     ] {
         assert_eq!(first_error(input), Some((Code::S001, line, col)), "{input}");
     }
-    // The key with `as` of a later slice stays S004, after the key.
+}
+
+#[test]
+fn an_indexed_port_takes_no_as_key() {
+    let parsed = parse("module M() { input i[1]: T as 1; }");
+    let error = &parsed.errors[0];
+    assert_eq!((error.code, error.pos), (Code::S001, pos(1, 28)));
     assert_eq!(
-        first_error("module M() { input i[1]: T as 1; }"),
-        Some((Code::S004, 1, 28))
+        error.message,
+        "an indexed port takes no `as` key; declare a scalar port with `as PortKey(\"i\", true, k)`"
     );
+}
+
+#[test]
+fn an_as_key_is_one_expression_after_the_type() {
+    let dump = |input: &str| parse(input).dump().unwrap().unwrap().trim_end().to_owned();
+    assert_eq!(
+        dump("module M() { input a: UInt[8] as \"x\" + str(N); output b: Bool as k; }"),
+        "(module \"M\" () none ((input \"a\" (keyed (binary add (str \"x\") (call (name \"str\") \
+         ((name \"N\"))))) (index (name \"UInt\") ((num 8)))) \
+         (output \"b\" (keyed (name \"k\")) (name \"Bool\"))))"
+    );
+    for (input, line, col) in [
+        ("module M() { input a: T as ; }", 1, 28),
+        ("module M() { input a: T as 1 }", 1, 30),
+        ("module M() { input a: T as 1 as 2; }", 1, 30),
+    ] {
+        assert_eq!(first_error(input), Some((Code::S001, line, col)), "{input}");
+    }
 }
 
 #[test]

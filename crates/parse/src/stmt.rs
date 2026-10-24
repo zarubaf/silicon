@@ -22,7 +22,7 @@ fn starts_stmt(kind: SyntaxKind) -> bool {
     )
 }
 
-impl Parser<'_> {
+impl<'a> Parser<'a> {
     /// A block: statements between braces. Statements recover from an error, so the block
     /// always ends at its closing brace or at the end of the input.
     pub(crate) fn block(&mut self) -> Res {
@@ -72,11 +72,6 @@ impl Parser<'_> {
 
     fn stmt(&mut self) -> Res {
         let kind = self.cur()?;
-        // A `comptime fn` has these statements and `typeck` rejects them with `S006`.
-        if self.in_plain_fn && matches!(kind, InputKw | OutputKw) {
-            self.port_in_fn(self.offset());
-            return None;
-        }
         match kind {
             LetKw => self.node(LetStmt, Self::let_stmt),
             RegKw => self.node(RegStmt, Self::reg_stmt),
@@ -151,32 +146,43 @@ impl Parser<'_> {
         self.expect(Semi, "`;`")
     }
 
-    /// `input x: T;` or `output x: T;`
+    /// `input x: T;`, `input x[k]: T;`, or `input x: T as key;`, and the same for `output`.
     fn port(&mut self) -> Res {
-        self.port_head()?;
-        self.port_tail()
+        let (name, indexed) = self.port_head()?;
+        self.port_tail(name, indexed)
     }
 
     /// The keyword, the name, and the key of a family entry in brackets. The key is one
-    /// expression, so `[]` and `[a, b]` are `S001`.
-    fn port_head(&mut self) -> Res {
+    /// expression, so `[]` and `[a, b]` are `S001`. The result is the name and whether the port
+    /// has a key in brackets.
+    fn port_head(&mut self) -> Option<(&'a str, bool)> {
         self.bump();
+        let name = self.cur_text();
         self.expect(Ident, "a name")?;
-        if self.eat(LBracket) {
+        let indexed = self.eat(LBracket);
+        if indexed {
             self.expr()?;
             self.expect(RBracket, "`]`")?;
         }
-        Some(())
+        Some((name, indexed))
     }
 
-    /// The type, the domain check, and the `;` of a port declaration.
-    fn port_tail(&mut self) -> Res {
+    /// The type, the domain check, the `as` key, and the `;` of a port declaration. An indexed
+    /// port takes no `as` key (section 5.6), so its `as` is `S001`.
+    fn port_tail(&mut self, name: &str, indexed: bool) -> Res {
         self.expect(Colon, "`:`")?;
         self.type_expr()?;
         self.no_domain_annotation()?;
         if self.is(AsKw) {
-            self.later_slice(self.offset(), "a key with `as`");
-            return None;
+            if indexed {
+                self.syntax_error(&format!(
+                    "an indexed port takes no `as` key; declare a scalar port with `as \
+                     PortKey(\"{name}\", true, k)`"
+                ));
+                return None;
+            }
+            self.bump();
+            self.expr()?;
         }
         self.expect(Semi, "`;`")
     }

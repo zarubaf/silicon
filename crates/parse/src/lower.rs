@@ -374,21 +374,31 @@ impl<'a> Lower<'a> {
             InputStmt => Some(Stmt::Input {
                 pos,
                 name: self.ident(node)?,
-                form: exprs.first().map_or(Some(PortForm::Scalar), |e| {
-                    self.expr(e).map(PortForm::Indexed)
-                })?,
+                form: self.port_form(node, &exprs)?,
                 ty: ty()?,
             }),
             OutputStmt => Some(Stmt::Output {
                 pos,
                 name: self.ident(node)?,
-                form: exprs.first().map_or(Some(PortForm::Scalar), |e| {
-                    self.expr(e).map(PortForm::Indexed)
-                })?,
+                form: self.port_form(node, &exprs)?,
                 ty: ty()?,
             }),
             _ => None,
         }
+    }
+
+    /// The form of a port from its expressions: the key after `as`, the family key in brackets,
+    /// or none.
+    fn port_form(&self, node: &SyntaxNode, exprs: &[SyntaxNode]) -> Option<PortForm> {
+        let Some(first) = exprs.first() else {
+            return Some(PortForm::Scalar);
+        };
+        let key = self.expr(first)?;
+        Some(if has(node, SyntaxKind::AsKw) {
+            PortForm::Keyed(key)
+        } else {
+            PortForm::Indexed(key)
+        })
     }
 
     /// The expressions of the `ArgList` child.
