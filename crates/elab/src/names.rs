@@ -321,6 +321,15 @@ impl Step {
     }
 }
 
+/// The public name of the port `x` with the family key `key` in a message: `x`, or the entry
+/// `x[k]` (section 6.2). Only an error renders it.
+pub(crate) fn entry_text(x: &str, key: Option<u32>) -> String {
+    match key {
+        Some(k) => format!("{x}[{k}]"),
+        None => x.to_owned(),
+    }
+}
+
 /// A structural path: an index into the paths of an elaboration.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PathId(usize);
@@ -402,6 +411,13 @@ impl Paths {
         loop {
             match self.nodes.get(at.0) {
                 Some(PathNode::Push(parent, step)) => {
+                    // A port family entry is the outer name and one key (Lean `sourceOf`).
+                    if at == p
+                        && let (Step::Family(k), Some(PathNode::Outer(s))) =
+                            (step, self.nodes.get(parent.0))
+                    {
+                        return entry_text(texts.get(*s).map_or("", String::as_str), Some(*k));
+                    }
                     if let Step::User(s) = step
                         && first.is_none()
                     {
