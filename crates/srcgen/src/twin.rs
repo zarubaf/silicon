@@ -2292,34 +2292,89 @@ mod tests {
         );
     }
 
-    /// The `in=` line of `ports`, with the reset first for a clocked top.
-    fn input_of(ports: &Ports) -> String {
-        let reset = ports.clocked.then(|| "clock$0rst false".to_owned());
-        let entries: Vec<String> = reset
-            .into_iter()
-            .chain(ports.inputs.iter().map(|(n, _)| format!("{n} 1")))
-            .collect();
-        format!("in=({})", entries.join(" "))
+    /// The pairs `name value` of a line `kind=(...)`, without the reset.
+    fn entries(line: &str) -> Vec<(String, String)> {
+        let inner = line
+            .split_once("=(")
+            .and_then(|(_, rest)| rest.strip_suffix(')'))
+            .unwrap_or_default();
+        let words: Vec<&str> = inner.split_whitespace().collect();
+        words
+            .chunks(2)
+            .filter(|w| w.first() != Some(&"clock$0rst"))
+            .map(|w| (w[0].to_owned(), w[1].to_owned()))
+            .collect()
     }
 
-    /// Without a family, the twin keeps each port name and the order, so the
-    /// maps change nothing.
+    /// For each typed program, the names of the mapped input line are the
+    /// inputs of the twin in the byte order of its names, each value stays
+    /// with its port, and the mapped output line has the names and the order
+    /// of the ports of the program.
     #[test]
-    fn the_vector_maps_keep_the_lines_of_a_program_without_families() {
+    fn the_vector_maps_order_the_lines_by_the_layouts() {
         let mut runner = TestRunner::deterministic();
-        for _ in 0..64 {
+        for _ in 0..256 {
             let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
             let t = twin(&p);
-            let line = input_of(p.ports());
-            assert_eq!(t.input_line(&line).as_deref(), Ok(line.as_str()));
-            let outputs: Vec<String> = p
-                .ports()
-                .outputs
+            let ports = p.ports();
+            let line = {
+                let reset = ports.clocked.then(|| "clock$0rst false".to_owned());
+                let values = ports
+                    .inputs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (n, _))| format!("{n} {i}"));
+                let all: Vec<String> = reset.into_iter().chain(values).collect();
+                format!("in=({})", all.join(" "))
+            };
+            let mapped = t.input_line(&line).unwrap();
+            assert_eq!(mapped.starts_with("in=(clock$0rst false"), ports.clocked);
+            let (twin_order, _) = t.leaf_names(false);
+            let want: Vec<(String, String)> = twin_order
                 .iter()
-                .map(|(n, _)| format!("{n} 0"))
+                .map(|(program, twin)| {
+                    let at = ports.inputs.iter().position(|(n, _)| n == program).unwrap();
+                    (twin.clone(), at.to_string())
+                })
                 .collect();
-            let out = format!("out=({})", outputs.join(" "));
-            assert_eq!(t.output_line(&out).as_deref(), Ok(out.as_str()));
+            assert_eq!(entries(&mapped), want, "{line}");
+            // The twin sorts its scalar ports by the bytes of their names,
+            // the leaves of one port in packing order.
+            let mut names: Vec<&TwinPort> = t.ports.iter().filter(|p| !p.output).collect();
+            names.sort_by(|a, b| a.name.cmp(&b.name));
+            let flat: Vec<String> = names
+                .iter()
+                .flat_map(|p| p.leaves.iter().map(|(sfx, _)| format!("{}{sfx}", p.name)))
+                .collect();
+            assert_eq!(
+                entries(&mapped)
+                    .into_iter()
+                    .map(|e| e.0)
+                    .collect::<Vec<_>>(),
+                flat
+            );
+            // The outputs go back to the layout of the program.
+            let (twin_out, _) = t.leaf_names(true);
+            let out = format!(
+                "out=({})",
+                twin_out
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, twin))| format!("{twin} {i}"))
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            );
+            let back = entries(&t.output_line(&out).unwrap());
+            let names: Vec<&str> = back.iter().map(|e| e.0.as_str()).collect();
+            let program: Vec<&str> = ports.outputs.iter().map(|(n, _)| n.as_str()).collect();
+            assert_eq!(names, program, "{out}");
+            for (name, value) in &back {
+                let at = twin_out
+                    .iter()
+                    .position(|(program, _)| program == name)
+                    .unwrap();
+                assert_eq!(value, &at.to_string());
+            }
         }
     }
 

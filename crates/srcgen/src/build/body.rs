@@ -191,6 +191,7 @@ impl Builder {
             local: false,
             called: BTreeSet::new(),
             looped: false,
+            port: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(3) {
@@ -293,7 +294,7 @@ impl Builder {
     }
 
     /// A random type with a width that holds in each env.
-    fn decl_ty(&mut self, r: Reach<'_>, envs: &[Env]) -> Ty {
+    pub(super) fn decl_ty(&mut self, r: Reach<'_>, envs: &[Env]) -> Ty {
         match self.tape.below(3) {
             0 => Ty::Bool,
             1 => Ty::UInt(self.width(r, envs)),
@@ -372,6 +373,7 @@ impl Builder {
                 outputs.push((names.fresh("o"), self.decl_ty(r, &domain)));
             }
             let (enum_inputs, enum_outputs) = self.enum_ports();
+            let plan = self.port_plan(k == 0);
             self.sigs.push(Sig {
                 name: format!("M{k}"),
                 params,
@@ -380,6 +382,7 @@ impl Builder {
                 outputs,
                 enum_inputs,
                 enum_outputs,
+                plan,
             });
         }
     }
@@ -404,6 +407,7 @@ impl Builder {
             local: false,
             called: BTreeSet::new(),
             looped: false,
+            port: Vec::new(),
         };
         let mut body = Vec::new();
         for (n, t) in &sig.inputs {
@@ -449,6 +453,7 @@ impl Builder {
                 ));
             }
         }
+        self.port_forms(&mut ctx, &mut m, &sig.plan, &mut body)?;
         body.extend(self.frame(&mut ctx, &mut m, 0)?);
         self.call_unused(&mut ctx, &mut m, &mut body)?;
         self.close_pending(&mut ctx, &mut body)?;
@@ -459,9 +464,14 @@ impl Builder {
         if let Some(j) = orphan {
             self.instantiate(&mut ctx, &mut m, j, &mut body)?;
         }
+        let mut values = Vec::new();
         for (n, w) in outputs {
             let value = self.driver(&ctx, &w);
             let value = self.mix_hand(&ctx, &w, value);
+            values.push((n, w, value));
+        }
+        self.mix_port(&ctx, &mut values);
+        for (n, _, value) in values {
             body.push(Stmt::Connect(Place::Name(n), value));
         }
         for (n, def) in &sig.enum_outputs {

@@ -371,6 +371,7 @@ impl Builder {
             local: false,
             called: BTreeSet::new(),
             looped: false,
+            port: Vec::new(),
         };
         let mut body = Vec::new();
         for _ in 0..self.tape.below(2) {
