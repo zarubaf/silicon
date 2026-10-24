@@ -331,7 +331,7 @@ impl Evaluator<'_> {
     pub(super) fn field_sym(&self, f: &Ident) -> Option<Sym> {
         match self.names {
             Names::File => self.syms.fields.get(&f.id).copied(),
-            Names::Top => self.syms.texts.iter().position(|t| *t == f.name),
+            Names::Top => self.syms.find(&f.name),
         }
     }
 

@@ -50,6 +50,9 @@ impl CallArgs {
 pub(crate) struct Syms {
     /// The text of each symbol.
     pub texts: Vec<String>,
+    /// The symbol of each text. The scan fills it, and a name that the run computes extends it
+    /// (`symbol_of`), so each text has one symbol.
+    table: BTreeMap<String, Sym>,
     /// The symbol of each declaration of a binder of the AST.
     pub decls: BTreeMap<DeclId, Sym>,
     /// The symbol of each field name, by its node id.
@@ -73,6 +76,25 @@ pub(crate) struct Syms {
     pub payload: Sym,
 }
 
+impl Syms {
+    /// The symbol of the text `x`. A text that has none takes the next free symbol, and its text
+    /// goes into the table once. The caller of a computed name charges the size of `x` first.
+    pub(crate) fn symbol_of(&mut self, x: &str) -> Sym {
+        if let Some(&s) = self.table.get(x) {
+            return s;
+        }
+        let s = self.texts.len();
+        self.texts.push(x.to_owned());
+        self.table.insert(x.to_owned(), s);
+        s
+    }
+
+    /// The symbol of the text `x`, if a name of the file or of a computed key has it.
+    pub(crate) fn find(&self, x: &str) -> Option<Sym> {
+        self.table.get(x).copied()
+    }
+}
+
 /// The result of the pass before the evaluation of `top` in the file scope of `file`.
 pub(crate) struct Scan {
     pub stack: NestedStack,
@@ -94,7 +116,6 @@ pub(crate) fn of(file: &Resolved, top: Option<&ResolvedExpr>) -> Scan {
         call_args: CallArgs::default(),
         #[cfg(test)]
         nodes: 0,
-        table: BTreeMap::new(),
         syms: Syms::default(),
         families: BTreeMap::new(),
     };
@@ -132,7 +153,6 @@ struct Walk<'a> {
     call_args: CallArgs,
     #[cfg(test)]
     nodes: u64,
-    table: BTreeMap<String, Sym>,
     syms: Syms,
     /// The port families of the module item that the walk is in.
     families: BTreeMap<Sym, bool>,
@@ -166,13 +186,7 @@ impl Walk<'_> {
     }
 
     fn intern(&mut self, x: &str) -> Sym {
-        if let Some(&s) = self.table.get(x) {
-            return s;
-        }
-        let s = self.syms.texts.len();
-        self.syms.texts.push(x.to_owned());
-        self.table.insert(x.to_owned(), s);
-        s
+        self.syms.symbol_of(x)
     }
 
     fn binder(&mut self, b: &Ident) {

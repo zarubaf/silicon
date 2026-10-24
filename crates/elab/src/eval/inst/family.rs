@@ -3,8 +3,8 @@
 //! `Eval.familySel`, `Eval.childSel`, `Eval.familyTarget`, and `Elab.childTarget` define them.
 //!
 //! A family `req` holds one port for each key. An entry `input req[k]: T;` is one whole port with
-//! the core name `req$<k>f`. It goes into the table `Work::entries` by its family binder and its
-//! key, and no frame slot holds it. A key is a `u32` (section 5.4), so each compare, sort, and
+//! the core name `req$<k>f`. It goes into the table `Work::entries` by the symbol of its public
+//! name and its key, and no frame slot holds it. A key is a `u32` (section 5.4), so each compare, sort, and
 //! name of a key takes constant work. The text of an error renders when the error is made.
 //!
 //! The order of the checks follows section 6.2. A declaration charges its statement, evaluates
@@ -13,7 +13,7 @@
 //! node and its name node, evaluates its key, takes the checks of a key, and then looks up the
 //! entry. A selection refers to the port: it charges no size and copies nothing.
 
-use super::{Elab, PortDecl, entry_text};
+use super::{Elab, PortDecl, Public, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
@@ -77,9 +77,10 @@ impl FamKey {
 }
 
 impl Elab {
-    /// The value and the declaration position of the entry `key` of the family `id`.
-    fn entry(&self, id: DeclId, key: u32) -> Option<&(Val, Pos)> {
-        self.work.entries.get(&(id, key))
+    /// The value and the declaration position of the entry `key` of the family with the public
+    /// name `sym`.
+    fn entry(&self, sym: Sym, key: u32) -> Option<&(Val, Pos)> {
+        self.work.entries.get(&(sym, key))
     }
 }
 
@@ -106,10 +107,14 @@ impl Evaluator<'_> {
 
     /// Whether the done instantiation `inst` has a port family with the symbol `sym`.
     pub(in crate::eval) fn has_family(&self, inst: usize, sym: Sym) -> bool {
-        self.elab
-            .interface(inst)
-            .and_then(|i| self.syms.families.get(i.item))
-            .is_some_and(|m| m.contains_key(&sym))
+        self.elab.interface(inst).is_some_and(|i| {
+            i.declares_family(sym)
+                || self
+                    .syms
+                    .families
+                    .get(i.item)
+                    .is_some_and(|m| m.contains_key(&sym))
+        })
     }
 
     /// The family of a child that the field `f` of the base `b` names, when `b` is an `Instance`
@@ -188,7 +193,9 @@ impl Evaluator<'_> {
         let tid = self.type_expr(ty)?;
         let t = self.data_type(pos, tid)?;
         let id = self.decl(name)?;
-        if let Some((_, first)) = self.elab.entry(id, k) {
+        let sym = self.sym(id);
+        self.publish(sym, Public::Family, pos);
+        if let Some((_, first)) = self.elab.entry(sym, k) {
             let (line, col) = (first.line, first.col);
             return fail(
                 Code::S019,
@@ -200,7 +207,6 @@ impl Evaluator<'_> {
                 ),
             );
         }
-        let sym = self.sym(id);
         self.elab.work.body.ports.push(PortDecl {
             sym,
             key: Some(k),
@@ -212,14 +218,14 @@ impl Evaluator<'_> {
         let outer = self.paths.child(None, sym);
         let path = self.paths.push(outer, Step::Family(k));
         let v = self.port_value(pos, input, path, tid, (sym, Some(k)))?;
-        self.elab.work.entries.insert((id, k), (v, pos));
+        self.elab.work.entries.insert((sym, k), (v, pos));
         Ok(())
     }
 
     /// The value of the entry `k` of the family `x` with the binder `id`, at the key `kp`. A key
     /// that the body did not declare before is `S013` "Undeclared family key".
     pub(in crate::eval) fn entry_val(&self, kp: Pos, x: &str, id: DeclId, k: u32) -> Res<Val> {
-        match self.elab.entry(id, k) {
+        match self.elab.entry(self.sym(id), k) {
             Some((v, _)) => Ok(v.clone()),
             None => fail(
                 Code::S013,
