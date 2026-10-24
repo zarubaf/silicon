@@ -1,0 +1,21 @@
+// S011: an own output entry as a module argument. The text names the entry by its public name.
+// TOP M()
+module C() {
+  input req[0]: Bool;
+}
+comptime fn f(x: Bool) -> Nat { return 0; }
+module D(comptime b: Bool) {
+}
+module M() {
+  input a: Bool;
+  output o: UInt[8];
+  output gnt[3]: Bool;
+  instance u = C();
+  u.req[0] := a;
+  o := 0;
+  gnt[3] := a;
+  let h = gnt[3];
+  // expected-error S011 @+2
+  // expected-message: a module argument holds the output `gnt[3]`, but it takes only static values; pass the data through a port, or use it in the module that declares it
+  instance w = D(h);
+}

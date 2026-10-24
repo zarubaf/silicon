@@ -1,0 +1,21 @@
+// S010: a local that holds the output o takes no output entry. The text names the entry by its public name.
+// TOP M()
+module C() {
+  input req[0]: Bool;
+}
+comptime fn f(x: Bool) -> Nat { return 0; }
+module D(comptime b: Bool) {
+}
+module M() {
+  input a: Bool;
+  output o: UInt[8];
+  output gnt[3]: Bool;
+  instance u = C();
+  u.req[0] := a;
+  o := 0;
+  gnt[3] := a;
+  let mut l = o;
+  // expected-error S010 @+2
+  // expected-message: the local holds the output `o`, so it takes only an output of `UInt[8]`, not the output `gnt[3]`; use the output `o` directly
+  l = gnt[3];
+}

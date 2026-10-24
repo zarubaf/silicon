@@ -1,0 +1,21 @@
+// A child family entry is read through a temporary tuple of instances: a tuple literal and a tuple that a helper returns.
+// TOP M()
+module C() {
+    input x: UInt[8];
+    output q[0]: UInt[8];
+    q[0] := x +% 7;
+}
+fn wrap(h: Instance[C]) -> (Instance[C],) {
+    return (h,);
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: UInt[8];
+    instance u = C();
+    u.x := x;
+    o := (u,).0.q[0];
+    p := wrap(u).0.q[0];
+}
+// STEP in=(clock$0rst false x 1) out=(o 8 p 8)
+// STEP in=(clock$0rst false x 250) out=(o 1 p 1)
