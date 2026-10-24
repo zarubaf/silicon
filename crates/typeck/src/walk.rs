@@ -245,7 +245,7 @@ fn signature(p: Prelude) -> Option<&'static str> {
 
 fn resource(kind: Kind) -> Option<&'static str> {
     match kind {
-        Kind::Input | Kind::Output => Some("a port"),
+        Kind::Input | Kind::Output | Kind::Family { .. } => Some("a port"),
         Kind::Reg => Some("a register"),
         Kind::Wire => Some("a wire"),
         Kind::Mem => Some("a memory"),
@@ -362,7 +362,7 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// A name that is not a type. A resource in a static position is `S005`.
+    /// A name that is not a type. A resource or a port family in a static position is `S005`.
     fn resource_name(&mut self, is_static: bool, pos: Pos, id: NodeId, name: &str) {
         if let Some(Target::Decl(id)) = self.target(id)
             && is_static
@@ -886,8 +886,11 @@ impl<'a> Walker<'a> {
                 self.type_expr(word);
                 self.expr(true, depth);
             }
-            Stmt::Input { pos, ty, .. } | Stmt::Output { pos, ty, .. } => {
+            Stmt::Input { pos, index, ty, .. } | Stmt::Output { pos, index, ty, .. } => {
                 self.placement(owner, *pos, "port");
+                if let Some(key) = index {
+                    self.expr(true, key);
+                }
                 self.type_expr(ty);
             }
             Stmt::Inst {
