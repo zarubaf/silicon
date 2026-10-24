@@ -357,7 +357,8 @@ def inc : Value := .function 0 "inc" #[.mk true (.uint 8), .mk false .bool] .uni
 /-!
 The prelude struct `ReadResponse` has the token `prelude` in the place of the package. A user
 struct with the same name and arguments serializes with `root`, so the two never share an
-identity. A message names both in their source form.
+identity. A message names the prelude struct in its source form and the user struct as
+`crate::ReadResponse` (section 5.6).
 -/
 def response (pre : Bool) : Ty :=
   .struct 4 "ReadResponse" #[.type (.uint 8)] (Meta.struct [(Ty.uint 8).info, Ty.bool.info] [2])
@@ -365,7 +366,7 @@ def response (pre : Bool) : Ty :=
 #guard (response true).serialize == "(struct prelude ReadResponse ((type (uint 8))))"
 #guard (response false).serialize == "(struct root ReadResponse ((type (uint 8))))"
 #guard (response true).text == "ReadResponse[UInt[8]]"
-#guard (response false).text == "ReadResponse[UInt[8]]"
+#guard (response false).text == "crate::ReadResponse[UInt[8]]"
 #guard (response true) != (response false)
 #guard (response true).size == (response false).size
 #guard (Value.record (response true) #[.uint 8 3, .bool true]).serialize ==
@@ -484,6 +485,26 @@ def huge : Nat → Ty
 #guard (wide 114).text.utf8ByteSize == 1027 && (wide 114).text.endsWith "UInt[8..."
 #guard (wide (2 ^ 20)).text.utf8ByteSize == 1027 && (wide (2 ^ 20)).text.endsWith "UInt[8..."
 #guard (Value.tuple (Array.replicate (2 ^ 20) (.uint 8 0))).text.utf8ByteSize == 1027
+/-!
+A user struct or enum with a prelude type name prints as `crate::X` at each depth (section 5.6).
+A prelude struct keeps its source form. The marker comes in the same step as the name, so the
+cut at the bound treats it as a part of the name.
+-/
+def userBool : Ty := .struct 102 "Bool" #[] (Meta.struct [Meta.finite 1] [])
+#guard userBool.text == "crate::Bool"
+#guard (Ty.struct 103 "Reg" #[.int 3] (Meta.struct [] [1])).text == "crate::Reg[3]"
+#guard (Ty.enum 4 "PortKey" Meta.bool).text == "crate::PortKey"
+#guard (Ty.array (.list userBool) 4).text == "[List[crate::Bool]; 4]"
+#guard (Ty.tuple #[.bool, userBool]).text == "(Bool, crate::Bool)"
+#guard (Value.record userBool #[.uint 1 1]).literal == "crate::Bool(1)"
+#guard (Ty.struct 5 "PortKey" #[] (Meta.struct [] []) true).text == "PortKey"
+#guard (Ty.struct 0 "ReadResponse" #[.type (.uint 8)] (Meta.struct [] [1]) true).text ==
+  "ReadResponse[UInt[8]]"
+#guard (Ty.struct 104 "Packet2" #[] (Meta.struct [] [])).text == "Packet2"
+#guard boundText (userBool.put (String.ofList (List.replicate 1020 'a'))) ==
+  String.ofList (List.replicate 1020 'a') ++ "crat..."
+#guard boundText (userBool.put (String.ofList (List.replicate 1030 'a'))) ==
+  String.ofList (List.replicate 1024 'a') ++ "..."
 /-!
 Past the bound, each walk returns its text at once and visits no part. Thus a list of `2^20`
 parts adds one step after the bound, not one step for each part.

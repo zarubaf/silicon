@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 /-!
-The source AST of slices 1 to 3, its source positions, and the error codes of the front end.
+The source AST of slices 1 to 3, its source positions, the error codes of the front end, and
+the prelude type names.
 The AST dump prints each constructor name in lowercase, and the Rust front end uses the
 same names. Each node keeps the position of the first token of its form.
 -/
@@ -223,5 +224,15 @@ structure Error where
   pos : Pos
   msg : String
   deriving Repr, DecidableEq, BEq, Inhabited
+
+/-!
+The prelude type names of section 5.6: the builtin types of `Resolve.prelude`, then the prelude
+structs of `Resolve.preludeStructs`. A message names a user struct or enum with one of these
+names as `crate::X`. The tests of the resolver hold this list equal to its two tables.
+-/
+def preludeTypeNames : List String :=
+  ["Bool", "UInt", "SInt", "Nat", "Int", "Unit", "Type", "String", "List", "Reg", "Wire",
+   "Input", "Mem", "Instance", "ReadResponse", "FieldInfo", "TypeInfo", "VariantInfo",
+   "PortKey", "PortInfo"]
 
 end Silicon.Source
