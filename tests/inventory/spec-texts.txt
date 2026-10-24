@@ -32,10 +32,8 @@ pin | S001 Query operand | 344
 lean | S001 `as` on an indexed port | 339
 rust | S001 `as` on an indexed port | 339
 pin | S001 `as` on an indexed port | 339
-lean | S002 Family and scalar port | 338
 rust | S002 Family and scalar port | 338
 pin | S002 Family and scalar port | 338
-lean | S010 Family as a value | 338
 rust | S010 Family as a value | 338
 pin | S010 Family as a value | 338
 lean | S010 `@typeInfo` of a value | 345
@@ -47,22 +45,16 @@ pin | S010 `@ports` of a non-instance | 346
 lean | S010 No public port | 344
 rust | S010 No public port | 344
 pin | S010 No public port | 344
-lean | S013 Undeclared family key | 338
 rust | S013 Undeclared family key | 338
 pin | S013 Undeclared family key | 338
-lean | S002 Family with two directions | 338
 rust | S002 Family with two directions | 338
 pin | S002 Family with two directions | 338
-lean | S010 Family key type | 338
 rust | S010 Family key type | 338
 pin | S010 Family key type | 338
-lean | S012 Family key range | 338
 rust | S012 Family key range | 338
 pin | S012 Family key range | 338
-lean | S013 Child family key | 338
 rust | S013 Child family key | 338
 pin | S013 Child family key | 338
-lean | S019 Family key twice | 338
 rust | S019 Family key twice | 338
 pin | S019 Family key twice | 338
 lean | S019 Public name twice | 339
@@ -270,6 +262,7 @@ unlisted | S010 unscannable crates/elab/src/eval/string.rs | 354
 unlisted | S010 unscannable crates/elab/src/eval/types.rs | 354
 unlisted | S010 unscannable crates/elab/src/ops.rs | 354
 unlisted | S010 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S010 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
 unlisted | S010 unscannable lean/Silicon/Source/Eval/Container.lean | 354
 unlisted | S010 unscannable lean/Silicon/Source/Eval/Types.lean | 354
 unlisted | S010 variant {} has {} payload type(s) here | 354
@@ -314,6 +307,7 @@ unlisted | S012 the width {} is not 1 to 65536 | 354
 unlisted | S012 unscannable crates/elab/src/eval/matching.rs | 354
 unlisted | S012 unscannable crates/elab/src/ops/container.rs | 354
 unlisted | S012 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S012 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
 unlisted | S013 `pop` of an empty list | 354
 unlisted | S013 division by zero | 354
 unlisted | S013 remainder by zero | 354
@@ -322,6 +316,8 @@ unlisted | S013 the index {} is out of range for {} element(s) | 354
 unlisted | S013 the index {} is out of range for {} scalar(s) | 354
 unlisted | S013 the selector {} is out of range for {} | 354
 unlisted | S013 the shift count {} is negative | 354
+unlisted | S013 unscannable lean/Silicon/Source/Eval.lean | 354
+unlisted | S013 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
 unlisted | S014 static assertion failed: {} | 354
 unlisted | S014 unscannable crates/elab/src/eval/call.rs | 354
 unlisted | S014 unscannable lean/Silicon/Source/Eval.lean | 354
@@ -360,6 +356,7 @@ unlisted | S019 the parameter types of `{}` depend on `{}` | 354
 unlisted | S019 the specialization {} is in progress | 354
 unlisted | S019 two declarations have the core name `{}` | 354
 unlisted | S019 two instantiations have the emitted name `{}` | 354
+unlisted | S019 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
 unlisted | S020 the lowered design has a combinational cycle | 354
 unlisted | S021 the `match` has no arm | 354
 unlisted | S021 the `match` has no arm for its value | 354
