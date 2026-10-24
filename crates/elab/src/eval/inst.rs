@@ -32,8 +32,9 @@
 //! top selection and their typed use belong to no instantiation.
 //!
 //! The child module `design` holds the description of an instantiation and the `Design`. The
-//! child module `bind` holds the binding rule and the texts of `S018`. The child module `stmt`
-//! runs the statements of a module body.
+//! child module `work` holds the work state of the current instantiation behind methods. The
+//! child module `bind` holds the texts of `S018`. The child module `stmt` runs the statements of
+//! a module body.
 
 use super::{Evaluator, Out, ROOT, Res, Slot, fail};
 use crate::hw::{Port, PortId, Val};
