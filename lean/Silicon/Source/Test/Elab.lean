@@ -3558,6 +3558,12 @@ def keyBinds : String := "  u.k_in := a;\n  u.l[0] := a;\n  u.l[1] := a;\n"
   "S013 26:7 the child `Instance[C]` has no entry `l[2]`; select a key that `Instance[C]` " ++
     "declares"
 #guard keyPar (keyBinds ++ "  let z = u.l;\n  o := a;\n") == s!"S010 26:11 {famValue "l"}"
+-- The public name of a child input in an `S017` text has the limit of a string.
+#guard failure (s!"module C() \{\n  input {String.ofList (List.replicate 66 'c')}: Bool;\n}\n" ++
+    "module M() {\n  instance u = C();\n" ++
+    s!"  let z = read(u.{String.ofList (List.replicate 66 'c')});\n}\n") 100000000 ==
+  s!"S017 6:11 the input `{String.ofList (List.replicate 64 'c')}... (66 characters)` of `u` " ++
+    "is a target only; read the value that you bind to it"
 
 /-!
 The charges of section 5.4: a key charges its nodes, then the public name its size, 1 plus its

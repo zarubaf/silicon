@@ -269,10 +269,13 @@ def readHint : Val → String
   | .handle (.domain _) => "a domain has no value, so remove the `read`"
   | _ => "use the value directly, without `read`"
 
-/-! The `S017` text "`read` of an input" of the input `q` of the child at `path` (section 6.2). -/
+/-!
+The `S017` text "`read` of an input" of the input `q` of the child at `path` (section 6.2). The
+public name of the input has the limit of a string in a message (section 5.5).
+-/
 def inputText (path : Path) (q : Port) : String :=
-  s!"the input `{q.text}` of `{sourceOf path}` is a target only; read the value that you bind " ++
-    "to it"
+  s!"the input `{strText q.text}` of `{sourceOf path}` is a target only; read the value that " ++
+    "you bind to it"
 
 /-!
 The read of the handle `h` at `pos` in a `data` context, under `above` nodes of a container
