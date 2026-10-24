@@ -3415,6 +3415,9 @@ def unboundKeyed (r x : String) : String :=
 #guard keyMod "  input x: Bool as \"\";\n" == s!"S022 3:20 {nameRule ""}"
 #guard keyMod "  input x: Bool as \"match\";\n" == s!"S022 3:20 {keywordName "match"}"
 #guard keyMod "  input x: Bool as PortKey(\"in\", true, 0);\n" == s!"S022 3:20 {keywordName "in"}"
+-- The name charges 1 plus its characters, not its bytes, before the name rule (section 5.4).
+#guard cost "module M() {\n  input x: Bool as \"éé\";\n}\n" "M" (fuel := 36) == "S022 2:20"
+#guard cost "module M() {\n  input x: Bool as \"éé\";\n}\n" "M" (fuel := 35) == "S015 2:20"
 
 /-!
 Collisions of public names (section 5.6), at the second declaration. A family of the module body
