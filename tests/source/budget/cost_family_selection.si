@@ -1,0 +1,10 @@
+// Three selections `req[k]` of an own family. Each selection charges the index node, the name node, and the key. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 142
+// TOP M()
+module M() {
+    output o: UInt[8];
+    input req[0]: UInt[8];
+    input req[1]: UInt[8];
+    input req[2]: UInt[8];
+    o := req[0] +% req[1] +% req[2];
+}

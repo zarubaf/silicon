@@ -1,0 +1,13 @@
+// An entry can hold a record and a tuple. The leaves are `req[1].a` and `req[2].0`.
+// TOP M()
+struct P { a: UInt[4], b: UInt[4] }
+module M() {
+    output o: UInt[4];
+    output t: UInt[4];
+    input req[1]: P;
+    input req[2]: (UInt[4], Bool);
+    o := req[1].a +% req[1].b;
+    t := req[2].0;
+}
+// STEP in=(clock$0rst false req[1].a 3 req[1].b 4 req[2].0 9 req[2].1 true) out=(o 7 t 9)
+// STEP in=(clock$0rst false req[1].a 15 req[1].b 1 req[2].0 0 req[2].1 false) out=(o 0 t 0)

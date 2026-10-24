@@ -1,0 +1,24 @@
+// The base of `us[i].req[k]` is an element of an array of instances. The base evaluates once, and the key selects the entry of that child.
+// TOP M()
+module C() {
+    input req[0]: UInt[8];
+    input req[1]: UInt[8];
+    output q: UInt[8];
+    q := req[0] +% req[1];
+}
+module M() {
+    input x: UInt[8];
+    output p: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    instance v = C();
+    let us = [u, v];
+    comptime for i in 0..2 {
+        us[i].req[0] := x;
+        us[i].req[1] := x +% i;
+    }
+    p := u.q;
+    o := v.q;
+}
+// STEP in=(clock$0rst false x 1) out=(o 3 p 2)
+// STEP in=(clock$0rst false x 200) out=(o 145 p 144)

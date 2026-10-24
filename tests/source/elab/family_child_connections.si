@@ -1,0 +1,22 @@
+// A connection to a child input entry and a reference to a child output entry carry the field of the entry.
+// TOP M()
+// CHECK-LABEL: (module C
+// CHECK: (input req$3f$a (bits 4))
+// CHECK-NEXT: (input req$3f$b (bits 4))
+// CHECK-NEXT: (output gnt$3f (bits 4))
+// CHECK-LABEL: (module M
+// CHECK: (inst u C (clock$0clk clock$0clk) (clock$0rst clock$0rst) (req$3f$a x) (req$3f$b x))
+// CHECK-NEXT: (assign o u.gnt$3f)
+struct P { a: UInt[4], b: UInt[4] }
+module C() {
+    input req[3]: P;
+    output gnt[3]: UInt[4];
+    gnt[3] := req[3].a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.req[3] := P(x, x);
+    o := u.gnt[3];
+}
