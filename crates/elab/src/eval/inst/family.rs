@@ -13,8 +13,9 @@
 //! node and its name node, evaluates its key, takes the checks of a key, and then looks up the
 //! entry. A selection refers to the port: it charges no size and copies nothing.
 
+use super::public::Public;
 use super::public::{directions, scalar_family};
-use super::{Elab, PortDecl, Public, entry_text};
+use super::{Elab, PortDecl, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
