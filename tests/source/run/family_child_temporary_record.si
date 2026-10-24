@@ -1,0 +1,48 @@
+// A child family entry is read through a temporary that holds a record: after a tuple, an array, a helper, and a field.
+// TOP M()
+module C() {
+    input p[0]: UInt[8];
+    output q[0]: UInt[8];
+    output y: UInt[8];
+    q[0] := p[0] +% 7;
+    y := p[0] +% 9;
+}
+struct Box { h: Instance[C], }
+struct Pair { t: (Instance[C],), }
+struct Cells { hs: [Instance[C]; 2], }
+struct Outer { b: Box, }
+fn mk(h: Instance[C]) -> Box {
+    return Box(h);
+}
+fn mkt(h: Instance[C]) -> (Box,) {
+    return (Box(h),);
+}
+module M() {
+    input x: UInt[8];
+    output a: UInt[8];
+    output b: UInt[8];
+    output c: UInt[8];
+    output d: UInt[8];
+    output e: UInt[8];
+    output f: UInt[8];
+    output g: UInt[8];
+    output h: UInt[8];
+    output i: UInt[8];
+    output j: UInt[8];
+    output k: UInt[8];
+    instance u = C();
+    u.p[0] := x;
+    a := (Box(u),).0.h.q[0];
+    b := (Box(u),).0.h.y;
+    c := ((Box(u),),).0.0.h.q[0];
+    d := [Box(u)][0].h.q[0];
+    e := (Outer(Box(u)),).0.b.h.q[0];
+    f := mkt(u).0.h.q[0];
+    g := [mk(u)][0].h.q[0];
+    h := (Pair((u,)),).0.t.0.q[0];
+    i := [Pair((u,))][0].t.0.q[0];
+    j := (Cells([u, u]),).0.hs[1].q[0];
+    k := Cells([u, u]).hs[1].q[0];
+}
+// STEP in=(clock$0rst false x 1) out=(a 8 b 10 c 8 d 8 e 8 f 8 g 8 h 8 i 8 j 8 k 8)
+// STEP in=(clock$0rst false x 250) out=(a 1 b 3 c 1 d 1 e 1 f 1 g 1 h 1 i 1 j 1 k 1)
