@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use crate::program::{Place, Radix, SBin, render_items};
+use crate::program::{Place, Ports, Radix, SBin, render_items};
 use num_bigint::BigInt;
 use proptest::strategy::ValueTree;
 use proptest::test_runner::TestRunner;

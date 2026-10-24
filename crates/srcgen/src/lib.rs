@@ -30,7 +30,7 @@ pub use build::{BuildFault, lines, typed};
 pub use lift::{Lifted, Unsupported, VectorLen, lift};
 pub use mutate::{Mutant, mutate};
 pub use program::{Ports, Program, Scalar};
-pub use twin::{Twin, twin};
+pub use twin::{LineError, Twin, twin};
 
 use std::fmt::Display;
 
