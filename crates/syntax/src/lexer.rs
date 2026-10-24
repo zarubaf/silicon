@@ -93,6 +93,22 @@ struct Lexer<'a> {
 }
 
 /// Operators, longest first within the same first character.
+fn ident_start(c: char) -> bool {
+    c.is_ascii_alphabetic() || c == '_'
+}
+
+fn ident_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Whether the text lexes as one word: an ASCII letter or `_`, then ASCII letters, digits, or
+/// `_`. A keyword passes (`SyntaxKind::keyword`). The elaborator checks a computed name with it.
+#[must_use]
+pub fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars.next().is_some_and(ident_start) && chars.all(ident_char)
+}
+
 const OPERATORS: &[(&str, SyntaxKind)] = &[
     (":=", SyntaxKind::ColonEq),
     ("::", SyntaxKind::ColonColon),
@@ -171,9 +187,9 @@ impl Lexer<'_> {
         if first.is_ascii_digit() {
             return self.bounded_number();
         }
-        if first.is_ascii_alphabetic() || first == '_' {
+        if ident_start(first) {
             let start = self.pos;
-            self.eat_while(|c| c.is_ascii_alphanumeric() || c == '_');
+            self.eat_while(ident_char);
             let text = &self.input[start..self.pos];
             return (SyntaxKind::keyword(text).unwrap_or(SyntaxKind::Ident), None);
         }
@@ -316,6 +332,17 @@ mod tests {
             .map(|t| t.kind)
             .filter(|k| *k != SyntaxKind::Whitespace)
             .collect()
+    }
+
+    #[test]
+    fn a_text_is_an_identifier_when_it_lexes_as_one_word() {
+        for word in ["a", "_", "_a1", "Req_0", "module"] {
+            assert!(is_identifier(word), "{word}");
+            assert_eq!(kinds(word).len(), 1, "{word}");
+        }
+        for text in ["", "1a", "a b", "a-b", "é", "a\u{301}", "a.b"] {
+            assert!(!is_identifier(text), "{text:?}");
+        }
     }
 
     #[test]
