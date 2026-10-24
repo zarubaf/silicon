@@ -1,0 +1,30 @@
+// A child family entry and a register get a write through a local that holds a record.
+// TOP M()
+module C() {
+    input p[0]: UInt[8];
+    output q[0]: UInt[8];
+    q[0] := p[0] +% 7;
+}
+struct Box { h: Instance[C], }
+struct Pair { t: (Instance[C],), }
+struct RBox { h: Reg[UInt[8]], }
+module M() {
+    input x: UInt[8];
+    output a: UInt[8];
+    output b: UInt[8];
+    output c: UInt[8];
+    instance u = C();
+    instance v = C();
+    reg r: UInt[8] = 0;
+    let s = (Box(u),);
+    s.0.h.p[0] := x;
+    let t = Pair((v,));
+    t.t.0.p[0] := x +% 1;
+    let w = (RBox(r),);
+    w.0.h := x;
+    a := u.q[0];
+    b := v.q[0];
+    c := read((RBox(r),).0.h);
+}
+// STEP in=(clock$0rst false x 1) out=(a 8 b 9 c 0)
+// STEP in=(clock$0rst false x 250) out=(a 1 b 2 c 1)
