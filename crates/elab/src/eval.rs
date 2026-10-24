@@ -10,7 +10,7 @@
 //! static containers. The child module `string` scans and converts the strings, and the child
 //! module `list` makes the lists and changes them in place. The child module `types` evaluates
 //! the type expressions and the struct specializations, the child module `record` makes and
-//! reads the records, the child module `handle` types the handles of a result, and the child module `inst` runs the module statements and the
+//! reads the records, the child module `handle` types the handles of a result, the child module `about` writes the text of a result in a message, and the child module `inst` runs the module statements and the
 //! instantiations of Lean `Source.Elab`. The child module `store` owns the locals, the frames,
 //! the constants, the waiting results, and the change log. The evaluator calls its methods and
 //! reads none of its fields.
@@ -19,6 +19,7 @@
 //! reference until a copy pays for it. Thus a read that the cost model does not charge does
 //! no work in the size of the value.
 
+mod about;
 mod agg;
 mod arms;
 mod call;
@@ -64,11 +65,11 @@ use store::{ConstStatus, Slot, Store};
 use typed::Whole;
 
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, HwId, Kind as Resource, Op, Part, Ref, Root, Seen, Val};
+use crate::hw::{Graph, Handle, HwId, Op, Part, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
 use crate::names::{PathId, Paths, Step, Sym};
-use crate::ops::{self, Fault, Fuel, str_text};
+use crate::ops::{self, Fault, Fuel};
 use crate::scan::{CallArgs, Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
@@ -627,51 +628,6 @@ impl Evaluator<'_> {
         }
     }
 
-    fn part_text(&self, p: &Part) -> String {
-        match p {
-            Part::Value(a) => self.text(a.seen()),
-            Part::Empty(_) => "`[]`".to_owned(),
-            Part::Array(..) => "an array literal with `[]`".to_owned(),
-            Part::Tuple(..) => "a tuple literal with `[]`".to_owned(),
-        }
-    }
-
-    fn text(&self, s: Seen<'_>) -> String {
-        match s {
-            Seen::Pending(_, p) => format!("{} without a type", self.part_text(p)),
-            s => s.text(&self.graph, &self.tys).unwrap_or_default(),
-        }
-    }
-
-    /// The value `{a}` of a message (section 6.2, Lean `Val.about`). A handle names its handle
-    /// type, an own output its source name, and a domain its name. A literal that waits is `[]`.
-    /// Another value names its type, so the text reads no value in full and each type text is
-    /// bounded.
-    fn about(&self, s: Seen<'_>) -> String {
-        match s {
-            Seen::Handle(Handle::Res {
-                kind: Resource::Output,
-                path,
-                ..
-            }) => format!(
-                "the output `{}`",
-                str_text(&self.paths.source(*path, &self.syms.texts))
-            ),
-            Seen::Handle(Handle::Domain(d)) => format!("the domain `{}`", self.domain_name(*d)),
-            Seen::Handle(h) => match self.handle_form(h) {
-                Some(t) => format!("a handle of `{}`", self.tys.text_of(&t)),
-                None => self.text(s),
-            },
-            Seen::Pending(..) => "`[]`".to_owned(),
-            Seen::Static(v) => format!("a value of `{}`", v.type_text(&self.tys)),
-            Seen::Hw(h) => format!("a value of `{}`", self.tys.text_of(&self.graph.ty(h))),
-            Seen::Agg(a) => match a.stored_ty() {
-                Some(t) => format!("a value of `{}`", self.tys.text(t)),
-                None => self.text(s),
-            },
-        }
-    }
-
     /// Whether the result is a hardware aggregate. A reference into a static value is not, and
     /// the check does not walk its path.
     fn is_agg(&self, out: &Out) -> bool {
@@ -681,26 +637,6 @@ impl Evaluator<'_> {
                 matches!(self.store.root(&r.root), Val::Agg(_))
                     && matches!(self.store.at(r), Seen::Agg(_))
             }
-        }
-    }
-
-    /// What the operand is, for a message: a hardware aggregate prints as `hardware T`.
-    fn opnd_text(&self, o: &Opnd) -> String {
-        match o {
-            Opnd::Hw(h) => format!("hardware {}", self.tys.text_of(&self.graph.ty(*h))),
-            Opnd::Static(out) => self.text(self.store.seen(out)),
-        }
-    }
-
-    /// The type of the operand, for a message: a hardware aggregate names its type, and a
-    /// static value is what it is.
-    fn type_text(&self, o: &Opnd) -> String {
-        match o {
-            Opnd::Static(out) => match self.store.seen(out) {
-                Seen::Agg(a) => a.stored_ty().map(|t| self.tys.text(t)).unwrap_or_default(),
-                seen => self.text(seen),
-            },
-            Opnd::Hw(h) => self.tys.text_of(&self.graph.ty(*h)),
         }
     }
 
