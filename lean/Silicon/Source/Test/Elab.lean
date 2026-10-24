@@ -3321,4 +3321,34 @@ def kidDown : String :=
   "S018 8:3 the input `req[1]` of the instance `u` has no binding; bind it with " ++
     "`u.req[1] := ...;`"
 
+/-!
+An error that names a port family entry gives its public name (section 6.2). A child input
+entry is `u.req[0]`, and an own output entry is `gnt[3]`. The parent `M` runs `body` from line
+15 on.
+-/
+def entryStatic (body : String) : String :=
+  failure ("module C() {\n  input req[0]: Bool;\n}\n" ++
+    "comptime fn f(x: Bool) -> Nat { return 0; }\nmodule D(comptime b: Bool) {\n}\n" ++
+    "module M() {\n  input a: Bool;\n  output o: UInt[8];\n  output gnt[3]: Bool;\n" ++
+    "  instance u = C();\n  u.req[0] := a;\n  o := 0;\n  gnt[3] := a;\n" ++ body ++ "}\n")
+    100000000
+#guard entryStatic "  let h = u.req[0];\n  let z = f(h);\n" ==
+  s!"S011 16:11 {heldStatic "an argument of a comptime fn" "input" "u.req[0]"}"
+#guard entryStatic "  let h = u.req[0];\n  instance w = D(h);\n" ==
+  s!"S011 16:3 {heldStatic "a module argument" "input" "u.req[0]"}"
+#guard entryStatic "  let h = gnt[3];\n  instance w = D(h);\n" ==
+  s!"S011 16:3 {heldStatic "a module argument" "output" "gnt[3]"}"
+#guard entryStatic "  let mut l = o;\n  l = gnt[3];\n" ==
+  "S010 16:3 the local holds the output `o`, so it takes only an output of `UInt[8]`, not " ++
+    "the output `gnt[3]`; use the output `o` directly"
+#guard entryStatic "  let mut l = gnt[3];\n  l = o;\n" ==
+  "S010 16:3 the local holds the output `gnt[3]`, so it takes only an output of `Bool`, not " ++
+    "the output `o`; use the output `gnt[3]` directly"
+#guard entryStatic "  let x: Reg[Bool] = gnt[3];\n" ==
+  "S010 15:3 `gnt[3]` is an output, and an output has no handle type; use `gnt[3]` directly " ++
+    "as data"
+#guard entryStatic "  let h = gnt[3];\n  let x = read(h);\n" ==
+  "S010 16:11 `read` takes a register or a wire, not the output `gnt[3]`; use the value " ++
+    "directly, without `read`"
+
 end Silicon.Source.Test.Elab

@@ -578,9 +578,14 @@ def Val.text : Val → String
   | .handle h => h.text
   | .pending _ p => s!"{p.text} without a type"
 
-/-! The source name of the resource at `path`: its first user name, else its outer name. -/
+/-!
+The source name of the resource at `path`: its first user name, else its outer name. A port
+family entry has the path of `PortDecl.path`, so it gives its public name `x[k]` (section 6.2).
+-/
 def sourceOf (path : Path) : String :=
-  (path.inner.findSome? fun | .user u => some u | _ => none).getD path.outer
+  match path.inner with
+  | [.family k] => entryText path.outer (some k)
+  | inner => (inner.findSome? fun | .user u => some u | _ => none).getD path.outer
 
 /-!
 The value `{a}` of a message (section 6.2). A handle names its handle type (section 5.1), an own
