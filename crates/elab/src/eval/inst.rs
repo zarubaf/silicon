@@ -48,7 +48,7 @@ use resolve::{DeclId, Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod family;
-pub(super) use family::{FamKey, child_key, family_value};
+pub(super) use family::{child_key, family_value};
 
 /// A port declaration. A port keeps its source name. A family entry has its key.
 pub(crate) struct PortDecl {
