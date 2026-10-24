@@ -408,14 +408,8 @@ impl Evaluator<'_> {
                 _ => None,
             })
             .collect();
-        let (through, mut done) = self.node_steps(Opnd::of_out(b), &fields);
-        let mut b = through.into_out();
-        while let Some(Sel::Field(q, f)) = steps.get(done)
-            && !matches!(self.store.seen(&b), Seen::Static(_))
-        {
-            b = self.field(*q, b, f)?;
-            done += 1;
-        }
+        let (through, done) = self.node_steps(Opnd::of_out(b), &fields);
+        let (b, done) = self.index_base(through.into_out(), &steps, done)?;
         let steps = steps.split_off(done.min(steps.len()));
         let Some(first) = steps.first().map(Sel::pos) else {
             return Ok(Some(b));
@@ -450,7 +444,7 @@ impl Evaluator<'_> {
             {
                 known = None;
                 if let Sel::Field(q, f) = next {
-                    let out = self.field(*q, base.into_out(), f)?;
+                    let out = self.field_part(*q, base.into_out(), f)?;
                     rest = rest.get(1..).unwrap_or_default();
                     if rest.is_empty() {
                         return Ok(Some(out));
@@ -461,6 +455,19 @@ impl Evaluator<'_> {
                 }
             }
         }
+    }
+
+    /// The base that the fields of `steps` from `done` select from `b`, while the base is not a
+    /// static value, and the number of steps taken (Lean `indexBase`). A field of a root that is
+    /// not static, for example a port of an instance, applies at once by the rule of `field_part`.
+    fn index_base(&mut self, mut b: Out, steps: &[Sel<'_>], mut done: usize) -> Res<(Out, usize)> {
+        while let Some(Sel::Field(q, f)) = steps.get(done)
+            && !matches!(self.store.seen(&b), Seen::Static(_))
+        {
+            b = self.field_part(*q, b, f)?;
+            done += 1;
+        }
+        Ok((b, done))
     }
 
     /// The first segment of a read from `base` along `steps`: the result, and the number of its

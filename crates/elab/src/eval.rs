@@ -1408,7 +1408,7 @@ impl Evaluator<'_> {
 
     /// A field of a record, or a port of an instance: a child input is a target, and a child
     /// output is hardware.
-    fn field(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
+    fn field_part(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let b = match self.store.seen(&b) {
             Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
             // A field selection is a data context (section 9.2): a child input is `S017`.
@@ -1434,7 +1434,7 @@ impl Evaluator<'_> {
             Names::Top => None,
             Names::File => self.syms.fields.get(&field.id).copied(),
         }
-        .and_then(|s| self.elab.port(inst, s));
+        .and_then(|s| self.elab.port(inst, (s, None)));
         match port {
             Some(q) if q.input => Ok(Out::Named(Val::Handle(Handle::Input {
                 inst: id,

@@ -181,13 +181,25 @@ pub(crate) enum Kind {
     Output,
 }
 
-/// A port of an instantiation, as its parent sees it. `sym` is the symbol of its name.
+/// The identity of a port: the symbol of its name and the key of a family entry. A scalar port
+/// has no key.
+pub(crate) type PortId = (Sym, Option<u32>);
+
+/// A port of an instantiation, as its parent sees it. `sym` is the symbol of its name, and
+/// `key` the key of a family entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Port {
     pub sym: Sym,
+    pub key: Option<u32>,
     pub input: bool,
     pub ty: TyId,
     pub pos: Pos,
+}
+
+impl Port {
+    pub(crate) fn id(&self) -> PortId {
+        (self.sym, self.key)
+    }
 }
 
 /// A handle. Its number indexes the resources or the instances of its instantiation. An
