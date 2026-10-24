@@ -1,0 +1,12 @@
+// S010: a user struct `Bool` in an array type is `[crate::Bool; 2]` in a message.
+// TOP M()
+struct Bool {
+    a: UInt[1],
+}
+module M() {
+    input x: [Bool; 2];
+    output y: [UInt[1]; 2];
+    // expected-error S010 @+2
+    // expected-message: expected [UInt[1]; 2], but the value is hardware [crate::Bool; 2]
+    y := x;
+}

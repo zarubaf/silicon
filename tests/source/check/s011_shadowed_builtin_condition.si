@@ -1,0 +1,12 @@
+// S011: a user struct `Bool` is not the builtin `Bool`. A message writes it as `crate::Bool`.
+// TOP M()
+struct Bool {
+    a: UInt[1],
+}
+module M() {
+    input x: Bool;
+    output y: UInt[4];
+    // expected-error S011 @+2
+    // expected-message: a static condition needs a static Bool, not hardware crate::Bool
+    y := if (x) { 1 } else { 2 };
+}

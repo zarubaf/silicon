@@ -1,0 +1,10 @@
+// S010: a user enum with the name of a prelude struct is another type. A message writes it as `crate::PortKey`.
+// TOP M()
+enum PortKey: UInt[1] { A = 0, B = 1 }
+module M() {
+    input x: PortKey;
+    output y: Bool;
+    // expected-error S010 @+2
+    // expected-message: expected Bool, but the value is hardware crate::PortKey
+    y := x;
+}
