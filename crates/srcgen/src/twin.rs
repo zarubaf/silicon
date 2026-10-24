@@ -1951,6 +1951,13 @@ mod tests {
                     b.targets.insert(n.clone(), false);
                     b.declared.push(n.clone());
                 }
+                // An empty entry is the only port that is a `Port` in a twin.
+                Stmt::Port(p) if p.output => {
+                    b.targets.insert(p.name.clone(), false);
+                    b.declared.push(p.name.clone());
+                }
+                Stmt::Port(p) => b.declared.push(p.name.clone()),
+                Stmt::Input(n, _) => b.declared.push(n.clone()),
                 Stmt::Wire(n, _) => {
                     b.targets.insert(n.clone(), true);
                     b.declared.push(n.clone());
@@ -2013,6 +2020,7 @@ mod tests {
                         body.iter()
                             .filter_map(|s| match s {
                                 Stmt::Input(n, _) => Some(n.as_str()),
+                                Stmt::Port(p) if !p.output => Some(p.name.as_str()),
                                 _ => None,
                             })
                             .collect(),
@@ -2409,6 +2417,55 @@ mod tests {
         assert!(t.input_line("out=(i0 3)").is_err());
         assert!(t.output_line("out=(o0)").is_err());
         assert_eq!(t.output_line("out=(o0 3)").as_deref(), Ok("out=(o0 3)"));
+    }
+
+    /// The names of the ports of a twin module, and the targets of its `:=`,
+    /// also in a nested block.
+    fn ports_and_targets(body: &[Stmt], ports: &mut Vec<String>, targets: &mut Vec<String>) {
+        for s in body {
+            match s {
+                Stmt::Input(n, _) | Stmt::Output(n, _) => ports.push(n.clone()),
+                Stmt::Port(p) => ports.push(p.name.clone()),
+                Stmt::Connect(Place::Name(n), _) => targets.push(n.clone()),
+                Stmt::Block(inner) => ports_and_targets(inner, ports, targets),
+                _ => {}
+            }
+        }
+    }
+
+    /// A walk of the twin finds no port name twice, and one `:=` for each
+    /// output: the public names of a module are distinct, and the entry
+    /// `req_3` has no other name.
+    #[test]
+    fn public_names_are_unique() {
+        let mut runner = TestRunner::deterministic();
+        let mut keyed = 0;
+        for _ in 0..256 {
+            let p = typed().new_tree(&mut runner).unwrap().current().unwrap();
+            let (items, _) = twin_items(&p);
+            for item in &items {
+                let Item::Module { name, body, .. } = item else {
+                    continue;
+                };
+                let (mut ports, mut targets) = (Vec::new(), Vec::new());
+                ports_and_targets(body, &mut ports, &mut targets);
+                let unique: BTreeSet<&String> = ports.iter().collect();
+                assert_eq!(unique.len(), ports.len(), "{name}: {ports:?}");
+                keyed += ports
+                    .iter()
+                    .filter(|n| n.contains('_') || n.starts_with('c'))
+                    .count();
+                for out in body.iter().filter_map(|s| match s {
+                    Stmt::Output(n, _) => Some(n),
+                    Stmt::Port(p) if p.output => Some(&p.name),
+                    _ => None,
+                }) {
+                    let bound = targets.iter().filter(|t| *t == out).count();
+                    assert_eq!(bound, 1, "{name}: {out}");
+                }
+            }
+        }
+        assert!(keyed > 100, "{keyed} entries and keyed ports");
     }
 
     proptest! {
