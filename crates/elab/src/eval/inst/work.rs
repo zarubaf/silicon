@@ -44,9 +44,9 @@ pub(super) struct Work {
     needs: Vec<Need>,
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, PortId), (u64, Here)>,
-    pub(super) entries: BTreeMap<(Sym, u32), (Val, Pos)>,
+    entries: BTreeMap<(Sym, u32), (Val, Pos)>,
     pub(super) publics: BTreeMap<PubKey, (Public, Pos, usize)>,
-    pub(super) owner: usize,
+    owner: usize,
     dup: Option<(Pos, Breach)>,
     pub(super) spent: u64,
 }
@@ -222,5 +222,37 @@ impl Work {
             first = first_of(first, at, Breach::Input(k));
         }
         first
+    }
+
+    /// The value and the declaration position of the entry `key` of the family with the public
+    /// name `sym`.
+    pub(super) fn entry(&self, sym: Sym, key: u32) -> Option<&(Val, Pos)> {
+        self.entries.get(&(sym, key))
+    }
+
+    /// Declares the entry `key` of the family with the public name `sym`.
+    pub(super) fn add_entry(&mut self, sym: Sym, key: u32, value: Val, pos: Pos) {
+        self.entries.insert((sym, key), (value, pos));
+    }
+
+    /// Enters the public name `sym` with the form `form`, declared at `pos` in the call frame
+    /// `call`, into the table of the owner.
+    pub(super) fn publish(&mut self, sym: Sym, form: Public, pos: Pos, call: usize) {
+        self.publics.insert(PubKey(sym), (form, pos, call));
+    }
+
+    /// The public name `sym` in the table of the owner, then in the static families of the owner
+    /// (`families`, indexed by module item), which the table does not copy. A static family has
+    /// the frame 0.
+    pub(super) fn public_of(
+        &self,
+        sym: Sym,
+        families: &[BTreeMap<Sym, (bool, Pos)>],
+    ) -> Option<(Public, Pos, usize)> {
+        if let Some(&e) = self.publics.get(&PubKey(sym)) {
+            return Some(e);
+        }
+        let (input, pos) = *families.get(self.owner)?.get(&sym)?;
+        Some((Public::Family(input), pos, 0))
     }
 }
