@@ -7,12 +7,13 @@ This module also expands each part of a hardware data type into its leaves. `Fla
 `Vectors` both read it. No other module expands a port.
 
 The domain ports come first, then the inputs, then the outputs. In each group of inputs and
-outputs, the ports sort by the byte order of their source names, then by their family keys as
-numbers (`portBefore`). A scalar port has no key, and no key sorts before each key, so `req[2]`
-comes before `req[10]`. The sort compares two names only when their symbols differ. The leaves
-of one port follow in packing order. Thus the layout order is not the byte order of the core
-names. One name has one form (section 5.6), and one family has each key once, so this order has
-no ties, although `qsort` is not stable.
+outputs, the ports sort by the byte order of their public names, then by their family keys as
+numbers (`portBefore`). A public name is the binder or the name of an `as` key (section 5.6). A
+scalar port has no key, and no key sorts before each key, so `req[2]` comes before `req[10]`.
+The sort compares two names only when their symbols differ. The leaves of one port follow in
+packing order. Thus the layout order is not the byte order of the core names. One public name
+has one form (section 5.6), and one family has each key once. Thus this order has no ties,
+although `qsort` is not stable.
 
 `foldLeaves` streams the leaves of a type in packing order: it makes no list of them. A caller
 thus charges each leaf before it makes the leaf. A part without a leaf takes one step, and a
@@ -39,7 +40,7 @@ structure Leaf where
 def Leaf.name (l : Leaf) : Name := l.path.name
 
 /-!
-The name of a leaf of a port in a source vector (section 11.2). It is the source name of the
+The name of a leaf of a port in a source vector (section 11.2). It is the public name of the
 port, then `[k]` for the key of a family entry. Then each level adds `.f` for a field and `.k`
 for an element.
 -/
@@ -96,7 +97,7 @@ structure Ports (α : Type) where
   outputs : List α
 
 /-!
-The order of two ports in the layout: by the source name, then by the key as a number, with no
+The order of two ports in the layout: by the public name, then by the key as a number, with no
 key first. One symbol is one name, so the names compare only when the symbols differ.
 -/
 def portBefore (x y : Elab.PortDecl) : Bool :=

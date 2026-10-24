@@ -222,8 +222,8 @@ struct Family {
 }
 
 /// The codes of later slices that the Rust front end does not report yet; front-end spec,
-/// section 12. Slice 3 reports `S021`, so no code waits.
-const LATER: &[&str] = &[];
+/// section 12. Slice 4 adds `S022` to Lean first (#339).
+const LATER: &[&str] = &["S022"];
 
 const FAMILIES: &[Family] = &[
     Family {

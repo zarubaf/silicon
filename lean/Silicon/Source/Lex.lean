@@ -76,6 +76,16 @@ def identStart (c : Char) : Bool := c.isAlpha || c == '_'
 
 def identChar (c : Char) : Bool := c.isAlphanum || c == '_'
 
+/-!
+The identifier rule of a computed name (section 5.6 of the front-end spec): an ASCII letter or
+`_`, then ASCII letters, digits, or `_`. The lexer reads a word with the same two predicates, so
+a name passes exactly when it lexes as one word. The keyword check is apart (`keywords`).
+-/
+def identifier (s : String) : Bool :=
+  match s.toList with
+  | c :: cs => identStart c && cs.all identChar
+  | [] => false
+
 /-! The Unicode control characters, which a string must write as an escape. -/
 def control (c : Char) : Bool := c.toNat < 0x20 || (0x7F ≤ c.toNat && c.toNat < 0xA0)
 

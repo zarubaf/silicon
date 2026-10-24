@@ -248,6 +248,10 @@ def entryText (x : String) : Option Nat → String
 
 def Port.text (q : Port) : String := entryText q.name q.key
 
+/-! A string in a message: at most 64 characters, then a note of the full length. -/
+def strText (m : String) : String :=
+  if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"
+
 /-! The core name of the port `q`: its name, and the field `<k>f` of an entry (section 7.2). -/
 def Port.core (q : Port) : Name :=
   match q.key with
@@ -257,15 +261,17 @@ def Port.core (q : Port) : Name :=
 /-!
 The interface of a done instantiation: its emitted name, its ports by their identity, its
 number of inputs, and its domain. A combinational module has no domain. `families` gives the
-direction of each port family of the module by the symbol of its name, `true` for an input. It
-comes from the resolver, so it holds a family also without an entry (section 5.6).
+direction of each port family by the symbol of its name, `true` for an input. It also gives the
+position of the first declaration. It holds each family that the resolver found in the module,
+also without an entry. It holds a family of a helper or a `PortKey` only with an entry (section
+5.6).
 -/
 structure Iface where
   name : Names.Name
   ports : Std.HashMap PortId Port
   inputs : Nat
   domain : Option String
-  families : Std.HashMap Nat Bool
+  families : Std.HashMap Nat (Bool × Pos)
 
 /-! The resources that need one binding with `:=`. -/
 inductive Kind where
@@ -624,7 +630,8 @@ numbers and not text. `binders` gives the symbol of each local number of each it
 gives the symbol of each field name by its position in each item, and the last entry is the
 top expression. `items` gives the symbol of each item name. `members` gives the number of each
 field of each struct item by the symbol of its name. `families` gives the port families of each
-module item by the symbol of the name, `true` for an input (section 5.6). `table` gives the
+module item by the symbol of the name, `true` for an input. It also gives the position of the
+first indexed declaration in the source (section 5.6). `table` gives the
 symbol of each text of the scan, so a name that the run computes finds its symbol
 (`Eval.symbolOf`).
 -/
@@ -634,17 +641,19 @@ structure Syms where
   fields : Array (Std.TreeMap Pos Nat Pos.compare)
   items : Array Nat
   members : Array (Std.TreeMap Nat Nat compare)
-  families : Array (Std.HashMap Nat Bool)
+  families : Array (Std.HashMap Nat (Bool × Pos))
 
 /-!
-The kind of a guard (section 9.4): a hardware arm or a structural context. A family key (`key`)
-and an index of a `:=` target (`index`) are structural contexts with their own texts.
+The kind of a guard (section 9.4): a hardware arm or a structural context. A family key (`key`),
+an index of a `:=` target (`index`), and an `as` key (`name`) are structural contexts with their
+own texts.
 -/
 inductive GuardKind where
   | arm
   | structural
   | key
   | index
+  | name
   deriving DecidableEq, BEq
 
 /-!
@@ -670,6 +679,8 @@ def Guard.change (g : Guard) (x : String) : String :=
     "keep the result in a `let`, and use that name in the key"
   | .index => s!"a `:=` target index cannot change `{x}`; change `{x}` before the `:=`, keep " ++
     "the result in a `let`, and use that name in the index"
+  | .name => s!"an `as` key cannot change `{x}`; change `{x}` before this statement, keep the " ++
+    "result in a `let`, and use that name in the key"
 
 def Guard.effect (g : Guard) (f : String) : String :=
   match g.kind with
@@ -681,6 +692,8 @@ def Guard.effect (g : Guard) (f : String) : String :=
     "statement, keep the result in a `let`, and use that name in the key"
   | .index => s!"a `:=` target index has no graph effect such as `{f}`; call `{f}` before the " ++
     "`:=`, keep the result in a `let`, and use that name in the index"
+  | .name => s!"an `as` key has no graph effect such as `{f}`; call `{f}` before this " ++
+    "statement, keep the result in a `let`, and use that name in the key"
 
 /-!
 The static mode (section 9.4): the `eval` command, or the item of the outermost `comptime fn`
@@ -763,24 +776,27 @@ def Ctx.helper (c : Ctx) : Option Nat :=
 /-!
 A resource in an `S018` text (section 6.2): an own resource by its source name, or the input `p`
 of the instance `u`, which renders as `u.p`. The key `k` of a family entry renders as `x[k]`.
+An own output (`port`) and a child input have their public name, with the limit of a string in
+a message (section 5.5).
 -/
 inductive Res where
-  | own (r : String) (k : Option Nat)
+  | own (r : String) (k : Option Nat) (port : Bool)
   | input (u p : String) (k : Option Nat)
 
 def Res.text : Res → String
-  | .own r k => entryText r k
-  | .input u p k => s!"{u}.{entryText p k}"
+  | .own r k port => if port then strText (entryText r k) else entryText r k
+  | .input u p k => s!"{u}.{strText (entryText p k)}"
 
 /-!
 The data of an `S018` text of section 6.2. A binding or a port call records it with no walk.
 It holds names, positions, and the item `h` of a helper. Its text renders once, for the error
-that wins. `w` is true for `write_port`.
+that wins. `w` is true for `write_port`. An own output with an `as` key has its binder `x` in
+`unbound`, because the fix binds the binder in the body.
 -/
 inductive Breach where
   | second (r : Res) (b d : Pos)
   | secondIn (r : Res) (h : Nat)
-  | unbound (r : String) (k : Option Nat)
+  | unbound (r : Res) (x : Option String)
   | input (u p : String) (k : Option Nat)
   | noPort (r : String) (w : Bool)
   | port (r : String) (w : Bool) (b : Pos)
@@ -797,11 +813,14 @@ def Breach.text (name : Nat → String) (x : Breach) : String :=
   | .secondIn r h =>
     s!"`{r.text}` has a second binding, because the `:=` in `{name h}` runs again for it; " ++
       s!"run the `:=` once for each resource, for example with one call of `{name h}` for each"
-  | .unbound r k =>
-    let r := entryText r k
+  | .unbound r (some x) =>
+    s!"the output `{r.text}` has no binding; bind its binder with `{x} := ...;`, or remove its " ++
+      "declaration"
+  | .unbound r none =>
+    let r := r.text
     s!"`{r}` has no binding; bind it with `{r} := ...;`, or remove its declaration"
   | .input u p k =>
-    let p := entryText p k
+    let p := strText (entryText p k)
     s!"the input `{p}` of the instance `{u}` has no binding; bind it with `{u}.{p} := ...;`"
   | .noPort r w =>
     s!"the memory `{r}` has no `{call w}`; call `{call w}` on it once, or remove the memory"
@@ -945,11 +964,14 @@ inductive Public where
 /-!
 A resource that needs one binding, by its number: its declaration, its bindings, and its first
 binding. The first binding holds its position and the number of its call frame (`Ctx.call`).
-An output entry of a family has its key.
+An output entry of a family has its key. An own output (`port`) has its public name, and an
+output with an `as` key has its `binder` for the fix of its `S018` text (section 6.2).
 -/
 structure Need where
   name : String
   key : Option Nat := none
+  port : Bool := false
+  binder : Option String := none
   pos : Pos
   count : Nat
   first : Option (Pos × Nat) := none
@@ -963,7 +985,9 @@ first `S018` of a second binding or a second port call by position. `spent` is t
 new children. `entries` holds the declared family entries by the symbol of the public name and
 the key. It holds the value of each entry and the position of its declaration. A family binder
 has no frame slot. `publics` is the table of public names of the owner (section 5.6). It holds
-the form of each public name by its symbol, and the position of its first declaration.
+the form of each public name by its symbol, and the position of its first declaration. The
+families of the module item `owner` are in the table from the start. `publics` does not copy
+them: a look-up reads `publics`, then those families (`Elab.publicOf`).
 -/
 structure Work where
   body : Body
@@ -972,6 +996,7 @@ structure Work where
   inputs : Std.HashMap (Nat × PortId) (Nat × Pos × Nat) := {}
   entries : Std.HashMap (Nat × Nat) (Val × Pos) := {}
   publics : Std.HashMap Nat (Public × Pos) := {}
+  owner : Nat := 0
   dup : Option (Pos × Breach) := none
   spent : Nat := 0
 
@@ -1052,10 +1077,6 @@ structure Step where
   charge : Nat
   run : Unit → Except Fault Value
 
-/-! A string in a message: at most 64 characters, then a note of the full length. -/
-def strText (m : String) : String :=
-  if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"
-
 /-! The error stops the run. The stop holds the records so far, with no copy. -/
 def fail (code : ErrorCode) (pos : Pos) (msg : String) : M α :=
   fun _ s => .error ⟨⟨code, pos, msg⟩, s.records⟩
@@ -1102,10 +1123,9 @@ size of `x` first (section 5.4).
 def symbolOf (x : String) : M Nat := do
   let table := (← read).syms.table
   if let some k := table[x]? then return k
-  let s ← get
-  if let some k := s.names[x]? then return k
-  let k := table.size + s.names.size
-  set { s with names := s.names.insert x k }
+  if let some k := (← get).names[x]? then return k
+  let k := table.size + (← get).names.size
+  modify fun s => { s with names := s.names.insert x k }
   return k
 
 /-!

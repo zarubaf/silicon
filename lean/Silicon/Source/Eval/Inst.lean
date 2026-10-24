@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Source.Eval.Container
+import Silicon.Source.Lex
 
 /-!
 This module holds the parts of the instantiations and of the checks for each instantiation
@@ -39,9 +40,10 @@ These rules settle the open points of slice 1:
 
 - `Eval.stmt` charges each statement. A module statement then runs in `Eval.hwStmt`. A `let`,
   an assignment, and an expression statement run as in a function body.
-- A port keeps its source name. The root frame counts it with the other bindings of its name.
-  A second port with one name thus fails, and so does a port after a binding of its name.
-  The code is `S019`.
+- A port has a public name: its binder, or the name of its `as` key (section 5.6). The table of
+  public names of the owner holds each one (`publicOf`). A second port with one public name is
+  thus `S019`. A scalar port then takes its public name as its core name in the root frame. A
+  port after a binding of the module body with that name is thus `S019` too.
 - A port, a register, and a wire have a hardware data type (`S010`), also an aggregate type and
   an empty type. Each still needs its binding (`S018`). An empty one lowers to no core node.
 - An empty input charges nothing at its declaration. Each read of it charges the zero size of
@@ -109,20 +111,36 @@ def dataType (p : Pos) (t : Ty) : Eval.M Ty := do
   else fail .S010 p (s!"a port, a register, and a wire need a hardware data type, not " ++
     s!"`{t.text}`; use a fixed-width type, for example `UInt[8]`")
 
-/-! A resource that needs one binding, with the key of a family entry. The result is its handle. -/
-def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) (key : Option Nat := none) :
-    Eval.M Val := do
+/-!
+A resource that needs one binding, with the key of a family entry. An output with an `as` key
+has its `binder` for its `S018` text. The result is its handle.
+-/
+def resource (k : Kind) (path : Path) (t : Ty) (p : Pos) (x : String) (key : Option Nat := none)
+    (binder : Option String := none) : Eval.M Val := do
   let id := (← get).inst.work.needs.size
-  modify fun s =>
-    { s with inst.work.needs := s.inst.work.needs.push { name := x, key, pos := p, count := 0 } }
+  let n : Need := { name := x, key, port := k == .output, binder, pos := p, count := 0 }
+  modify fun s => { s with inst.work.needs := s.inst.work.needs.push n }
   return .handle (.res k id t path)
 
 /-!
 Inserts the public name with the symbol `y` and the form `f`, declared at `p`, into the table of
-public names of the owner (section 5.6). The first declaration of a name keeps its position.
+public names of the owner (section 5.6).
 -/
 def publish (y : Nat) (f : Public) (p : Pos) : Eval.M Unit :=
-  modify fun s => { s with inst.work.publics := s.inst.work.publics.insertIfNew y (f, p) }
+  modify fun s => { s with inst.work.publics := s.inst.work.publics.insert y (f, p) }
+
+/-!
+The form and the first position of the public name with the symbol `y` in the table of public
+names of the owner (section 5.6). The table holds each family that the resolver found in the
+module body from the start, at its first indexed declaration. These families are in the static
+`Syms.families`, so the look-up reads `publics` and then them, with no copy for each
+instantiation. Each is one map operation.
+-/
+def publicOf (y : Nat) : Eval.M (Option (Public × Pos)) := do
+  let w := (← get).inst.work
+  if let some e := w.publics[y]? then return some e
+  let fams := (← read).syms.families[w.owner]?
+  return (fams.bind (·[y]?)).map fun (i, p) => (.family i, p)
 
 /-!
 Reserves the core name with the symbol `y` in the root frame, as the bindings of the name count
@@ -135,34 +153,69 @@ def reserve (y : Nat) : Eval.M Bool := do
   set { s with naming.versions := s.naming.versions.insert key (v + 1) }
   return v != 0
 
+/-! The position `b` of an earlier declaration in a message. -/
+def atText (b : Pos) : String := s!"{b.line}:{b.col}"
+
+/-! The `S019` text "Public name twice" of section 6.2, for the public name `x`. -/
+def publicTwiceText (x : String) (b : Pos) : String :=
+  s!"the port name `{strText x}` is declared here and at {atText b}; give one of them another " ++
+    "key with `as`, for example from a parameter"
+
+/-! The `S019` text "Scalar port and port family" of section 6.2, for the public name `x`. -/
+def scalarFamilyText (x : String) (b : Pos) : String :=
+  s!"`{strText x}` names a scalar port and a port family, here and at {atText b}; give one of " ++
+    "them another key with `as`"
+
+/-! The `S019` text "Public family with two directions" of section 6.2, for the family `x`. -/
+def directionsText (x : String) (b : Pos) : String :=
+  s!"the port family `{strText x}` has an input entry and an output entry, here and at " ++
+    s!"{atText b}; give the entries of one direction another key with `as`"
+
+/-! The `S019` text "Port name taken" of section 6.2, for the public name `x`. -/
+def takenText (x : String) : String :=
+  s!"the port name `{strText x}` is already the core name of a hardware `let`, a resource, or " ++
+    "an instance of this module; rename that declaration or the port"
+
 /-!
-The port `x`. Its public name and its core name are its source name. The port enters the table
-of public names. Then the root frame counts it with the bindings of its name, so a name that is
-taken is `S019`.
+The port at `p` with the public name `x` of the symbol `y` (section 6.2, steps 9 to 11 of the
+port order). The table of public names of the owner holds no other port of the name. A scalar
+port there is "Public name twice", and a family is "Scalar port and port family". Then the name
+takes its core name in the root frame. An earlier binding of the module body with the name
+gives "Port name taken". The port has no call frame (section 7.3). An output with an `as` key
+has its `binder` for its `S018` text.
 -/
-def port (p : Pos) (input : Bool) (b : Binder) (t : Ty) : Eval.M Val := do
-  let x := b.name.name
-  let sym := (← readThe Ctx).binder b.id
-  publish sym .scalar p
-  if ← reserve sym then fail .S019 p s!"two declarations have the core name `{x}`"
-  modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, none, input, t, p⟩ }
+def port (p : Pos) (input : Bool) (x : String) (y : Nat) (t : Ty) (binder : Option String) :
+    Eval.M Val := do
+  match ← publicOf y with
+  | some (.scalar, b) => fail .S019 p (publicTwiceText x b)
+  | some (.family _, b) => fail .S019 p (scalarFamilyText x b)
+  | none => publish y .scalar p
+  if ← reserve y then fail .S019 p (takenText x)
+  modifyBody fun d => { d with ports := d.ports.push ⟨x, y, none, input, t, p⟩ }
   -- An input refers to its name: a scalar is hardware, and an aggregate a lazy reference. An
   -- empty input stays a reference too, so only a read of it pays its zero (`Eval.name`).
-  if !input then resource .output ⟨x, []⟩ t p x
+  if !input then resource .output ⟨x, []⟩ t p x none binder
   else if t.info.leaves = 0 then pure (.agg (.ref (.name ⟨x, []⟩) t))
   else normalize p (.ref (.name ⟨x, []⟩) t)
 
-/-! A port in a helper is `S004` at the statement until the checks of a port in a helper exist. -/
-def helperPortLater (p : Pos) : Eval.M Unit := do
-  let c ← readThe Ctx
-  if let some (.fn ..) := c.items[c.item]? then
-    fail .S004 p ("a helper cannot declare a port; declare the port in the module body and " ++
-      "pass its value to the helper")
+/-! The `S010` text "Port key type" of section 6.2, for the key `a`. -/
+def portKeyText (a : String) : String :=
+  s!"an `as` key is a static `String` or `PortKey`, not {a}; write the public name as a " ++
+    "string, for example `as \"req_0\"`"
 
-/-! An `as` key is `S004` at the key until its checks exist. -/
-def portKeyLater (p : Pos) : Eval.M Unit :=
-  let what := "a port key"
-  fail .S004 p s!"{what} is not supported yet"
+/-! The `S022` text "Scalar key index" of section 6.2, for the index `k`. -/
+def scalarIndexText (k : Int) : String :=
+  s!"a scalar `PortKey` has the index 0, but it has {intText k}; set `indexed` to `true`, or " ++
+    "the index to 0"
+
+/-! The `S022` text "Name rule" of section 6.2, for the name `s` of the kind `kind`. -/
+def nameRuleText (s kind : String) : String :=
+  s!"`{strText s}` is not a valid {kind} name; use an ASCII letter or `_`, then letters, " ++
+    "digits, or `_`"
+
+/-! The `S022` text "Keyword name" of section 6.2, for the name `s` of the kind `kind`. -/
+def keywordText (s kind : String) : String :=
+  s!"`{strText s}` is a keyword, so it cannot be a {kind} name; choose another name"
 
 /-! The `S010` text "Family as a value" of section 6.2, for the family `x`. -/
 def familyValueText (x : String) : String :=
@@ -186,6 +239,7 @@ The `S013` text "Child family key" of section 6.2, for the key `k` of the family
 of the instance type `m`.
 -/
 def childKeyText (m x : String) (k : Nat) : String :=
+  let x := strText x
   s!"the child `{m}` has no entry `{x}[{k}]`; select a key that `{m}` declares"
 
 /-!
@@ -205,29 +259,75 @@ The `S019` text "Family key twice" of section 6.2, for the key `k` of the family
 earlier declaration at `b`.
 -/
 def keyTwiceText (x : String) (k : Nat) (b : Pos) : String :=
-  s!"the port `{x}[{k}]` is declared here and at {b.line}:{b.col}; declare each key of `{x}` " ++
-    "once"
+  let x := strText x
+  s!"the port `{x}[{k}]` is declared here and at {atText b}; declare each key of `{x}` once"
 
 /-!
-The entry `k` of the family with the binder `b`, of the type `t`, declared at `p` (section 5.6).
-The family enters the table of public names. A key that the family has already is `S019`. The
-entry is one whole port with the core name `<x>$<k>f`. It goes into the table of entries
-(`Work.entries`) by its public identity, not into a frame slot. The field `<k>f` keeps its name
-apart from each other name (section 7.2), so it takes no version.
+The entry `k` of the family `x` with the symbol `y`, of the type `t`, declared at `p` (section
+6.2, steps 7 and 8 of the entry order). The table of public names of the owner holds the name.
+A scalar port there is "Scalar port and port family". A family of the other direction is
+"Public family with two directions". A key that the family has already is "Family key twice". A
+new
+family enters the table. The entry is one whole port with the core name `<x>$<k>f`. It goes into
+the table of entries (`Work.entries`) by its public identity, not into a frame slot. The field
+`<k>f` keeps its name apart from each other name (section 7.2), so it takes no version. An
+output with an `as` key has its `binder` for its `S018` text. The result is the value of the
+entry.
 -/
-def entry (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) : Eval.M Unit := do
-  let x := b.name.name
-  let sym := (← readThe Ctx).binder b.id
-  publish sym (.family input) p
-  if let some (_, q) := (← get).inst.work.entries[(sym, k)]? then
+def entry (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (binder : Option String) :
+    Eval.M Val := do
+  match ← publicOf y with
+  | some (.scalar, b) => fail .S019 p (scalarFamilyText x b)
+  | some (.family i, b) => if i != input then fail .S019 p (directionsText x b)
+  | none => publish y (.family input) p
+  if let some (_, q) := (← get).inst.work.entries[(y, k)]? then
     fail .S019 p (keyTwiceText x k q)
-  modifyBody fun d => { d with ports := d.ports.push ⟨x, sym, some k, input, t, p⟩ }
+  modifyBody fun d => { d with ports := d.ports.push ⟨x, y, some k, input, t, p⟩ }
   let path : Path := ⟨x, [.family k]⟩
   -- An input entry refers to its name as a scalar input does (`port`).
-  let v ← if !input then resource .output path t p x (some k)
+  let v ← if !input then resource .output path t p x (some k) binder
     else if t.info.leaves = 0 then pure (.agg (.ref (.name path) t))
     else normalize p (.ref (.name path) t)
-  modify fun s => { s with inst.work.entries := s.inst.work.entries.insert (sym, k) (v, p) }
+  modify fun s => { s with inst.work.entries := s.inst.work.entries.insert (y, k) (v, p) }
+  return v
+
+/-!
+The public name and the family key of the static `as` key (section 6.2, steps 6 and 7 of the
+port order). A `String` is a scalar name. A record of the prelude struct `PortKey` is a
+scalar name with the index 0, or an entry with an index below 2^32. A user struct named
+`PortKey` is another type. Each other value is `S010` "Port key type". The index check reads
+the bit length, so it takes constant work, and the index renders only in an error.
+-/
+def portKey : Value → Except Fault (String × Option Nat)
+  | .str x => .ok (x, none)
+  | .record (.struct _ "PortKey" _ _ true) #[.str x, .bool false, .int k] =>
+    if k == 0 then .ok (x, none) else .error (.S022, scalarIndexText k)
+  | .record (.struct _ "PortKey" _ _ true) #[.str x, .bool true, .int k] =>
+    if k < 2 ^ 32 then .ok (x, some k.toNat) else .error (.S012, keyRangeText k)
+  | v => .error (.S010, portKeyText (Val.static v).about)
+
+/-!
+The port at `p` with the binder `b`, the type `t`, and the static `as` key `v` at `kp` (section
+6.2, steps 6 to 11 of the port order). The key gives the public name and the key of an entry
+(`portKey`). The name charges its size, 1 plus its bytes (section 5.4). This charge comes before
+the scan of the name rule and the look-up of the symbol. A name that is not an identifier is
+`S022` "Name rule", and a keyword is `S022` "Keyword name". Then the port exists by its public
+name, as a scalar port (`port`) or a family entry (`entry`). The binder refers to it. The port
+keeps the name with no copy.
+-/
+def keyed (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : Value) :
+    Eval.M Unit := do
+  let (x, key) ← lift kp (portKey v)
+  charge kp (1 + x.utf8ByteSize)
+  let kind := "port"
+  unless Lex.identifier x do fail .S022 kp (nameRuleText x kind)
+  if Lex.keywords.contains x then fail .S022 kp (keywordText x kind)
+  let y ← symbolOf x
+  let binder := some b.name.name
+  let w ← match key with
+    | none => port p input x y t binder
+    | some k => entry p input x y k t binder
+  bindLocal b.id ⟨some t, false, w⟩
 
 /-! The target of a `:=` binding: an own resource, or the input `port` of the child `inst`. -/
 inductive Target where
@@ -249,6 +349,7 @@ The `S017` text "Child output as a `:=` target" of section 6.2, for the output `
 `f` with its key, for example `req[3]`.
 -/
 def outputText (f : String) : String :=
+  let f := strText f
   s!"`{f}` is an output of the child, not a target; the child drives its outputs, so bind an " ++
     "input of the child"
 
@@ -371,7 +472,8 @@ def bindTarget (p : Pos) (t : Target) (h : Agg) : Eval.M Unit := do
   match t with
   | .own r k t path =>
     if let some n := w.needs[k]? then
-      if n.count == 1 then breach p (← second p (.own n.name n.key) (n.first.getD here) n.pos)
+      if n.count == 1 then
+        breach p (← second p (.own n.name n.key n.port) (n.first.getD here) n.pos)
       modify fun s => { s with inst.work.needs := s.inst.work.needs.modify k fun r =>
         { r with count := n.count + 1, first := r.first <|> some here } }
     modifyBody fun b => { b with binds := b.binds.push ⟨.own r t path, h, p⟩ }
@@ -398,7 +500,8 @@ def bindings : Eval.M Unit := do
   let mems := (← get).naming.mems
   let mut err := w.dup
   for r in w.needs do
-    if r.count == 0 then err := firstBreach err r.pos (.unbound r.name r.key)
+    if r.count == 0 then
+      err := firstBreach err r.pos (.unbound (.own r.name r.key r.port) r.binder)
   for m in mems do
     if m.read.isNone then err := firstBreach err m.pos (.noPort m.name false)
     else if m.write.isNone then err := firstBreach err m.pos (.noPort m.name true)
@@ -421,14 +524,14 @@ The interface of a done instantiation with the port families `fams` of its modul
 of public names `pub` of its body (section 5.6). It holds the entries that the body declared at
 run time, and each family of `fams` or of `pub`.
 -/
-def iface (name : Name) (b : Body) (fams : Std.HashMap Nat Bool)
+def iface (name : Name) (b : Body) (fams : Std.HashMap Nat (Bool × Pos))
     (pub : Std.HashMap Nat (Public × Pos)) : Iface :=
   ⟨name,
    b.ports.zipIdx.foldl (fun m (q, j) =>
      m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos, j⟩) {},
    (b.ports.filter (·.input)).size, b.domain,
-   pub.fold (init := fams) fun m y (f, _) => match f with
-     | .family i => if m.contains y then m else m.insert y i
+   pub.fold (init := fams) fun m y (f, p) => match f with
+     | .family i => m.insert y (i, p)
      | .scalar => m⟩
 
 /-!
