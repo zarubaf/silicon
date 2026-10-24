@@ -68,7 +68,13 @@ fn stmts(root: &str, body: &[Stmt], callees: &Callees, uses: &mut Uses) {
 fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
     let is_root = |e: &HExpr| matches!(e, HExpr::Name(n) if n == root);
     match e {
-        HExpr::Name(_) | HExpr::Field(..) | HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => {}
+        HExpr::Name(_)
+        | HExpr::Field(..)
+        | HExpr::Static(_)
+        | HExpr::Make(..)
+        | HExpr::Unit
+        | HExpr::Entry(..)
+        | HExpr::ChildEntry(..) => {}
         HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => {
             hexpr(root, a, callees, uses);
         }

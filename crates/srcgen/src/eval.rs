@@ -584,6 +584,8 @@ struct Evaluator<'a> {
 impl Evaluator<'_> {
     fn eval(&mut self, e: &SExpr, env: &Env) -> Result<Value, Fault> {
         let v = match e {
+            // The twin reads the three parts of a `PortKey`.
+            SExpr::PortKey(..) => return Err(Fault::Type),
             SExpr::Int(n, _) => Value::Int(n.clone()),
             SExpr::Bool(b) => Value::Bool(*b),
             SExpr::Name(n) => match env.statics.get(n).or_else(|| self.scope.consts.get(n)) {

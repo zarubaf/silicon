@@ -716,6 +716,9 @@ impl Writer<'_> {
             HExpr::Tuple(_) | HExpr::Array(_) | HExpr::Record(..) => {
                 panic!("a literal of handles reads as data: {e:?}")
             }
+            HExpr::Entry(..) | HExpr::ChildEntry(..) => {
+                panic!("the twin of an entry waits for its commit: {e:?}")
+            }
         }
     }
 
@@ -822,6 +825,7 @@ impl Writer<'_> {
                 self.record(Public::scalar(n), n, true, &t);
                 out.push(Stmt::Output(n.clone(), t));
             }
+            Stmt::Port(_) => panic!("the twin of a port waits for its commit"),
             Stmt::Reg(n, t, reset) => {
                 let (t, reset) = (self.ty(t, fr), self.fold(reset, fr));
                 out.push(Stmt::Reg(fr.declare(n), t, reset));
@@ -871,6 +875,9 @@ impl Writer<'_> {
                         _ => Place::Field(fr.name(u), p.clone()),
                     },
                     Place::Path(e) => Writer::place(self.handle(e, fr)),
+                    Place::Entry(..) | Place::ChildEntry(..) => {
+                        panic!("the twin of an entry target waits for its commit")
+                    }
                 };
                 out.push(Stmt::Connect(place, self.hexpr(v, fr)));
             }
@@ -1110,7 +1117,12 @@ fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
     let all = |xs: &[HExpr]| xs.iter().map(|a| subst(a, map)).collect::<Vec<_>>();
     match e {
         HExpr::Name(n) => map.get(n).cloned().unwrap_or_else(|| e.clone()),
-        HExpr::Field(..) | HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => e.clone(),
+        HExpr::Field(..)
+        | HExpr::Static(_)
+        | HExpr::Make(..)
+        | HExpr::Unit
+        | HExpr::Entry(..)
+        | HExpr::ChildEntry(..) => e.clone(),
         HExpr::ReadPort {
             mem,
             addr,
@@ -1751,7 +1763,11 @@ mod tests {
             HExpr::Name(n) | HExpr::Field(n, _) => {
                 out.insert(n.clone());
             }
-            HExpr::Static(_) | HExpr::Make(..) | HExpr::Unit => {}
+            HExpr::Static(_)
+            | HExpr::Make(..)
+            | HExpr::Unit
+            | HExpr::Entry(..)
+            | HExpr::ChildEntry(..) => {}
             HExpr::Unary(_, a)
             | HExpr::Resize(_, a)
             | HExpr::Reinterpret(_, a)
@@ -1837,6 +1853,7 @@ mod tests {
                         *b.ports.entry((u.clone(), p.clone())).or_default() += 1;
                     }
                     Place::Path(_) => panic!("a twin has a container of handles"),
+                    Place::Entry(..) | Place::ChildEntry(..) => panic!("a twin has no entry"),
                 },
                 Stmt::Block(inner) => collect(inner, b),
                 _ => {}

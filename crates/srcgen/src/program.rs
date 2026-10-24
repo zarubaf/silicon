@@ -227,6 +227,35 @@ pub(crate) enum FTy {
     Struct(String),
     /// `List[A]`.
     List(Box<FTy>),
+    /// A `comptime` formal of a helper that declares a port: its name or
+    /// its key. Only `String` and `Nat` occur.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the port helpers make it"))]
+    Static(STy),
+}
+
+/// The type of a port: hardware data, or the empty type `()` of an empty
+/// entry, which has no leaf in the vectors.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PTy {
+    #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
+    Data(Ty),
+    #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
+    Unit,
+}
+
+/// A port declaration with a key or an `as` key (front-end spec 5.6):
+/// `input name: T as public;`, or `input name[key]: T;` for an entry of a
+/// family. A port with both is `S001`, so the builder never makes one.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Port {
+    pub(crate) output: bool,
+    /// The binder of a scalar port, or the family.
+    pub(crate) name: String,
+    /// The key of an entry of the family `name`.
+    pub(crate) key: Option<SExpr>,
+    /// The public key of a scalar port: a `String` or a `PortKey`.
+    pub(crate) public: Option<SExpr>,
+    pub(crate) ty: PTy,
 }
 
 impl From<Ty> for FTy {
@@ -355,6 +384,10 @@ pub(crate) enum SExpr {
     If(Box<SExpr>, Box<SExpr>, Box<SExpr>),
     /// A `match` on a static scrutinee: only the selected arm runs.
     Match(Match<SExpr, SExpr>),
+    /// `PortKey(name, indexed, index)`, the key of a port. The evaluator
+    /// knows no `PortKey`: the twin reads the three parts.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the keyed ports make it"))]
+    PortKey(Box<SExpr>, bool, Box<SExpr>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -401,6 +434,12 @@ pub(crate) enum HExpr {
     Select(Box<HExpr>, u32),
     /// `read(h)` of a register or a wire.
     Read(Box<HExpr>),
+    /// An input entry `fam[key]` of a family of the module.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the families make it"))]
+    Entry(String, SExpr),
+    /// An output entry `u.fam[key]` of a child.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the child families make it"))]
+    ChildEntry(String, String, SExpr),
 }
 
 /// The target of `:=`.
@@ -413,12 +452,21 @@ pub(crate) enum Place {
     /// A selection from a container of handles, for example `t.0` or
     /// `rs[1]`.
     Path(HExpr),
+    /// An output entry `fam[key]` of the module.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the families make it"))]
+    Entry(String, SExpr),
+    /// An input entry `u.fam[key]` of a child.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the child families make it"))]
+    ChildEntry(String, String, SExpr),
 }
 
 #[derive(Clone, Debug)]
 pub(crate) enum Stmt {
     Input(String, Ty),
     Output(String, Ty),
+    /// A port with a key, an entry of a family, or an empty entry.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
+    Port(Port),
     /// A register with its reset value.
     Reg(String, Ty, SExpr),
     Wire(String, Ty),
@@ -753,7 +801,11 @@ fn render_item(out: &mut String, item: &Item) {
                 .iter()
                 .enumerate()
                 .map(|(i, (n, t))| {
-                    let mark = if i == 0 && *mut_first { "mut " } else { "" };
+                    let mark = match t {
+                        FTy::Static(_) => "comptime ",
+                        _ if i == 0 && *mut_first => "mut ",
+                        _ => "",
+                    };
                     format!("{mark}{n}: {}", fty(t))
                 })
                 .collect::<Vec<_>>()
@@ -890,6 +942,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
     let text = match s {
         Stmt::Input(n, t) => format!("input {n}: {};", ty(t)),
         Stmt::Output(n, t) => format!("output {n}: {};", ty(t)),
+        Stmt::Port(p) => port(p),
         Stmt::Reg(n, t, reset) => format!("reg {n}: {} = {};", ty(t), sexpr(reset)),
         Stmt::Wire(n, t) => format!("wire {n}: {};", ty(t)),
         Stmt::Let {
@@ -931,6 +984,8 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
                 Place::Name(n) => n.clone(),
                 Place::Field(inst, port) => format!("{inst}.{port}"),
                 Place::Path(e) => hexpr(e),
+                Place::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
+                Place::ChildEntry(u, fam, k) => format!("{u}.{fam}[{}]", sexpr(k)),
             };
             format!("{place} := {};", hexpr(v))
         }
@@ -986,6 +1041,24 @@ fn write_port(mem: &str, args: [&HExpr; 3], receiver: bool) -> String {
     }
 }
 
+/// `input pin: T as key;` or `input req[k]: T;`.
+fn port(p: &Port) -> String {
+    let dir = if p.output { "output" } else { "input" };
+    let t = match &p.ty {
+        PTy::Data(t) => ty(t),
+        PTy::Unit => "()".to_owned(),
+    };
+    let key = p
+        .key
+        .as_ref()
+        .map_or(String::new(), |k| format!("[{}]", sexpr(k)));
+    let public = p
+        .public
+        .as_ref()
+        .map_or(String::new(), |k| format!(" as {}", sexpr(k)));
+    format!("{dir} {}{key}: {t}{public};", p.name)
+}
+
 fn fty(t: &FTy) -> String {
     match t {
         FTy::Data(t) => ty(t),
@@ -1001,6 +1074,7 @@ fn fty(t: &FTy) -> String {
         FTy::Array(t, n) => format!("[{}; {n}]", fty(t)),
         FTy::Struct(name) => name.clone(),
         FTy::List(t) => format!("List[{}]", fty(t)),
+        FTy::Static(t) => t.text(),
     }
 }
 
@@ -1131,6 +1205,9 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::Pack(e, a) => format!("reinterpret(UInt[data_bits({e})], {})", sexpr(a)),
         SExpr::BitsConv(e, a) => format!("UInt[data_bits({e})]({})", sexpr(a)),
         SExpr::Match(m) => matched(m, sexpr, sexpr),
+        SExpr::PortKey(n, indexed, k) => {
+            format!("PortKey({}, {indexed}, {})", sexpr(n), sexpr(k))
+        }
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {
@@ -1246,6 +1323,8 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
         HExpr::Index(b, i) => format!("{}[{}]", hexpr(b), sexpr(i)),
         HExpr::Select(b, k) => format!("{}.{k}", hexpr(b)),
         HExpr::Read(h) => format!("read({})", hexpr(h)),
+        HExpr::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
+        HExpr::ChildEntry(u, fam, k) => format!("{u}.{fam}[{}]", sexpr(k)),
     }
 }
 
@@ -1484,6 +1563,130 @@ module M1(comptime P0: Nat) domains() {
     o0 := i0;
 }
 ";
+
+    fn port(output: bool, name: &str, key: Option<SExpr>, public: Option<SExpr>, ty: PTy) -> Stmt {
+        Stmt::Port(Port {
+            output,
+            name: name.to_owned(),
+            key,
+            public,
+            ty,
+        })
+    }
+
+    /// A module with each node of the ports of slice 4: entries, keys, a
+    /// `PortKey`, a child entry, and a helper with `comptime` formals.
+    fn port_items() -> Vec<Item> {
+        let key = |j: &str| sbin(SBin::Add, sbin(SBin::Mul, sname(j), dec(4)), dec(2));
+        let string = |s: &str| SExpr::Str(s.to_owned());
+        let child = Item::Module {
+            name: "M1".to_owned(),
+            params: Vec::new(),
+            clocked: false,
+            body: vec![
+                port(false, "a0", Some(dec(1)), None, PTy::Data(u8())),
+                port(true, "z0", Some(dec(3)), None, PTy::Unit),
+                Stmt::Connect(Place::Entry("z0".to_owned(), dec(3)), HExpr::Unit),
+            ],
+        };
+        let helper = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![("x0".to_owned(), FTy::Static(STy::Str))],
+            mut_first: false,
+            ret: u8().into(),
+            body: vec![port(false, "y0", None, Some(sname("x0")), PTy::Data(u8()))],
+            result: hname("y0"),
+        };
+        let top = Item::Module {
+            name: "M0".to_owned(),
+            params: vec![("P0".to_owned(), STy::Nat)],
+            clocked: false,
+            body: vec![
+                Stmt::For(
+                    "j0".to_owned(),
+                    dec(0),
+                    sname("P0"),
+                    vec![
+                        port(false, "a0", Some(key("j0")), None, PTy::Data(u8())),
+                        port(true, "z0", Some(key("j0")), None, PTy::Data(Ty::Bool)),
+                        Stmt::Connect(
+                            Place::Entry("z0".to_owned(), key("j0")),
+                            HExpr::Static(SExpr::Bool(true)),
+                        ),
+                    ],
+                ),
+                port(false, "y0", None, Some(string("add")), PTy::Data(u8())),
+                port(
+                    false,
+                    "y1",
+                    None,
+                    Some(SExpr::PortKey(
+                        Box::new(string("a0")),
+                        true,
+                        Box::new(dec(7)),
+                    )),
+                    PTy::Data(u8()),
+                ),
+                Stmt::Instance("u0".to_owned(), "M1".to_owned(), Vec::new()),
+                Stmt::Connect(
+                    Place::ChildEntry("u0".to_owned(), "a0".to_owned(), dec(1)),
+                    HExpr::Entry("a0".to_owned(), dec(2)),
+                ),
+                Stmt::Let {
+                    name: "l0".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: HExpr::ChildEntry("u0".to_owned(), "z0".to_owned(), dec(3)),
+                },
+                Stmt::Let {
+                    name: "l1".to_owned(),
+                    mutable: false,
+                    ty: None,
+                    value: HExpr::Call(
+                        "H0".to_owned(),
+                        vec![HExpr::Static(SExpr::Binary(
+                            SBin::Add,
+                            Box::new(string("c")),
+                            Box::new(SExpr::StrOf(Box::new(sname("P0")))),
+                        ))],
+                    ),
+                },
+            ],
+        };
+        vec![helper, top, child]
+    }
+
+    const PORT_TEXT: &str = "\
+fn H0(comptime x0: String) -> UInt[8] {
+    input y0: UInt[8] as x0;
+    return y0;
+}
+module M0(comptime P0: Nat) domains() {
+    comptime for j0 in 0..P0 {
+        input a0[((j0 * 4) + 2)]: UInt[8];
+        output z0[((j0 * 4) + 2)]: Bool;
+        z0[((j0 * 4) + 2)] := true;
+    }
+    input y0: UInt[8] as \"add\";
+    input y1: UInt[8] as PortKey(\"a0\", true, 7);
+    instance u0 = M1();
+    u0.a0[1] := a0[2];
+    let l0 = u0.z0[3];
+    let l1 = H0((\"c\" + str(P0)));
+}
+module M1() domains() {
+    input a0[1]: UInt[8];
+    output z0[3]: ();
+    z0[3] := ();
+}
+";
+
+    #[test]
+    fn ports_print_with_keys_entries_and_public_keys() {
+        assert_eq!(render_items(&port_items()), PORT_TEXT);
+        let lexed = syntax::lex(PORT_TEXT, 4096);
+        assert!(lexed.errors.is_empty(), "{:?}", lexed.errors);
+    }
 
     #[test]
     fn containers_print_with_their_selectors() {
