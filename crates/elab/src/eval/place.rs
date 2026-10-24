@@ -580,15 +580,7 @@ impl Evaluator<'_> {
                     break;
                 }
             }
-            if matches!(step, Sel::Index(..))
-                && n + 1 < steps.len()
-                && known.is_none_or(|t| matches!(self.tys.get(t), Ty::String))
-            {
-                break;
-            }
-            // A selector of a new value reaches a part of unknown type. That part can be an
-            // instance, which the next step reads as a handle before it applies.
-            if matches!(step, Sel::Select(..)) && known.is_none() && n + 1 < steps.len() {
+            if n + 1 < steps.len() && self.ends_segment(step, known) {
                 break;
             }
             known = after;
@@ -612,6 +604,19 @@ impl Evaluator<'_> {
             return Err(e);
         }
         Ok((out, keyed.len(), after))
+    }
+
+    /// Whether a step ends the segment because the next step must see its result first. A string
+    /// container ends the segment at an index, because the scan of the string charges before a
+    /// later index evaluates. A step on a base of unknown type ends it too: that base is a new
+    /// value, and its part can be an instance, which the next step reads as a handle before it
+    /// applies.
+    fn ends_segment(&self, step: &Sel<'_>, known: Option<TyId>) -> bool {
+        match step {
+            Sel::Index(..) => known.is_none_or(|t| matches!(self.tys.get(t), Ty::String)),
+            Sel::Select(..) => known.is_none(),
+            Sel::Field(..) => false,
+        }
     }
 
     /// The walk of the segment that waited at `at` along its evaluated steps `keyed`. A step that
