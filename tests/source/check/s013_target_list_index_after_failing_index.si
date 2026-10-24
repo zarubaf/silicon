@@ -1,0 +1,14 @@
+// S013: a `:=` target through a list of lists. The index `1 / 0` of the second step fails before the first step `[3]` is checked against the length of the list.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let mut l = list(List[Reg[UInt[8]]]);
+    l.push(list(Reg[UInt[8]]));
+    l[0].push(r);
+    // expected-error S013 @+2
+    // expected-message: division by zero
+    l[3][1 / 0] := x;
+    o := true;
+}

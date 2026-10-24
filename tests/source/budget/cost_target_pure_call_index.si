@@ -1,0 +1,14 @@
+// A `:=` target through two nested arrays with a call in its second index that has no graph effect. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 163
+// TOP M()
+fn idx() -> Nat {
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = [[r, r], [r, r]];
+    a[1][idx()] := x;
+    o := true;
+}

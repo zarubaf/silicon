@@ -1,0 +1,12 @@
+// S013: the index `1 / 0` of the second step fails before the first step `[1]` is checked against the length.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = [[r]];
+    // expected-error S013 @+2
+    // expected-message: division by zero
+    a[1][1 / 0] := x;
+    o := true;
+}

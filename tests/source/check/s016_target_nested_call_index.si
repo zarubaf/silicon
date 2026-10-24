@@ -1,0 +1,16 @@
+// S016: a `:=` target through two nested arrays with a call in its second index that records a diagnostic.
+// TOP M()
+fn idx() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a `:=` target index has no graph effect such as `diagnostic`; call `diagnostic` before the `:=`, keep the result in a `let`, and use that name in the index
+    diagnostic("idx", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+    reg r: UInt[8] = 0;
+    let a = [[r, r], [r, r]];
+    a[1][idx()] := x;
+    o := true;
+}

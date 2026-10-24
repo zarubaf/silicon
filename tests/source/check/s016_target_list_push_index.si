@@ -1,5 +1,4 @@
-// A `:=` target through a list of lists with an index that pushes onto the root list while it evaluates. The walk runs after the index, so it selects in the root with the new element. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
-// FUEL 241
+// S016: a `:=` target through a list of lists with an index that pushes onto the root list while it evaluates. The index changes `l`, so it is `S016`.
 // TOP M()
 fn grow(mut l: List[List[Reg[UInt[8]]]]) -> Nat {
     l.push(list(Reg[UInt[8]]));
@@ -13,6 +12,8 @@ module M() {
     l.push(list(Reg[UInt[8]]));
     l[0].push(r);
     l[0].push(r);
+    // expected-error S016 @+2
+    // expected-message: a `:=` target index cannot change `l`; change `l` before the `:=`, keep the result in a `let`, and use that name in the index
     l[grow(l)][1] := x;
     o := true;
 }
