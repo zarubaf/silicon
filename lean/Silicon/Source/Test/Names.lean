@@ -21,7 +21,8 @@ def users : List String :=
 def made : List Field :=
   [.int 0, .int 5, .int (-5), .int 18446744073709551616, .int (-1), .call 0, .call 3,
    .version 1, .version 12, .bool true, .bool false, .digest "3f2a9c0b1d4e5f60", .digest "0",
-   .temp 0, .temp 4, .elem 0, .elem 2, .elem 18446744073709551616] ++ roles.map .role
+   .temp 0, .temp 4, .elem 0, .elem 2, .elem 18446744073709551616,
+   .family 0, .family 3, .family 4294967295] ++ roles.map .role
 
 def fields : List Field := made ++ (users.map .user)
 
@@ -59,6 +60,15 @@ def legal (p : Name) : Bool := Core.validName (encode p)
 #guard decode "x$02e" == none
 #guard decode "x$2e2" == none
 #guard decode "x$2ee" == none
+
+/-! The family entry `req[3]` of section 7.2 has the field `3f`. It differs from `3e` and `3`. -/
+#guard encode ⟨"req", [.family 3]⟩ == "req$3f"
+#guard encode ⟨"u", [.user "req", .family 3, .user "a"]⟩ == "u$req$3f$a"
+#guard decode "req$3f" == some ⟨"req", [.family 3]⟩
+#guard decode "req$0f$a" == some ⟨"req", [.family 0, .user "a"]⟩
+#guard decode "req$03f" == none
+#guard decode "req$3ff" == none
+#guard decode "req$3fa" == none
 
 /-! `decode` accepts only the texts that `encode` makes. -/
 #guard decode "add" == none
