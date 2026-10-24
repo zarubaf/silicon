@@ -45,27 +45,29 @@ fn w1_computed_names_of_a_loop_are_linear_with_a_log_factor() {
     assert!(twice.counts.total() <= 40 * twice.used);
 }
 
-/// W2. A child with `n` entries `as PortKey(B, true, i)`, `B` of `l` bytes. The parent reads
-/// `u.B[i]` for each of the `n` keys, `n` times each. A selection holds the symbol of the name,
-/// so a use copies, hashes, and compares no name. The work at `l` and `2l` differs by at most a
-/// constant times `n * l`, the cost of the `n` declarations. A copy of the name for each use
-/// gives `n * n * l`.
+/// W2. A child with `n` input entries `as PortKey(B, true, i)`, `B` of `l` bytes. The parent
+/// selects `u.B[i]` for each of the `n` keys, `n` times each, then binds each entry once. A
+/// selection of an input gives a handle and holds the symbol of the name, so a use copies,
+/// hashes, and compares no name. The work at `l` and `2l` differs by at most a constant times
+/// `n * l`, the cost of the `n` declarations and bindings. A copy of the name for each use gives
+/// `n * n * l`.
 #[test]
 fn w2_selections_of_a_long_computed_family_name_copy_no_name() {
     let at = |n: usize, l: usize, key: u64| {
         let name = "a".repeat(l);
         let src = format!(
             "module C(comptime n: Nat) {{\n    comptime for i in 0..n {{\n        \
-             output g: UInt[8] as PortKey(\"{name}\", true, i);\n        g := 0;\n    }}\n}}\n\
-             module M() {{\n    output o: UInt[8];\n    instance u = C({n});\n    \
-             comptime for j in 0..{n} {{\n        comptime for i in 0..{n} {{\n            \
-             let b = u.{name}[i];\n        }}\n    }}\n    o := 0;\n}}\n"
+             input g: UInt[8] as PortKey(\"{name}\", true, i);\n    }}\n}}\n\
+             module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    \
+             instance u = C({n});\n    comptime for j in 0..{n} {{\n        \
+             comptime for i in 0..{n} {{\n            let h = u.{name}[i];\n        }}\n    }}\n    \
+             comptime for i in 0..{n} {{\n        u.{name}[i] := x;\n    }}\n    o := x;\n}}\n"
         );
         lowered_work(KEY + key, &src)
     };
     let (n, l) = (64usize, 256usize);
     let (short, long) = (at(n, l, 10), at(n, 2 * l, 11));
-    let bound = 4 * (n * l) as u64;
+    let bound = 2 * (n * l) as u64;
     assert!(
         long - short <= bound,
         "the work {short} at l and {long} at 2l"
