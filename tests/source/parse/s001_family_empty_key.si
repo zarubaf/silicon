@@ -1,0 +1,6 @@
+// S001: a selection of a family with no key. An index has at least one argument.
+module M() {
+    input req[0]: Bool;
+    // expected-error S001 @+1
+    let a = req[];
+}

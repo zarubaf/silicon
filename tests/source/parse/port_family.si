@@ -1,0 +1,8 @@
+// A family entry has a key between the name and the colon. The key is any expression.
+module M(comptime N: Nat) {
+    comptime for i in 0..N {
+        input req[i]: UInt[8];
+    }
+    output g[N + 1]: Bool;
+    output s: Bool;
+}
