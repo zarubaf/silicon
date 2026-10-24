@@ -1,0 +1,10 @@
+// S013: the declaration is in a `comptime if` arm that does not run. The name resolves, and the key is not declared.
+// TOP M()
+module M() {
+    comptime if (false) {
+        input req[0]: Bool;
+    }
+    // expected-error S013 @+2
+    // expected-message: the port family `req` has no key 0 here; declare `req[0]` before this use
+    let a = req[0];
+}

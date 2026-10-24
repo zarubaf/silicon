@@ -1,0 +1,8 @@
+// S013: the family has the key 0, and the selection asks for the key 1.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S013 @+2
+    // expected-message: the port family `req` has no key 1 here; declare `req[1]` before this use
+    let a = req[1];
+}

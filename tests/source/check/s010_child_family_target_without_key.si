@@ -1,0 +1,11 @@
+// S010: a `:=` target `u.req` without a key.
+// TOP M()
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `req` is a port family, not a value; select one port with `req[k]`
+    u.req := true;
+}

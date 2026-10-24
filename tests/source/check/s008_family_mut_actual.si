@@ -1,0 +1,7 @@
+// S008: a family is no mutable root, so `push` on a family name is `S008`, before the `S010` of the type.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S008 @+1
+    push(req, true);
+}

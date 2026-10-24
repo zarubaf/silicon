@@ -1,0 +1,8 @@
+// S010: a `:=` target that names the family without a key.
+// TOP M()
+module M() {
+    output gnt[0]: Bool;
+    // expected-error S010 @+2
+    // expected-message: `gnt` is a port family, not a value; select one port with `gnt[k]`
+    gnt := true;
+}

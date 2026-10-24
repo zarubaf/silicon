@@ -1,0 +1,10 @@
+// S010: a hardware key of a selection. The text is "Family as a value", because no static key names an entry.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    input a: UInt[2];
+    let h = a +% 1;
+    // expected-error S010 @+2
+    // expected-message: `req` is a port family, not a value; select one port with `req[k]`
+    let b = req[h];
+}

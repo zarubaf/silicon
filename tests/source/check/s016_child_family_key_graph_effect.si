@@ -1,0 +1,17 @@
+// S016: the key of a child selection has the same rule.
+// TOP M()
+fn idx() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a port family key has no graph effect such as `diagnostic`; call `diagnostic` before this statement, keep the result in a `let`, and use that name in the key
+    diagnostic("idx", 0);
+    return 0;
+}
+module C() {
+    output gnt[0]: Bool;
+    gnt[0] := true;
+}
+module M() {
+    output o: Bool;
+    instance u = C();
+    o := u.gnt[idx()];
+}

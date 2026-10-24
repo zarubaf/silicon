@@ -1,0 +1,12 @@
+// S016: the key of an entry in a `:=` target is a family key, so it has the text of a family key.
+// TOP M()
+fn idx() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a port family key has no graph effect such as `diagnostic`; call `diagnostic` before this statement, keep the result in a `let`, and use that name in the key
+    diagnostic("idx", 0);
+    return 0;
+}
+module M() {
+    output gnt[0]: Bool;
+    gnt[idx()] := true;
+}

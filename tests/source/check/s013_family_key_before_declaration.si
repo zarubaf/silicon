@@ -1,0 +1,7 @@
+// S013: a use before the declaration of its key. The name resolves in the whole body, and the entry does not exist yet.
+// TOP M()
+module M() {
+    // expected-error S013 @+1
+    let a = req[0];
+    input req[0]: Bool;
+}

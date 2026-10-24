@@ -1,0 +1,6 @@
+// S010: a key of another type, here a `Bool`.
+// TOP M()
+module M() {
+    // expected-error S010 @+1
+    input req[true]: Bool;
+}

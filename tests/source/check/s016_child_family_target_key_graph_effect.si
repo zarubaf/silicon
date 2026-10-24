@@ -1,0 +1,15 @@
+// S016: the key of a child input entry in a `:=` target is an index of the target, so the text of a target index applies.
+// TOP M()
+fn idx() -> Nat {
+    // expected-error S016 @+2
+    // expected-message: a `:=` target index has no graph effect such as `diagnostic`; call `diagnostic` before the `:=`, keep the result in a `let`, and use that name in the index
+    diagnostic("idx", 0);
+    return 0;
+}
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    instance u = C();
+    u.req[idx()] := true;
+}

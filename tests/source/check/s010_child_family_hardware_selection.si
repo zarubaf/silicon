@@ -1,0 +1,15 @@
+// S010: a hardware key in the read `u.gnt[h]` is "Family as a value" too, and the name is the family.
+// TOP M()
+module C() {
+    output gnt[0]: Bool;
+    gnt[0] := true;
+}
+module M() {
+    input a: UInt[2];
+    output o: Bool;
+    instance u = C();
+    let h = a +% 1;
+    // expected-error S010 @+2
+    // expected-message: `gnt` is a port family, not a value; select one port with `gnt[k]`
+    o := u.gnt[h];
+}

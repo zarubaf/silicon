@@ -1,0 +1,10 @@
+// S010: a family as the argument of a call.
+// TOP M()
+fn f(b: Bool) -> Bool {
+    return b;
+}
+module M() {
+    input req[0]: Bool;
+    // expected-error S010 @+1
+    let n = f(req);
+}

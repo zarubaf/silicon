@@ -1,0 +1,9 @@
+// S011: the key of a declaration that holds a handle.
+// TOP M()
+module M() {
+    reg r: UInt[8] = 0;
+    let h = r;
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a handle of `Reg[UInt[8]]`; compute the value from static values, for example from constants and `comptime` parameters
+    input req[h]: Bool;
+}

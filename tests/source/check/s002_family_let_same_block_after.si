@@ -1,0 +1,9 @@
+// S002: the same as `s002_family_let_same_block_before` with the `let` after the indexed declaration.
+// TOP M()
+module M() {
+    {
+        input req[0]: Bool;
+        // expected-error S002 @+1
+        let req = 1;
+    }
+}

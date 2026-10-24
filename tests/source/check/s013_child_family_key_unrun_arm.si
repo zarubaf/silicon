@@ -1,0 +1,13 @@
+// S013: a family in a `comptime if` arm that does not run is part of the interface of the child without an entry, so a key of it is "Child family key".
+// TOP M()
+module C() {
+    comptime if (false) {
+        input req[0]: Bool;
+    }
+}
+module M() {
+    instance u = C();
+    // expected-error S013 @+2
+    // expected-message: the child `Instance[C]` has no entry `req[0]`; select a key that `Instance[C]` declares
+    u.req[0] := true;
+}

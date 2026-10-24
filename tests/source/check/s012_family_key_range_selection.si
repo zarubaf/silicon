@@ -1,0 +1,8 @@
+// S012: the range check of a key also applies to a selection, here at the first key above the range.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S012 @+2
+    // expected-message: a family key is 0 to 4294967295, not 4294967296; use a key in this range
+    let a = req[4294967296];
+}

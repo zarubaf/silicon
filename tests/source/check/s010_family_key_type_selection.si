@@ -1,0 +1,9 @@
+// S010: the type check of a key also applies to a selection.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    let k: SInt[4] = 0;
+    // expected-error S010 @+2
+    // expected-message: a family key is a static `Nat`, not a value of `SInt[4]`; compute the key from static integers, for example a loop value
+    let a = req[k];
+}

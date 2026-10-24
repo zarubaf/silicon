@@ -1,0 +1,12 @@
+// S016: a call in the key of a family entry that changes a list of the body is `S016`. The text names the changed binding.
+// TOP M()
+fn grow(mut l: List[Nat]) -> Nat {
+    l.push(1);
+    return 0;
+}
+module M() {
+    let mut l = list(Nat);
+    // expected-error S016 @+2
+    // expected-message: a port family key cannot change `l`; change `l` before this statement, keep the result in a `let`, and use that name in the key
+    input req[grow(l)]: Bool;
+}

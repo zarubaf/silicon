@@ -1,0 +1,8 @@
+// S010: a static `UInt` is no key, because a key is a `Nat`.
+// TOP M()
+module M() {
+    let k: UInt[4] = 1;
+    // expected-error S010 @+2
+    // expected-message: a family key is a static `Nat`, not a value of `UInt[4]`; compute the key from static integers, for example a loop value
+    input req[k]: Bool;
+}

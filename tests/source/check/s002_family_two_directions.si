@@ -1,0 +1,8 @@
+// S002: one family with an input entry and an output entry. The error is at the name of the second declaration.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S002 @+2
+    // expected-message: the port family `req` has an input entry and an output entry, here and at 4:11; give the entries of one direction another name
+    output req[1]: Bool;
+}

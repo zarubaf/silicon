@@ -1,0 +1,8 @@
+// S010: a bare family name is no value. The text names the fix.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S010 @+2
+    // expected-message: `req` is a port family, not a value; select one port with `req[k]`
+    let a = req;
+}

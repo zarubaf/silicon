@@ -1,0 +1,11 @@
+// S013: the child has the family `req` with the key 0, and the parent selects the key 1.
+// TOP M()
+module C() {
+    input req[0]: Bool;
+}
+module M() {
+    instance u = C();
+    // expected-error S013 @+2
+    // expected-message: the child `Instance[C]` has no entry `req[1]`; select a key that `Instance[C]` declares
+    u.req[1] := true;
+}

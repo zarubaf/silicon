@@ -1,0 +1,10 @@
+// S006: an indexed port in a `comptime fn`, as each port is.
+// TOP M()
+comptime fn f() -> Nat {
+    // expected-error S006 @+1
+    input req[0]: Bool;
+    return 1;
+}
+module M() {
+    let a = f();
+}

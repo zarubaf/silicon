@@ -1,0 +1,8 @@
+// S017: an input entry is no `:=` target, as a scalar input is not.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a wire, a register, an own output, or a child input, not a value of `Bool`; select one of these, or assign a local with `=`
+    req[0] := true;
+}

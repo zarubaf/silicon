@@ -1,0 +1,7 @@
+// S010: `len` of a family is `S010`, because a family is a namespace of keys, not an array.
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    // expected-error S010 @+1
+    let n = len(req);
+}

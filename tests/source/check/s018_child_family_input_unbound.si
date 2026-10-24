@@ -1,0 +1,13 @@
+// S018: an input entry of a child without a binding. The text names the entry as `g[0]`, with the public name of the entry.
+// TOP M()
+module C() {
+    comptime for i in 0..2 {
+        input g[i]: Bool;
+    }
+}
+module M() {
+    instance u = C();
+    // expected-error S018 @-1
+    // expected-message: the input `g[0]` of the instance `u` has no binding; bind it with `u.g[0] := ...;`
+    u.g[1] := true;
+}
