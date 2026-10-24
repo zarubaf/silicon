@@ -12,7 +12,7 @@ use crate::agg::Agg;
 use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::names::Step;
-use crate::ops::int_text;
+use crate::ops::{int_text, str_text};
 use crate::types::{Ty, TyId};
 use crate::value::Value;
 use parse::ast::{Expr, Ident, Nat, Pos};
@@ -1002,7 +1002,7 @@ impl Evaluator<'_> {
             ..
         }) = old
         {
-            let r = self.paths.source(*path, &self.syms.texts);
+            let r = str_text(&self.paths.source(*path, &self.syms.texts));
             return fail(
                 Code::S010,
                 pos,

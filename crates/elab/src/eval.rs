@@ -67,7 +67,7 @@ use crate::hw::{Graph, Handle, HwId, Kind as Resource, Op, Part, Ref, Root, Seen
 use crate::int::Int;
 use crate::limit;
 use crate::names::{PathId, Paths, Step, Sym};
-use crate::ops::{self, Fault, Fuel};
+use crate::ops::{self, Fault, Fuel, str_text};
 use crate::scan::{CallArgs, Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
@@ -229,13 +229,15 @@ struct Evaluator<'a> {
 }
 
 /// The kind of a guard (section 9.4): a hardware arm or a structural context. A family key
-/// (`Key`) and an index of a `:=` target (`Index`) are structural contexts with their own texts.
+/// (`Key`), an index of a `:=` target (`Index`), and an `as` key (`Name`) are structural contexts
+/// with their own texts.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuardKind {
     Arm,
     Structural,
     Key,
     Index,
+    Name,
 }
 
 /// The innermost guard: its kind, the nesting depth at its start, and `callee`. The `callee` is
@@ -277,6 +279,10 @@ impl Guard {
                 "a `:=` target index cannot change `{x}`; change `{x}` before the `:=`, keep the \
                  result in a `let`, and use that name in the index"
             ),
+            GuardKind::Name => format!(
+                "an `as` key cannot change `{x}`; change `{x}` before this statement, keep the \
+                 result in a `let`, and use that name in the key"
+            ),
         }
     }
 
@@ -297,6 +303,10 @@ impl Guard {
             GuardKind::Index => format!(
                 "a `:=` target index has no graph effect such as `{g}`; call `{g}` before the \
                  `:=`, keep the result in a `let`, and use that name in the index"
+            ),
+            GuardKind::Name => format!(
+                "an `as` key has no graph effect such as `{g}`; call `{g}` before this \
+                 statement, keep the result in a `let`, and use that name in the key"
             ),
         }
     }
@@ -686,7 +696,7 @@ impl Evaluator<'_> {
                 ..
             }) => format!(
                 "the output `{}`",
-                self.paths.source(*path, &self.syms.texts)
+                str_text(&self.paths.source(*path, &self.syms.texts))
             ),
             Seen::Handle(Handle::Domain(d)) => format!("the domain `{}`", self.domain_name(*d)),
             Seen::Handle(h) => match self.handle_form(h) {
@@ -862,7 +872,7 @@ impl Evaluator<'_> {
             ..
         }) = v
         {
-            let r = self.paths.source(*path, &self.syms.texts);
+            let r = str_text(&self.paths.source(*path, &self.syms.texts));
             return fail(
                 Code::S010,
                 pos,
@@ -1837,12 +1847,10 @@ impl Evaluator<'_> {
             | Stmt::Reg { pos, .. }
             | Stmt::Wire { pos, .. }
             | Stmt::Mem { pos, .. }
-            | Stmt::Inst { pos, .. } => {
+            | Stmt::Inst { pos, .. }
+            | Stmt::Input { pos, .. }
+            | Stmt::Output { pos, .. } => {
                 self.hardware_checks(*pos, s)?;
-                self.module_stmt(s)?;
-                Ok(None)
-            }
-            Stmt::Input { .. } | Stmt::Output { .. } => {
                 self.module_stmt(s)?;
                 Ok(None)
             }
