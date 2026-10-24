@@ -30,11 +30,12 @@
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Fault, Scope, Value, eval, exec_static, leaf_bits, leaves, loop_values};
 use super::program::{
-    EnumDef, FTy, HBin, HExpr, Item, Match, Pattern, Place, Ports, Program, Radix, SExpr, STy,
-    Scalar, Stmt, Ty, helper_of, is_resource_helper, render_items,
+    EnumDef, FTy, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Ports, Program, Radix,
+    SExpr, STy, Scalar, Stmt, Ty, helper_of, is_resource_helper, render_items,
 };
 use super::public::Public;
 use num_bigint::{BigInt, BigUint, Sign};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
@@ -298,7 +299,8 @@ fn walk(items: &[Item], top: &str, args: &[Value], scope: Scope) -> Option<Walke
         in_top: false,
         clocked: false,
         ports: Vec::new(),
-        fault: false,
+        fault: Cell::new(false),
+        hoisted: Vec::new(),
     };
     let top = w.specialize(top, args)?;
     let helpers: Vec<Item> = items
@@ -343,7 +345,7 @@ fn walk(items: &[Item], top: &str, args: &[Value], scope: Scope) -> Option<Walke
         top: format!("{top}()"),
         clocked: w.clocked,
         ports: w.ports,
-        fault: w.fault,
+        fault: w.fault.get(),
     })
 }
 
@@ -468,8 +470,12 @@ struct Writer<'a> {
     clocked: bool,
     /// The ports of the top, in the order of the walk.
     ports: Vec<TwinPort>,
-    /// Whether a type of a port had no concrete value.
-    fault: bool,
+    /// Whether a port had no concrete type, name, or key.
+    fault: Cell<bool>,
+    /// The port declarations of the module under the walk. A port that a
+    /// loop or a branch declares would leave the scope of a later block, so
+    /// the twin declares every port at the start of its module.
+    hoisted: Vec<Stmt>,
 }
 
 impl Writer<'_> {
@@ -510,32 +516,120 @@ impl Writer<'_> {
         if self.in_top {
             self.clocked = clocked;
         }
+        self.hoisted.clear();
         let mut fr = Frame {
             env: Env::of(params, args),
             ..Frame::default()
         };
+        let stmts = self.stmts(body, &mut fr);
         Item::Module {
             name,
             params: Vec::new(),
             clocked,
-            body: self.stmts(body, &mut fr),
+            body: std::mem::take(&mut self.hoisted)
+                .into_iter()
+                .chain(stmts)
+                .collect(),
         }
     }
 
-    /// Notes a port of the top. `t` has a literal width.
-    fn record(&mut self, public: Public, name: &str, output: bool, t: &Ty) {
+    /// Notes a port of the top. `t` has a literal width, and an empty
+    /// entry has none.
+    fn record(&mut self, public: Public, name: &str, output: bool, t: Option<&Ty>) {
         if !self.in_top {
             return;
         }
-        match leaves("", t, &Env::default(), &self.scope) {
+        let leaves = match t {
+            Some(t) => leaves("", t, &Env::default(), &self.scope),
+            None => Ok(Vec::new()),
+        };
+        match leaves {
             Ok(leaves) => self.ports.push(TwinPort {
                 public,
                 name: name.to_owned(),
                 output,
                 leaves,
             }),
-            Err(_) => self.fault = true,
+            Err(_) => self.fault.set(true),
         }
+    }
+
+    /// The key `e` as the number of an entry, if it is one.
+    fn index(&self, e: &SExpr, fr: &Frame) -> Option<u32> {
+        match self.value(e, fr)? {
+            Value::Int(n) => u32::try_from(n).ok(),
+            _ => None,
+        }
+    }
+
+    /// The `String` that `e` gives.
+    fn string(&self, e: &SExpr, fr: &Frame) -> Option<String> {
+        match self.value(e, fr)? {
+            Value::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The public name of the port `p`, and its name in the twin: a scalar
+    /// port keeps its name, and the entry `req[3]` becomes `req_3`. A
+    /// generated name has no `_`, so no other name of the twin is the same.
+    fn public(&self, p: &Port, fr: &Frame) -> Option<(Public, String)> {
+        let entry = |base: String, k: u32| {
+            let name = format!("{base}_{k}");
+            (Public { base, key: Some(k) }, name)
+        };
+        let scalar = |base: String| (Public::scalar(&base), base);
+        match (&p.key, &p.public) {
+            (Some(k), None) => Some(entry(p.name.clone(), self.index(k, fr)?)),
+            (None, None) => Some(scalar(p.name.clone())),
+            (None, Some(SExpr::PortKey(name, true, k))) => {
+                Some(entry(self.string(name, fr)?, self.index(k, fr)?))
+            }
+            (None, Some(SExpr::PortKey(name, false, _))) => Some(scalar(self.string(name, fr)?)),
+            (None, Some(key)) => Some(scalar(self.string(key, fr)?)),
+            (Some(_), Some(_)) => None,
+        }
+    }
+
+    /// A port with a key: it goes to the start of the module. The binder
+    /// of a scalar port names it in the frame.
+    fn port(&mut self, p: &Port, fr: &mut Frame) {
+        let ty = match &p.ty {
+            PTy::Data(t) => Some(self.ty(t, fr)),
+            PTy::Unit => None,
+        };
+        let Some((public, name)) = self.public(p, fr) else {
+            self.fault.set(true);
+            return;
+        };
+        if p.key.is_none() {
+            fr.names.insert(p.name.clone(), name.clone());
+        }
+        self.record(public, &name, p.output, ty.as_ref());
+        self.hoisted.push(match ty {
+            Some(t) if p.output => Stmt::Output(name, t),
+            Some(t) => Stmt::Input(name, t),
+            None => Stmt::Port(Port {
+                output: p.output,
+                name,
+                key: None,
+                public: None,
+                ty: PTy::Unit,
+            }),
+        });
+    }
+
+    /// The name in the twin of the entry `fam[key]` of the frame `fr`. A
+    /// key with no value is a fault of the builder, and the name keeps the
+    /// family.
+    fn entry(&self, fam: &str, key: &SExpr, fr: &Frame) -> String {
+        self.index(key, fr).map_or_else(
+            || {
+                self.fault.set(true);
+                fam.to_owned()
+            },
+            |k| format!("{fam}_{k}"),
+        )
     }
 
     fn value(&self, e: &SExpr, fr: &Frame) -> Option<Value> {
@@ -673,6 +767,14 @@ impl Writer<'_> {
     }
 
     fn hexpr(&self, e: &HExpr, fr: &Frame) -> HExpr {
+        // A static condition selects one arm, so the other arm has no value
+        // in the frame (a key can be out of range there).
+        if let HExpr::If(c, then, els) = e
+            && let HExpr::Static(cond) = &**c
+            && let Some(Value::Bool(taken)) = self.value(cond, fr)
+        {
+            return self.hexpr(if taken { then } else { els }, fr);
+        }
         let sub = |a: &HExpr| Box::new(self.hexpr(a, fr));
         match e {
             HExpr::Name(n) => HExpr::Name(fr.name(n)),
@@ -716,9 +818,8 @@ impl Writer<'_> {
             HExpr::Tuple(_) | HExpr::Array(_) | HExpr::Record(..) => {
                 panic!("a literal of handles reads as data: {e:?}")
             }
-            HExpr::Entry(..) | HExpr::ChildEntry(..) => {
-                panic!("the twin of an entry waits for its commit: {e:?}")
-            }
+            HExpr::Entry(fam, k) => HExpr::Name(self.entry(fam, k, fr)),
+            HExpr::ChildEntry(u, fam, k) => HExpr::Field(fr.name(u), self.entry(fam, k, fr)),
         }
     }
 
@@ -817,15 +918,15 @@ impl Writer<'_> {
         match s {
             Stmt::Input(n, t) => {
                 let t = self.ty(t, fr);
-                self.record(Public::scalar(n), n, false, &t);
+                self.record(Public::scalar(n), n, false, Some(&t));
                 out.push(Stmt::Input(n.clone(), t));
             }
             Stmt::Output(n, t) => {
                 let t = self.ty(t, fr);
-                self.record(Public::scalar(n), n, true, &t);
+                self.record(Public::scalar(n), n, true, Some(&t));
                 out.push(Stmt::Output(n.clone(), t));
             }
-            Stmt::Port(_) => panic!("the twin of a port waits for its commit"),
+            Stmt::Port(p) => self.port(p, fr),
             Stmt::Reg(n, t, reset) => {
                 let (t, reset) = (self.ty(t, fr), self.fold(reset, fr));
                 out.push(Stmt::Reg(fr.declare(n), t, reset));
@@ -875,20 +976,20 @@ impl Writer<'_> {
                         _ => Place::Field(fr.name(u), p.clone()),
                     },
                     Place::Path(e) => Writer::place(self.handle(e, fr)),
-                    Place::Entry(..) | Place::ChildEntry(..) => {
-                        panic!("the twin of an entry target waits for its commit")
+                    Place::Entry(fam, k) => Place::Name(self.entry(fam, k, fr)),
+                    Place::ChildEntry(u, fam, k) => {
+                        Place::Field(fr.name(u), self.entry(fam, k, fr))
                     }
                 };
                 out.push(Stmt::Connect(place, self.hexpr(v, fr)));
             }
             Stmt::Instance(u, m, args) => self.instance(s, (u, m, args), fr, out),
             Stmt::If(c, then, els) => match self.value(c, fr) {
-                Some(Value::Bool(true)) => {
-                    out.push(self.block(then, fr, fr.env.clone(), fr.suffix.clone()));
-                }
-                Some(Value::Bool(false)) => {
-                    if let Some(els) = els {
-                        out.push(self.block(els, fr, fr.env.clone(), fr.suffix.clone()));
+                Some(Value::Bool(taken)) => {
+                    let branch = if taken { Some(then) } else { els.as_ref() };
+                    if let Some(branch) = branch {
+                        let block = self.block(branch, fr, fr.env.clone(), fr.suffix.clone());
+                        emit_block(block, declares_port(branch), out);
                     }
                 }
                 _ => out.push(s.clone()),
@@ -1005,7 +1106,7 @@ impl Writer<'_> {
         // A loop that pushes handles keeps its declarations in the scope of
         // the module, where the later calls bind them. Their names carry the
         // iteration, so no two iterations share a name.
-        let flat = body.iter().any(|s| matches!(s, Stmt::HPush(..)));
+        let flat = body.iter().any(|s| matches!(s, Stmt::HPush(..))) || declares_port(body);
         for value in loop_values(&lo, &hi) {
             let suffix = format!(
                 "_{binder}_{}{}",
@@ -1014,10 +1115,8 @@ impl Writer<'_> {
             );
             let mut env = fr.env.clone();
             env.statics.insert(binder.to_owned(), value);
-            match self.block(body, fr, env, suffix) {
-                Stmt::Block(inner) if flat => out.extend(inner),
-                block => out.push(block),
-            }
+            let block = self.block(body, fr, env, suffix);
+            emit_block(block, flat, out);
         }
     }
 
@@ -1068,23 +1167,56 @@ impl Writer<'_> {
             ..Frame::default()
         };
         for ((name, t), arg) in params.iter().zip(args) {
-            if let FTy::Data(t) = t {
-                let ty = self.ty(t, &callee);
-                let value = self.hexpr(arg, fr);
-                out.push(Stmt::Let {
-                    name: callee.declare(name),
-                    mutable: false,
-                    ty: Some(ty),
-                    value,
-                });
-            } else {
-                callee.handles.insert(name.clone(), self.handle(arg, fr));
+            match t {
+                FTy::Data(t) => {
+                    let ty = self.ty(t, &callee);
+                    let value = self.hexpr(arg, fr);
+                    out.push(Stmt::Let {
+                        name: callee.declare(name),
+                        mutable: false,
+                        ty: Some(ty),
+                        value,
+                    });
+                }
+                // A `comptime` formal is a static value of the callee.
+                FTy::Static(_) => match arg {
+                    HExpr::Static(e) => match self.value(e, fr) {
+                        Some(v) => {
+                            callee.env.statics.insert(name.clone(), v);
+                        }
+                        None => self.fault.set(true),
+                    },
+                    _ => self.fault.set(true),
+                },
+                _ => {
+                    callee.handles.insert(name.clone(), self.handle(arg, fr));
+                }
             }
         }
         let body = self.stmts(body, &mut callee);
         out.extend(body);
         (callee, ret.clone(), result.clone())
     }
+}
+
+/// The block `block` in `out`, or its statements if `flat`: a block that
+/// declares a port keeps its statements in the scope of the module, next
+/// to the hoisted declarations.
+fn emit_block(block: Stmt, flat: bool, out: &mut Vec<Stmt>) {
+    match block {
+        Stmt::Block(inner) if flat => out.extend(inner),
+        block => out.push(block),
+    }
+}
+
+/// Whether `body` declares a port with a key, also in a nested block.
+fn declares_port(body: &[Stmt]) -> bool {
+    body.iter().any(|s| match s {
+        Stmt::Port(_) => true,
+        Stmt::If(_, then, els) => declares_port(then) || els.as_deref().is_some_and(declares_port),
+        Stmt::For(_, _, _, inner) | Stmt::Block(inner) => declares_port(inner),
+        _ => false,
+    })
 }
 
 /// The payload leaf of type `t` at the bit `off` of `bits`.
@@ -1164,8 +1296,8 @@ mod tests {
     use super::super::build::typed;
     use super::super::eval::Value;
     use super::super::program::{
-        ComptimeFn, FieldTy, HBin, HExpr, Item, Place, Ports, Radix, SBin, SExpr, STy, Stmt,
-        StructDef, Ty,
+        ComptimeFn, FieldTy, HBin, HExpr, Item, PTy, Place, Port, Ports, Radix, SBin, SExpr, STy,
+        Stmt, StructDef, Ty,
     };
     use super::*;
     use num_bigint::BigInt;
@@ -1920,6 +2052,244 @@ mod tests {
             }
         }
         assert!(resources > 1000, "{resources}");
+    }
+
+    fn port(output: bool, name: &str, key: Option<SExpr>, public: Option<SExpr>, ty: PTy) -> Stmt {
+        Stmt::Port(Port {
+            output,
+            name: name.to_owned(),
+            key,
+            public,
+            ty,
+        })
+    }
+
+    fn string(s: &str) -> SExpr {
+        SExpr::Str(s.to_owned())
+    }
+
+    /// The key `j * 8 + 2` of the loop binder `j0`: the keys 2 and 10.
+    fn key(j: &str) -> SExpr {
+        sbin(SBin::Add, sbin(SBin::Mul, sname(j), int(8)), int(2))
+    }
+
+    /// A top with the entries 2 and 10 of two families from a loop, an
+    /// empty entry, a `PortKey` that joins the family `a0`, and a key that
+    /// is a core keyword.
+    fn families() -> Program {
+        let body = vec![
+            Stmt::For(
+                "j0".to_owned(),
+                int(0),
+                int(2),
+                vec![
+                    port(false, "a0", Some(key("j0")), None, PTy::Data(uint(4))),
+                    port(true, "z0", Some(key("j0")), None, PTy::Data(uint(4))),
+                    Stmt::Connect(
+                        Place::Entry("z0".to_owned(), key("j0")),
+                        HExpr::Entry("a0".to_owned(), key("j0")),
+                    ),
+                ],
+            ),
+            port(false, "a0", Some(int(3)), None, PTy::Unit),
+            port(false, "y0", None, Some(string("add")), PTy::Data(uint(4))),
+            port(
+                false,
+                "y1",
+                None,
+                Some(SExpr::PortKey(
+                    Box::new(string("a0")),
+                    true,
+                    Box::new(int(5)),
+                )),
+                PTy::Data(Ty::Bool),
+            ),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            connect(
+                "o0",
+                hbin(
+                    HBin::Addw,
+                    hname("y0"),
+                    HExpr::Entry("a0".to_owned(), int(2)),
+                ),
+            ),
+        ];
+        program(vec![module("M0", &[], false, body)], Vec::new())
+    }
+
+    #[test]
+    fn the_twin_writes_entries_as_scalar_ports_at_the_start() {
+        let t = twin(&families());
+        assert_eq!(
+            t.text,
+            "module M0() domains() {\n    input a0_2: UInt[4];\n    output z0_2: UInt[4];\n    input a0_10: UInt[4];\n    output z0_10: UInt[4];\n    input a0_3: ();\n    input add: UInt[4];\n    input a0_5: Bool;\n    z0_2 := a0_2;\n    z0_10 := a0_10;\n    output o0: UInt[4];\n    o0 := (add +% a0_2);\n}\n"
+        );
+        assert!(t.static_names().is_empty(), "{:?}", t.static_names());
+    }
+
+    #[test]
+    fn the_ports_follow_the_layout_of_the_public_names() {
+        let p = families();
+        let (items, args) = (&p.items, &p.args);
+        let Ok(ports) = ports(items, "M0", args) else {
+            panic!("the ports fault");
+        };
+        assert_eq!(
+            ports.inputs,
+            vec![
+                ("a0[2]".to_owned(), Scalar::UInt(4)),
+                ("a0[5]".to_owned(), Scalar::Bool),
+                ("a0[10]".to_owned(), Scalar::UInt(4)),
+                ("add".to_owned(), Scalar::UInt(4)),
+            ]
+        );
+        assert_eq!(
+            ports.outputs,
+            vec![
+                ("o0".to_owned(), Scalar::UInt(4)),
+                ("z0[2]".to_owned(), Scalar::UInt(4)),
+                ("z0[10]".to_owned(), Scalar::UInt(4)),
+            ]
+        );
+    }
+
+    /// The keys 2 and 10 sort as numbers in the program and as text in the
+    /// twin, so the maps reorder the entries.
+    #[test]
+    fn the_vector_maps_reorder_the_entries_of_the_twin() {
+        let t = twin(&families());
+        assert_eq!(
+            t.input_line("in=(a0[2] 1 a0[5] true a0[10] 3 add 4)")
+                .as_deref(),
+            Ok("in=(a0_10 3 a0_2 1 a0_5 true add 4)")
+        );
+        assert_eq!(
+            t.output_line("out=(o0 7 z0_10 3 z0_2 1)").as_deref(),
+            Ok("out=(o0 7 z0[2] 1 z0[10] 3)")
+        );
+        assert!(t.input_line("in=(a0_2 1 a0_5 true a0_10 3 add 4)").is_err());
+        assert!(t.input_line("in=(a0[2] 1 a0[5] true a0[10] 3)").is_err());
+        assert!(t.output_line("out=(o0 7 z0[2] 1 z0[10] 3)").is_err());
+        // The empty entry has no leaf, so no entry in a line.
+        assert!(
+            t.input_line("in=(a0[2] 1 a0[3] 0 a0[5] true a0[10] 3 add 4)")
+                .is_err()
+        );
+    }
+
+    /// `fn H0(comptime x0: String) -> UInt[4]` declares `input y0 as x0`, and
+    /// `fn H1(comptime x0: Nat) -> UInt[4]` declares `input a1[x0]` and reads
+    /// the entry of the call before.
+    fn port_helpers() -> Vec<Item> {
+        let h0 = Item::Helper {
+            name: "H0".to_owned(),
+            params: vec![("x0".to_owned(), FTy::Static(STy::Str))],
+            mut_first: false,
+            ret: FTy::Data(uint(4)),
+            body: vec![port(
+                false,
+                "y0",
+                None,
+                Some(sname("x0")),
+                PTy::Data(uint(4)),
+            )],
+            result: hname("y0"),
+        };
+        let entry = |k: SExpr| HExpr::Entry("a1".to_owned(), k);
+        let before = entry(sbin(SBin::Sub, sname("x0"), int(1)));
+        let result = HExpr::If(
+            Box::new(HExpr::Static(sbin(SBin::Eq, sname("x0"), int(0)))),
+            Box::new(entry(int(0))),
+            Box::new(hbin(HBin::Addw, entry(sname("x0")), before)),
+        );
+        let h1 = Item::Helper {
+            name: "H1".to_owned(),
+            params: vec![("x0".to_owned(), FTy::Static(STy::Nat))],
+            mut_first: false,
+            ret: FTy::Data(uint(4)),
+            body: vec![port(
+                false,
+                "a1",
+                Some(sname("x0")),
+                None,
+                PTy::Data(uint(4)),
+            )],
+            result,
+        };
+        vec![h0, h1]
+    }
+
+    #[test]
+    fn the_twin_inlines_a_helper_that_declares_a_port() {
+        let call = |f: &str, arg: SExpr| HExpr::Call(f.to_owned(), vec![HExpr::Static(arg)]);
+        let let_ = |name: &str, value: HExpr| Stmt::Let {
+            name: name.to_owned(),
+            mutable: false,
+            ty: None,
+            value,
+        };
+        let name = sbin(SBin::Add, string("c"), SExpr::StrOf(Box::new(sname("j0"))));
+        let body = vec![
+            let_("l0", call("H1", int(0))),
+            let_("l1", call("H1", int(1))),
+            Stmt::For(
+                "j0".to_owned(),
+                int(0),
+                int(2),
+                vec![let_("l2", call("H0", name))],
+            ),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            connect("o0", hbin(HBin::Addw, hname("l1"), hname("l0"))),
+        ];
+        let items = port_helpers()
+            .into_iter()
+            .chain([module("M0", &[], false, body)])
+            .collect();
+        let p = program(items, Vec::new());
+        let t = twin(&p);
+        assert_eq!(
+            t.text,
+            "module M0() domains() {\n    input a1_0: UInt[4];\n    input a1_1: UInt[4];\n    input c0: UInt[4];\n    input c1: UInt[4];\n    let l0: UInt[4] = a1_0;\n    let l1: UInt[4] = (a1_1 +% a1_0);\n    {\n        let l2_j0_0: UInt[4] = c0;\n    }\n    {\n        let l2_j0_1: UInt[4] = c1;\n    }\n    output o0: UInt[4];\n    o0 := (l1 +% l0);\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_block_that_declares_a_port_keeps_its_statements_in_the_module() {
+        let name = sbin(SBin::Add, string("c"), SExpr::StrOf(Box::new(sname("j0"))));
+        let body = vec![
+            Stmt::For(
+                "j0".to_owned(),
+                int(0),
+                int(2),
+                vec![
+                    port(false, "y0", None, Some(name), PTy::Data(uint(4))),
+                    mutable("v0", hname("y0")),
+                ],
+            ),
+            Stmt::If(
+                SExpr::Bool(true),
+                vec![port(false, "a0", Some(int(1)), None, PTy::Data(uint(4)))],
+                Some(vec![port(
+                    false,
+                    "a0",
+                    Some(int(7)),
+                    None,
+                    PTy::Data(uint(4)),
+                )]),
+            ),
+            Stmt::If(
+                SExpr::Bool(false),
+                vec![port(false, "a2", Some(int(1)), None, PTy::Data(uint(4)))],
+                None,
+            ),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            connect("o0", HExpr::Entry("a0".to_owned(), int(1))),
+        ];
+        let p = program(vec![module("M0", &[], false, body)], Vec::new());
+        assert_eq!(
+            twin(&p).text,
+            "module M0() domains() {\n    input c0: UInt[4];\n    input c1: UInt[4];\n    input a0_1: UInt[4];\n    let mut v0_j0_0 = c0;\n    let mut v0_j0_1 = c1;\n    output o0: UInt[4];\n    o0 := a0_1;\n}\n"
+        );
     }
 
     /// The `in=` line of `ports`, with the reset first for a clocked top.

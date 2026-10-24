@@ -239,7 +239,6 @@ pub(crate) enum FTy {
 pub(crate) enum PTy {
     #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
     Data(Ty),
-    #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
     Unit,
 }
 
@@ -465,7 +464,6 @@ pub(crate) enum Stmt {
     Input(String, Ty),
     Output(String, Ty),
     /// A port with a key, an entry of a family, or an empty entry.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the port forms make it"))]
     Port(Port),
     /// A register with its reset value.
     Reg(String, Ty, SExpr),
