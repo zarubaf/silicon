@@ -74,6 +74,11 @@ pub enum Kind {
     Mem,
     Input,
     Output,
+    /// The name of a port family: it holds every `input name[k]` or `output name[k]` of one
+    /// module body. `input` tells if its first entry is an input.
+    Family {
+        input: bool,
+    },
     Instance,
     Domain,
 }

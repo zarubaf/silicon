@@ -64,6 +64,15 @@ impl Scopes {
         true
     }
 
+    /// The declaration of the name in the innermost scope, if it has one there.
+    pub(crate) fn here(&self, name: &str) -> Option<DeclId> {
+        let level = self.opened.len();
+        self.locals
+            .get(name)
+            .and_then(|stack| stack.last())
+            .and_then(|&(id, at)| (at == level).then_some(id))
+    }
+
     /// The item with the name, past each local.
     pub(crate) fn item(&self, name: &str) -> Option<DeclId> {
         self.items.get(name).copied()

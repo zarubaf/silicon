@@ -2075,3 +2075,133 @@ fn a_binder_of_an_expression_has_its_own_declaration() {
     };
     assert_eq!(expr.target(*used), Some(Target::Decl(id)));
 }
+
+fn mod_body(body: &str) -> String {
+    format!("module M(comptime W: Nat) {{\n{body}\n}}")
+}
+
+#[test]
+fn a_port_family_has_one_binder_for_all_its_declarations() {
+    let src = mod_body(
+        "comptime for i in 0..2 {\ninput req[i]: Bool;\n}\noutput o: Bool;\n\
+         comptime for j in 0..2 {\no := req[j];\n}",
+    );
+    let r = ok(&src);
+    let declared = target_at(&r, find(&src, "req[i]"));
+    let used = target_at(&r, find(&src, "req[j]"));
+    assert!(matches!(declared, Some(Target::Decl(_))));
+    assert_eq!(declared, used);
+    assert_eq!(
+        decl_at_use(&r, find(&src, "req[j]")),
+        Kind::Family { input: true }
+    );
+    // Each indexed declaration of a name, at each depth, takes the one binder.
+    let src = mod_body("output g[0]: Bool;\n{\noutput g[1]: Bool;\n}\noutput g[2]: Bool;");
+    let r = ok(&src);
+    let first = target_at(&r, find(&src, "g[0]"));
+    assert_eq!(first, target_at(&r, find(&src, "g[1]")));
+    assert_eq!(first, target_at(&r, find(&src, "g[2]")));
+    assert_eq!(
+        decl_at_use(&r, find(&src, "g[0]")),
+        Kind::Family { input: false }
+    );
+    // A use before the first declaration resolves.
+    let src = mod_body("output o: Bool;\no := req[0];\ninput req[0]: Bool;");
+    let r = ok(&src);
+    assert_eq!(
+        decl_at_use(&r, find(&src, "req[0];\ninput")),
+        Kind::Family { input: true }
+    );
+    ok(&mod_body("input req[0]: Bool;\ninput req[1]: Bool;"));
+}
+
+#[test]
+fn a_nested_let_shadows_a_port_family() {
+    let src = mod_body("input req[0]: Bool;\n{\nlet req = 1;\nlet y = req;\n}");
+    let r = ok(&src);
+    assert_eq!(decl_at_use(&r, find(&src, "req;\n}")), Kind::Local);
+}
+
+#[test]
+fn an_indexed_port_of_a_comptime_fn_declares_a_local() {
+    let src = "comptime fn f(p: Bool) -> Bool {\ninput req[0]: Bool;\nreturn p;\n}";
+    let r = ok(src);
+    assert_eq!(decl_at_use(&r, find(src, "req[0]")), Kind::Input);
+}
+
+#[test]
+fn a_family_and_a_scalar_port_of_one_name_are_s002() {
+    let scalar = |at: &str| {
+        format!(
+            "`req` names a port family and a scalar port, here and at {at}; use one form for the name"
+        )
+    };
+    for (body, line, col, earlier) in [
+        ("input req: Bool;\n{\ninput req[0]: Bool;\n}", 4, 7, "2:7"),
+        ("{\ninput req[0]: Bool;\n}\noutput req: Bool;", 5, 8, "3:7"),
+        (
+            "comptime if (true) {\ninput req: Bool;\n}\noutput req[0]: Bool;",
+            5,
+            8,
+            "3:7",
+        ),
+    ] {
+        let src = mod_body(body);
+        assert_eq!(errors(&src)[0], (S002, line, col), "{body}");
+        assert_eq!(message(&src), scalar(earlier), "{body}");
+    }
+}
+
+#[test]
+fn a_family_with_two_directions_is_s002_at_the_second_direction() {
+    let src = mod_body("input req[0]: Bool;\ncomptime if (true) {\noutput req[1]: Bool;\n}");
+    assert_eq!(errors(&src), [(S002, 4, 8)]);
+    assert_eq!(
+        message(&src),
+        "the port family `req` has an input entry and an output entry, here and at 2:7; give \
+         the entries of one direction another name"
+    );
+}
+
+#[test]
+fn a_family_and_another_name_of_the_body_scope_is_the_ordinary_s002() {
+    let plain = "`req` is already declared in this scope";
+    for (src, line, col) in [
+        (
+            "module M(comptime req: Nat) {\ninput req[0]: Bool;\n}".to_owned(),
+            2,
+            7,
+        ),
+        (mod_body("let req = 1;\n{\ninput req[0]: Bool;\n}"), 4, 7),
+        (mod_body("{\ninput req[0]: Bool;\n}\nlet req = 1;"), 5, 5),
+        (mod_body("let req = 1;\ninput req[0]: Bool;"), 3, 7),
+    ] {
+        assert_eq!(errors(&src)[0], (S002, line, col), "{src}");
+        assert_eq!(message(&src), plain, "{src}");
+    }
+}
+
+#[test]
+fn an_indexed_declaration_declares_its_name_in_its_own_block() {
+    let plain = "`req` is already declared in this scope";
+    for (body, line, col) in [
+        ("{\nlet req = 1;\ninput req[0]: Bool;\n}", 4, 7),
+        ("{\ninput req[0]: Bool;\nlet req = 1;\n}", 4, 5),
+        ("comptime for req in 0..2 {\ninput req[req]: Bool;\n}", 3, 7),
+    ] {
+        let src = mod_body(body);
+        assert_eq!(errors(&src)[0], (S002, line, col), "{body}");
+        assert_eq!(message(&src), plain, "{body}");
+    }
+}
+
+#[test]
+fn the_family_walk_needs_no_recursion_for_a_deep_nest() {
+    let n = parse::DEFAULT_SYNTAX_DEPTH - 8;
+    let src = mod_body(&format!(
+        "{}output g[0]: Bool;{}\noutput g: Bool;",
+        "comptime if (true) {\n".repeat(n),
+        "\n}".repeat(n)
+    ));
+    assert_eq!(errors(&src).first().map(|e| e.0), Some(S002));
+}
