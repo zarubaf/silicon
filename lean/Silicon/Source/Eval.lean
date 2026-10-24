@@ -3028,7 +3028,8 @@ mutual
         | none => pure ()
         hwStmt n s
         return none
-      | .input .. | .output .. => do
+      | .input p .. | .output p .. => do
+        Elab.helperPortLater p
         hwStmt n s
         return none
       | .alias _ x ty => do

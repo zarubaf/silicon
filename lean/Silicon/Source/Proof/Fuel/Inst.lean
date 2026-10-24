@@ -49,6 +49,10 @@ theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
     Follows cap (Elab.port p input b t) (Elab.port p input b t) := by
   unfold Elab.port; follows [publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
 
+theorem helperPortLater_f (p : Pos) :
+    Follows cap (Elab.helperPortLater p) (Elab.helperPortLater p) := by
+  unfold Elab.helperPortLater; follows
+
 theorem portKeyLater_f (p : Pos) :
     Follows cap (Elab.portKeyLater p) (Elab.portKeyLater p) := by
   unfold Elab.portKeyLater; follows
@@ -250,13 +254,15 @@ theorem follows_all : ∀ n,
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he k) (ht k) (hb k)]
+          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he k) (ht k) (hb k),
+          helperPortLater_f]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he m) (ht m) (hb m)]
+          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he m) (ht m) (hb m),
+          helperPortLater_f]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

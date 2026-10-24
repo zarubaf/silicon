@@ -384,4 +384,24 @@ def family : Item :=
 #guard (Parse.parseSource Lex.defaultSyntaxDepth (Print.print [family])).toOption.map Print.dump ==
   some (Print.dump [family])
 
+/-!
+An `as` key prints after the type, in a module and in a `fn`, and the text parses again. The
+dump writes the form `(keyed <key>)`.
+-/
+def keyed : List Item :=
+  [.module p (nm "K") [] none
+    [.input p (nm "pin") (.keyed (.str p "req_0")) (t "Bool"),
+     .output p (nm "o") (.keyed (.call p (v "PortKey") [.str p "gnt", .bool p true, n 0])) (t "T")],
+   .fn p false (nm "lane") [] (t "T")
+    [.input p (nm "x") (.keyed (bin .add (.str p "x") (v "s"))) (t "Bool")]]
+
+#guard (Stmt.input p (nm "pin") (.keyed (.str p "req_0")) (t "Bool")).print 0 ==
+  "input pin: Bool as \"req_0\";\n"
+#guard (Stmt.output p (nm "o") (.keyed (v "k")) (.index p (t "UInt") [n 8])).print 1 ==
+  "    output o: UInt[8] as k;\n"
+#guard stmtDump (.input p (nm "pin") (.keyed (.str p "x")) (t "T")) ==
+  "(input \"pin\" (keyed (str \"x\")) (name \"T\"))"
+#guard (Parse.parseSource Lex.defaultSyntaxDepth (Print.print keyed)).toOption.map Print.dump ==
+  some (Print.dump keyed)
+
 end Silicon.Source.Test.Print

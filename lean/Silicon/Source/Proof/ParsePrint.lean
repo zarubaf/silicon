@@ -27,9 +27,9 @@ theorem parse_print_erase (items : List Item) (hp : Printable items) (N : Nat)
   have h2 := congrArg List.length hk
   simp only [List.length_map, List.length_append, List.length_singleton] at h2
   have hw := Input.win_print items hp N hN
-  let ctx : Ctx := ⟨Input.of (Lex.lex N (Print.print items)).toArray, N, false⟩
+  let ctx : Ctx := ⟨Input.of (Lex.lex N (Print.print items)).toArray, N⟩
   have hr := Runs.items items ctx 0
-    (32 * ((Lex.lex N (Print.print items)).toArray.size + 1)) [] [] rfl hp hw
+    (32 * ((Lex.lex N (Print.print items)).toArray.size + 1)) [] [] hp hw
     (by simp only [List.size_toArray]; omega) (by show _ ≤ N; omega) none
   obtain ⟨r, hrun, ms, hr, hms⟩ := hr
   simp only [List.reverse_nil, List.nil_append] at hr

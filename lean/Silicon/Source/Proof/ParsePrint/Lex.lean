@@ -689,27 +689,36 @@ theorem Lexes.decl {D : Nat} {n : String} {t : TypeExpr} (hn : validName n = tru
     (Starts.glue ": " (by decide) _)
   simpa using this
 
-/-! The name, the key of a family entry, and the type of a port: `name[key]: type`. -/
-theorem Lexes.port {D : Nat} {n : String} {k : Option Expr} {t : TypeExpr}
-    (hn : validName n = true) (hk : k.all Expr.printable = true) (ht : t.printable = true) :
-    Lexes D .sep (n.toList ++ (((k.map fun e => "[" ++ e.print 0 ++ "]").getD "").toList ++
-      (": ".toList ++ t.print.toList)))
-      (.ident n :: ((k.map fun e => .symbol "[" :: e.toks 0 ++ [.symbol "]"]).getD [] ++
-        .symbol ":" :: t.toks)) := by
+/-!
+The name, the key of a family entry, the type, and the `as` key of a port: `name[key]: type` or
+`name: type as key`.
+-/
+theorem Lexes.port {D : Nat} {n : String} {k : PortForm Expr} {t : TypeExpr}
+    (hn : validName n = true) (hk : k.printable = true) (ht : t.printable = true) :
+    Lexes D .sep (n.toList ++ (Print.portText k t.print).toList)
+      (.ident n :: ((k.index?.map fun e => .symbol "[" :: e.toks 0 ++ [.symbol "]"]).getD [] ++
+        .symbol ":" :: t.toks ++ k.asToks)) := by
   cases k with
-  | none => simpa using Lexes.decl (D := D) hn ht
-  | some e =>
-    simp only [Option.all_some] at hk
+  | scalar =>
+    simpa [Print.portText, PortForm.asToks, PortForm.index?] using Lexes.decl (D := D) hn ht
+  | indexed e =>
+    simp only [PortForm.printable] at hk
     have g : Lexes D .any ": ".toList [.symbol ":"] := Lexes.glue (by decide)
     have ho : Lexes D .any "[".toList [.symbol "["] := Lexes.glue (by decide)
     have hc : Lexes D .any "]".toList [.symbol "]"] := Lexes.glue (by decide)
     have := (Lexes.name (D := D) hn).append (ho.append ((Expr.lexes e hk 0).append (hc.append
       (g.append (TypeExpr.lexes t ht) (Starts.any _)) (Starts.any _))
       (Starts.glue "]" (by decide) _)) (Starts.any _)) (Starts.glue "[" (by decide) _)
-    simpa using this
+    simpa [Print.portText, PortForm.asToks, PortForm.index?] using this
+  | keyed e =>
+    simp only [PortForm.printable] at hk
+    have ha : Lexes D .any " as ".toList [.keyword "as"] := Lexes.glue (by decide)
+    have := (Lexes.decl (D := D) hn ht).append (ha.append (Expr.lexes e hk 0) (Starts.any _))
+      (Starts.glue " as " (by decide) _)
+    simpa [Print.portText, PortForm.asToks, PortForm.index?] using this
 
-theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
-    s.printable plain = true → ∀ d, Lexes D .any (s.print d).toList s.toks := by
+theorem Stmt.lexes {D : Nat} (s : Stmt) :
+    s.printable = true → ∀ d, Lexes D .any (s.print d).toList s.toks := by
   have semi : Lexes D .any ";\n".toList [.symbol ";"] := Lexes.glue (by decide)
   have eq : Lexes D .any " = ".toList [.symbol "="] := Lexes.glue (by decide)
   have nl : Lexes D .any "\n".toList [] := Lexes.glue (by decide)
@@ -796,8 +805,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have g : Lexes D .any "input ".toList [.keyword "input"] := Lexes.glue (by decide)
-    have hk := (PortForm.printable_index h.1.2).1
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1.2 hk h.2).append
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1 h.1.2 h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
   | case8 p n k ty =>
@@ -805,8 +813,7 @@ theorem Stmt.lexes {D : Nat} (plain : Bool) (s : Stmt) :
     simp only [Stmt.printable, Bool.and_eq_true] at h
     rw [Stmt.print, Stmt.toks]
     have g : Lexes D .any "output ".toList [.keyword "output"] := Lexes.glue (by decide)
-    have hk := (PortForm.printable_index h.1.2).1
-    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1.2 hk h.2).append
+    have := (Lexes.indent (D := D) d).append (g.append ((Lexes.port h.1.1 h.1.2 h.2).append
       semi (Starts.glue ";\n" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
   | case9 p n m xs =>
@@ -969,10 +976,10 @@ theorem Item.lexes {D : Nat} (i : Item) (h : i.printable = true) :
   have nl : Lexes D .any "\n".toList [] := Lexes.glue (by decide)
   have ho : Lexes D .any "(".toList [.symbol "("] := Lexes.glue (by decide)
   have sp : Lexes D .any " ".toList [] := Lexes.glue (by decide)
-  have body (plain : Bool) (b : List Stmt) (hb : Stmt.printableAll plain b = true) :
+  have body (b : List Stmt) (hb : Stmt.printableAll b = true) :
       Lexes D .any (Stmt.body 0 b).toList (Stmt.bodyToks b) := by
     simp only [Stmt.printableAll_eq, List.all_eq_true] at hb
-    exact Lexes.body b (fun x hx => Stmt.lexes plain x (hb x hx)) 0
+    exact Lexes.body b (fun x hx => Stmt.lexes x (hb x hx)) 0
   have params (static : Bool) (ps : List Param)
       (hp : ps.all (Param.printable static) = true) :
       Lexes D .sep (Print.args (ps.map Param.print)).toList (argToks (ps.map Param.toks)) := by
@@ -1054,7 +1061,7 @@ theorem Item.lexes {D : Nat} (i : Item) (h : i.printable = true) :
     have ga : Lexes D .any ") -> ".toList [.symbol ")", .symbol "->"] := Lexes.glue (by decide)
     have := hc.append (g.append ((Lexes.name h.1.1.1).append (ho.append
       ((params false ps h.1.1.2).append (ga.append ((TypeExpr.lexes r h.1.2).append
-      (sp.append ((body _ b h.2).append nl (Starts.any _)) (Starts.any _))
+      (sp.append ((body b h.2).append nl (Starts.any _)) (Starts.any _))
       (Starts.glue " " (by decide) _)) (Starts.any _)) (Starts.glue ") -> " (by decide) _))
       (Starts.any _)) (Starts.glue "(" (by decide) _)) (Starts.any _)) (Starts.any _)
     simpa using this
@@ -1064,7 +1071,7 @@ theorem Item.lexes {D : Nat} (i : Item) (h : i.printable = true) :
     rw [Item.print.eq_def, Item.toks.eq_def]
     have g : Lexes D .any "module ".toList [.keyword "module"] := Lexes.glue (by decide)
     have gc : Lexes D .any ")".toList [.symbol ")"] := Lexes.glue (by decide)
-    have tail := sp.append ((body _ b hb).append nl (Starts.any _)) (Starts.any _)
+    have tail := sp.append ((body b hb).append nl (Starts.any _)) (Starts.any _)
     cases ds with
     | none =>
       have := g.append ((Lexes.name hn).append (ho.append ((params true ps hp).append

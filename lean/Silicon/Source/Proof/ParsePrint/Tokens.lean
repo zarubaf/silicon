@@ -93,6 +93,11 @@ mutual
     | .mk q v => q.toks ++ .symbol "=>" :: v.toks 0 ++ [.symbol ","]
 end
 
+/-! The kinds of the `as` key of a port: `as` and the key, or nothing. -/
+def PortForm.asToks : PortForm Expr → List Kind
+  | .keyed e => .keyword "as" :: e.toks 0
+  | _ => []
+
 mutual
   /-- The kinds of `s.print d`, for each depth `d`. -/
   def Stmt.toks : Stmt → List Kind
@@ -111,10 +116,10 @@ mutual
         ++ .symbol ";" :: d.toks 0 ++ [.symbol "]", .symbol ";"]
     | .input _ n k ty =>
       [.keyword "input", .ident n.name] ++ ((k.index?.map fun e => .symbol "[" :: e.toks 0
-        ++ [.symbol "]"]).getD []) ++ .symbol ":" :: ty.toks ++ [.symbol ";"]
+        ++ [.symbol "]"]).getD []) ++ .symbol ":" :: ty.toks ++ k.asToks ++ [.symbol ";"]
     | .output _ n k ty =>
       [.keyword "output", .ident n.name] ++ ((k.index?.map fun e => .symbol "[" :: e.toks 0
-        ++ [.symbol "]"]).getD []) ++ .symbol ":" :: ty.toks ++ [.symbol ";"]
+        ++ [.symbol "]"]).getD []) ++ .symbol ":" :: ty.toks ++ k.asToks ++ [.symbol ";"]
     | .inst _ n m xs =>
       [.keyword "instance", .ident n.name, .symbol "=", .ident m.name, .symbol "("]
         ++ argToks (xs.map (Expr.toks 0)) ++ [.symbol ")", .symbol ";"]
