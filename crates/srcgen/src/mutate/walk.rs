@@ -547,9 +547,9 @@ impl<'a> Walk<'a> {
     /// is `S019` also if no entry came before it. The binder stays, so
     /// pass 2 sees no collision (a plain rename is `S002`).
     fn scalar_family(&mut self, s: &mut Stmt) -> bool {
-        let Some(family) = self.families.first().cloned() else {
+        if self.families.is_empty() {
             return false;
-        };
+        }
         let scalar = match s {
             Stmt::Input(n, t) => Some((false, n.clone(), PTy::Data(t.clone()))),
             Stmt::Output(n, t) => Some((true, n.clone(), PTy::Data(t.clone()))),
@@ -562,6 +562,13 @@ impl<'a> Walk<'a> {
         if !self.always || !self.site(Kind::ScalarFamily) {
             return false;
         }
+        // The family cycles with the site, so that a module with several
+        // families offers each of them, also one that only an untaken arm
+        // declares.
+        let family = self.families.get((self.seen - 1) % self.families.len());
+        let Some(family) = family.cloned() else {
+            return false;
+        };
         let what = format!("give the scalar port {name} the key of the family {family}");
         *s = Stmt::Port(Port {
             output,
