@@ -1,0 +1,22 @@
+// T3 of the work-counter tests of the port families (issue #338). The array `h` nests the instance `u` N levels deep, and
+// `u` has N input entries `req[i]`. The target `h[0]...[0].req[i] := x;` binds entry i. N such targets share one nest.
+// A walk along the path, with the family key taken in the same step as the field, gives work in `O(N)` for a target. A
+// walk from the root at the family field gives `O(N^2)` for a target. The build of the nest pays its own fuel once, so
+// only N targets show the walk.
+// SCALE family_target_nest 16 32 64 128 256
+// TOP M()
+module C(comptime n: Nat) {
+    comptime for i in 0..n {
+        input req[i]: UInt[8];
+    }
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C({N});
+    let h = NEST{[|u|]};
+// REPEAT i {N}
+    NEST{|h|[0]}.req[{i}] := x;
+// END
+    o := x;
+}

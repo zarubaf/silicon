@@ -1,0 +1,19 @@
+// T1 of the work-counter tests of the port families (issue #338). A loop declares N entries `req[i]`, and a nested loop
+// of N times N steps selects `req[i]`. Each selection charges its nodes and finds its entry in the table of entries by
+// the binder and the key, so the work follows the fuel. A scan of the entries for each selection makes N more work for
+// each use, and the work escapes the bound.
+// SCALE family_select_repeat 4 8 16 32 64
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    comptime for i in 0..{N} {
+        input req[i]: UInt[8];
+    }
+    comptime for j in 0..{N} {
+        comptime for i in 0..{N} {
+            let b = req[i];
+        }
+    }
+    o := x;
+}

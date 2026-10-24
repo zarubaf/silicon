@@ -1,0 +1,22 @@
+// T2 of the work-counter tests of the port families (issue #338). A child has N output entries `gnt[i]`, built once. The
+// parent reads `u.gnt[i]` in a nested loop of N times N steps. Each selection charges its nodes and finds the entry in
+// the interface of the child by its symbol and key, so the work follows the fuel. A scan of the ports of the child for
+// each selection makes N more work for each use, and the work escapes the bound.
+// SCALE family_child_select 4 8 16 32 64
+// TOP M()
+module C(comptime n: Nat) {
+    comptime for i in 0..n {
+        output gnt[i]: UInt[8];
+        gnt[i] := 0;
+    }
+}
+module M() {
+    output o: UInt[8];
+    instance u = C({N});
+    comptime for j in 0..{N} {
+        comptime for i in 0..{N} {
+            let b = u.gnt[i];
+        }
+    }
+    o := 0;
+}

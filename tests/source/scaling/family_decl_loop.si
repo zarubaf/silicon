@@ -1,0 +1,12 @@
+// T4 of the work-counter tests of the port families (issue #338). A loop declares N empty entries of a family whose name
+// has N bytes. The entries hold the symbol of the name and a key, and the layout sorts them by the pair, so the work
+// follows the fuel. A copy of the name for each entry makes N more work for each entry, and the work escapes the bound.
+// SCALE family_decl_loop 16 32 64 128 256
+// TOP M()
+module M() {
+    output o: UInt[8];
+    comptime for i in 0..{N} {
+        input NEST{a|req|}[i]: ();
+    }
+    o := 0;
+}
