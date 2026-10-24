@@ -11,6 +11,7 @@ use super::super::program::{
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
 use num_bigint::BigInt;
+use std::collections::BTreeMap;
 use std::mem;
 
 /// The sites of `Kind::Delete` that one binding makes, when the helper that
@@ -36,6 +37,9 @@ pub(super) struct Walk<'a> {
     list_values: Vec<String>,
     /// The helpers with a `mut` first formal.
     mut_helpers: Vec<String>,
+    /// The helpers with a `comptime` formal, and which formals they are: an
+    /// actual there is a static position, not an operand.
+    static_formals: BTreeMap<String, Vec<bool>>,
     /// The helpers with a handle formal: a call of one binds its actuals.
     binders: Vec<String>,
     /// The resources that the helper under the walk declares in its body.
@@ -58,6 +62,10 @@ pub(super) struct Walk<'a> {
     typed: Vec<(String, Ty)>,
     /// The enums that the top frame of a module uses, found by a first walk.
     used: Vec<String>,
+    /// The families with an indexed declaration in the module body, and how
+    /// many indexed declarations each name has in the current item.
+    families: Vec<String>,
+    indexed: BTreeMap<String, usize>,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
@@ -77,6 +85,7 @@ impl<'a> Walk<'a> {
             values: Vec::new(),
             list_values: Vec::new(),
             mut_helpers: Vec::new(),
+            static_formals: BTreeMap::new(),
             binders: Vec::new(),
             declared_here: Vec::new(),
             scope: Vec::new(),
@@ -87,6 +96,8 @@ impl<'a> Walk<'a> {
             enum_names: Vec::new(),
             typed: Vec::new(),
             used: Vec::new(),
+            families: Vec::new(),
+            indexed: BTreeMap::new(),
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -125,6 +136,7 @@ impl<'a> Walk<'a> {
         self.values = function_values(items);
         self.list_values = list_values(items);
         self.mut_helpers = mut_helpers(items);
+        self.static_formals = static_formals(items);
         self.binders = binders(items);
         let mut i = 0;
         while let Some(item) = items.get(i) {
@@ -164,6 +176,14 @@ impl<'a> Walk<'a> {
                     _ => None,
                 })
                 .collect(),
+            _ => Vec::new(),
+        };
+        self.indexed.clear();
+        if let Item::Module { body, .. } | Item::Helper { body, .. } = item {
+            count_indexed(body, &mut self.indexed);
+        }
+        self.families = match item {
+            Item::Module { .. } => self.indexed.keys().cloned().collect(),
             _ => Vec::new(),
         };
         self.always = false;
@@ -242,6 +262,12 @@ impl<'a> Walk<'a> {
             };
             if (0..copies).any(|_| self.site(Kind::Delete)) {
                 let effect = match (declared(s), s) {
+                    // Another indexed declaration keeps the family.
+                    (Some(_), Stmt::Port(p))
+                        if p.key.is_some() && self.indexed.get(&p.name).is_some_and(|&n| n > 1) =>
+                    {
+                        Effect::Code(None)
+                    }
                     (Some(name), _) => Effect::Gone(name.to_owned(), Some(self.index)),
                     (None, s) if top && self.is_binding(s) => Effect::Code(Some("S018")),
                     _ => Effect::Code(None),
@@ -257,9 +283,15 @@ impl<'a> Walk<'a> {
                 return;
             }
             if declared(s).is_some() && self.site(Kind::Duplicate) {
+                // Two entries with one key are `S019` when the copy runs.
+                // The family is no second declaration of the name.
+                let code = match s {
+                    Stmt::Port(p) if p.key.is_some() => self.always.then_some("S019"),
+                    _ => Some("S002"),
+                };
                 body.insert(i + 1, s.clone());
                 let what = format!("duplicate statement {n} of {}", self.item);
-                self.hit(what, Effect::Code(Some("S002")));
+                self.hit(what, Effect::Code(code));
                 return;
             }
             if let Some(root) = mut_root(s)
@@ -322,6 +354,9 @@ impl<'a> Walk<'a> {
 
     fn stmt_parts(&mut self, s: &mut Stmt) {
         self.note_hardware(s);
+        if self.scalar_family(s) {
+            return;
+        }
         match s {
             Stmt::Input(_, t) | Stmt::Output(_, t) | Stmt::Wire(_, t) => self.ty(t),
             Stmt::Port(p) => self.port_parts(p),
@@ -424,9 +459,122 @@ impl<'a> Walk<'a> {
         if let PTy::Data(t) = &mut p.ty {
             self.ty(t);
         }
-        for k in p.key.iter_mut().chain(&mut p.public) {
+        if let Some(k) = &mut p.key
+            && self.family_key(k)
+        {
+            return;
+        }
+        if let Some(public) = &mut p.public {
+            if self.public_sites(public) {
+                return;
+            }
+            self.sexpr(public);
+        } else if let Some(k) = &mut p.key {
             self.sexpr(k);
         }
+    }
+
+    /// The sites of `KeyRange` and `KeyType` on the key `k` of a family,
+    /// in a declaration or a selection. The first error is the key when the
+    /// site always runs.
+    fn family_key(&mut self, k: &mut SExpr) -> bool {
+        let big = SExpr::Int(BigInt::from(1u64 << 32), Radix::Dec);
+        if self.site(Kind::KeyRange) {
+            *k = big;
+            self.hit(
+                format!("make a family key 2^32 in {}", self.item),
+                Effect::Code(self.always.then_some("S012")),
+            );
+            return true;
+        }
+        if self.site(Kind::KeyType) {
+            // A `Bool` and a static finite integer are no `Nat`.
+            let finite = SExpr::Convert(STy::UInt(4), Box::new(zero()));
+            *k = if self.seen.is_multiple_of(2) {
+                SExpr::Bool(true)
+            } else {
+                finite
+            };
+            self.hit(
+                format!("make a family key a value of another type in {}", self.item),
+                Effect::Code(self.always.then_some("S010")),
+            );
+            return true;
+        }
+        false
+    }
+
+    /// The sites of `KeyType` and `BadName` on the `as` key of a port.
+    fn public_sites(&mut self, public: &mut SExpr) -> bool {
+        let always = self.always;
+        let code = |code| always.then_some(code);
+        if self.site(Kind::KeyType) {
+            *public = SExpr::Int(BigInt::from(3), Radix::Dec);
+            let code = code("S010");
+            self.hit(
+                format!("make an `as` key an integer in {}", self.item),
+                Effect::Code(code),
+            );
+            return true;
+        }
+        match public {
+            SExpr::Str(_) if self.site(Kind::BadName) => {
+                const BAD: [&str; 3] = ["1c", "", "reg"];
+                *public = SExpr::Str(BAD[self.seen % BAD.len()].to_owned());
+                let code = code("S022");
+                self.hit(
+                    format!("break the name rule with an `as` key in {}", self.item),
+                    Effect::Code(code),
+                );
+                true
+            }
+            SExpr::PortKey(_, false, index) if self.site(Kind::BadName) => {
+                **index = SExpr::Int(BigInt::from(1), Radix::Dec);
+                let code = code("S022");
+                self.hit(
+                    format!("give a scalar PortKey the index 1 in {}", self.item),
+                    Effect::Code(code),
+                );
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `ScalarFamily`: a scalar port of the top frame of a module gets the
+    /// `as` key of a family that the module body declares. The table of
+    /// public names holds the family from the start (spec 5.6), so the port
+    /// is `S019` also if no entry came before it. The binder stays, so
+    /// pass 2 sees no collision (a plain rename is `S002`).
+    fn scalar_family(&mut self, s: &mut Stmt) -> bool {
+        let Some(family) = self.families.first().cloned() else {
+            return false;
+        };
+        let scalar = match s {
+            Stmt::Input(n, t) => Some((false, n.clone(), PTy::Data(t.clone()))),
+            Stmt::Output(n, t) => Some((true, n.clone(), PTy::Data(t.clone()))),
+            Stmt::Port(p) if p.key.is_none() => Some((p.output, p.name.clone(), p.ty.clone())),
+            _ => None,
+        };
+        let Some((output, name, ty)) = scalar else {
+            return false;
+        };
+        if !self.always || !self.site(Kind::ScalarFamily) {
+            return false;
+        }
+        let what = format!("give the scalar port {name} the key of the family {family}");
+        *s = Stmt::Port(Port {
+            output,
+            name,
+            key: None,
+            public: Some(SExpr::Str(family)),
+            ty,
+        });
+        self.hit(
+            format!("{what} in {}", self.item),
+            Effect::Code(Some("S019")),
+        );
+        true
     }
 
     /// The target of a `:=`.
@@ -436,12 +584,20 @@ impl<'a> Walk<'a> {
             Place::Path(e) => self.hexpr(e),
             Place::Entry(fam, k) => {
                 self.rename(fam);
-                self.sexpr(k);
+                self.entry_key(k);
             }
             Place::ChildEntry(u, _, k) => {
                 self.rename(u);
-                self.sexpr(k);
+                self.entry_key(k);
             }
+        }
+    }
+
+    /// The key of a selection: a site of `KeyRange` and `KeyType`, else a
+    /// static expression.
+    fn entry_key(&mut self, k: &mut SExpr) {
+        if !self.family_key(k) {
+            self.sexpr(k);
         }
     }
 
@@ -449,6 +605,12 @@ impl<'a> Walk<'a> {
     fn note_hardware(&mut self, s: &Stmt) {
         if let Stmt::Input(n, _) | Stmt::Reg(n, ..) = s {
             self.hardware.push(n.clone());
+        }
+        if let Stmt::Port(p) = s
+            && p.key.is_none()
+            && !p.output
+        {
+            self.hardware.push(p.name.clone());
         }
         if let Stmt::Input(n, t) | Stmt::Reg(n, t, _) | Stmt::Wire(n, t) = s {
             self.typed.push((n.clone(), t.clone()));
@@ -1138,6 +1300,26 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// A call of a helper. An actual of a `comptime` formal is a static
+    /// position, not an operand.
+    fn call_parts(&mut self, f: &mut String, args: &mut Vec<HExpr>) {
+        self.rename(f);
+        self.args(f, args, HExpr::Static(zero()));
+        let statics = self
+            .static_formals
+            .get(f.as_str())
+            .cloned()
+            .unwrap_or_default();
+        for (i, a) in args.iter_mut().enumerate() {
+            match a {
+                // A hardware value there is `S005`, not the `S011` of the
+                // stage.
+                HExpr::Static(s) if statics.get(i) == Some(&true) => self.sexpr(s),
+                a => self.hexpr(a),
+            }
+        }
+    }
+
     fn hexpr(&mut self, e: &mut HExpr) {
         if self.hardware_enum_eq(e)
             || (matches!(e, HExpr::Static(s) if int_valued(s)) && self.arm_stage(e))
@@ -1182,13 +1364,7 @@ impl<'a> Walk<'a> {
                 self.ty(t);
                 self.hexpr(a);
             }
-            HExpr::Call(f, args) => {
-                self.rename(f);
-                self.args(f, args, HExpr::Static(zero()));
-                for a in args {
-                    self.hexpr(a);
-                }
-            }
+            HExpr::Call(f, args) => self.call_parts(f, args),
             HExpr::Match(m) => {
                 if self.arm_sites(m, hexpr_text) || self.pattern_fit(m) {
                     return;
@@ -1220,11 +1396,11 @@ impl<'a> Walk<'a> {
             HExpr::Unit => {}
             HExpr::Entry(fam, k) => {
                 self.rename(fam);
-                self.sexpr(k);
+                self.entry_key(k);
             }
             HExpr::ChildEntry(u, _, k) => {
                 self.rename(u);
-                self.sexpr(k);
+                self.entry_key(k);
             }
             HExpr::Tuple(_)
             | HExpr::Array(_)
@@ -1322,6 +1498,25 @@ fn mut_helpers(items: &[Item]) -> Vec<String> {
         .collect()
 }
 
+/// The helpers with a `comptime` formal, and which formals are those.
+fn static_formals(items: &[Item]) -> BTreeMap<String, Vec<bool>> {
+    items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Helper { name, params, .. }
+                if params.iter().any(|(_, t)| matches!(t, FTy::Static(_))) =>
+            {
+                let flags = params
+                    .iter()
+                    .map(|(_, t)| matches!(t, FTy::Static(_)))
+                    .collect();
+                Some((name.clone(), flags))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// The helpers with a formal of a handle type or a list of handles: the
 /// `Call` of one binds its actuals.
 fn binders(items: &[Item]) -> Vec<String> {
@@ -1331,7 +1526,7 @@ fn binders(items: &[Item]) -> Vec<String> {
             Item::Helper { name, params, .. }
                 if params
                     .iter()
-                    .any(|(_, t)| !matches!(t, FTy::Data(_) | FTy::Unit)) =>
+                    .any(|(_, t)| !matches!(t, FTy::Data(_) | FTy::Unit | FTy::Static(_))) =>
             {
                 Some(name.clone())
             }
@@ -1386,6 +1581,7 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::Reg(n, _, _)
         | Stmt::Wire(n, _)
         | Stmt::Mem(n, _, _)
+        | Stmt::Port(Port { name: n, .. })
         | Stmt::HList(n, _)
         | Stmt::Let { name: n, .. }
         | Stmt::StaticLet(n, _, _)
@@ -1394,6 +1590,21 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::MutCall { name: n, .. }
         | Stmt::Instance(n, _, _) => Some(n),
         _ => None,
+    }
+}
+
+/// The number of indexed declarations of each name in `body`.
+fn count_indexed(body: &[Stmt], counts: &mut BTreeMap<String, usize>) {
+    for s in body {
+        match s {
+            Stmt::Port(p) if p.key.is_some() => *counts.entry(p.name.clone()).or_default() += 1,
+            Stmt::If(_, then, els) => {
+                count_indexed(then, counts);
+                count_indexed(els.as_deref().unwrap_or_default(), counts);
+            }
+            Stmt::For(_, _, _, inner) | Stmt::Block(inner) => count_indexed(inner, counts),
+            _ => {}
+        }
     }
 }
 
