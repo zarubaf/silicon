@@ -44,7 +44,7 @@ use crate::value::{InstantiationId, Value, int_size};
 use crate::{Budget, Code};
 use parse::StackError;
 use parse::ast::{Expr, Ident, Item, PortForm, Pos, Stmt, TypeExpr, UnOp};
-use resolve::{DeclId, Resolved, Target as Ref};
+use resolve::{Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod family;
@@ -206,19 +206,29 @@ enum Breach {
     },
 }
 
+/// The form of a public name of the owner (section 5.6): a scalar port, or a port family.
+#[derive(Clone, Copy)]
+enum Public {
+    Scalar,
+    Family,
+}
+
 /// The work of the current instantiation. The resource number indexes `needs`, and the instance
 /// number indexes `bound`. The memories are in the body, where `Handle::Mem` indexes them.
 /// `inputs` counts the bindings of each child input, with the position and the call frame number of the first one. `dup`
 /// holds the first `S018` of a second binding or a second port call by position. `spent` is the
-/// fuel of the new children. `entries` holds the declared family entries by the family binder and
-/// the key: the value of each entry and the position of its declaration. A family binder has no
-/// frame slot.
+/// fuel of the new children. `entries` holds the declared family entries by the symbol of the
+/// public name and the key: the value of each entry and the position of its declaration. A family
+/// binder has no frame slot. `publics` is the table of the public names of the owner. It holds the
+/// form of each name by its symbol, with the position and the call frame number of its first
+/// declaration.
 struct Work {
     body: Body,
     needs: Vec<Need>,
     bound: Vec<usize>,
     inputs: BTreeMap<(usize, PortId), (u64, Here)>,
-    entries: BTreeMap<(DeclId, u32), (Val, Pos)>,
+    entries: BTreeMap<(Sym, u32), (Val, Pos)>,
+    publics: BTreeMap<Sym, (Public, Pos, usize)>,
     dup: Option<(Pos, Breach)>,
     spent: u64,
 }
@@ -231,6 +241,7 @@ impl Work {
             bound: Vec::new(),
             inputs: BTreeMap::new(),
             entries: BTreeMap::new(),
+            publics: BTreeMap::new(),
             dup: None,
             spent: 0,
         }
@@ -244,18 +255,25 @@ enum Status {
 }
 
 /// The interface of a done instantiation: its emitted name, its ports by their identity, its
-/// number of inputs, and its domain. `item` is the module item. Its port families come from the
-/// resolver (`Syms::families`), so they include a family without an entry.
+/// number of inputs, and its domain. `item` is the module item. Its port families are the static
+/// families of the resolver (`Syms::families`), which include a family without an entry, and the
+/// families of the public names of its body (`families`).
 pub(crate) struct Iface {
     pub name: Name,
     ports: BTreeMap<PortId, Port>,
     pub item: usize,
     inputs: usize,
     pub domain: Option<Sym>,
+    families: BTreeSet<Sym>,
 }
 
 impl Iface {
-    fn of(name: Name, b: &Body, item: usize) -> Iface {
+    fn of(
+        name: Name,
+        b: &Body,
+        item: usize,
+        publics: &BTreeMap<Sym, (Public, Pos, usize)>,
+    ) -> Iface {
         let mut ports = BTreeMap::new();
         let mut inputs = 0;
         for (order, q) in b.ports.iter().enumerate() {
@@ -278,7 +296,17 @@ impl Iface {
             item,
             inputs,
             domain: b.domain,
+            families: publics
+                .iter()
+                .filter(|(_, (form, ..))| matches!(form, Public::Family))
+                .map(|(&sym, _)| sym)
+                .collect(),
         }
+    }
+
+    /// Whether a public name of the body is the family `sym`.
+    pub(crate) fn declares_family(&self, sym: Sym) -> bool {
+        self.families.contains(&sym)
     }
 }
 
@@ -854,11 +882,23 @@ impl Evaluator<'_> {
         })
     }
 
+    /// Enters the public name `sym` with the form `form`, declared at `pos`, into the table of
+    /// the owner. The first declaration of a name keeps its position and its call frame.
+    fn publish(&mut self, sym: Sym, form: Public, pos: Pos) {
+        let call = self.call;
+        self.elab
+            .work
+            .publics
+            .entry(sym)
+            .or_insert((form, pos, call));
+    }
+
     /// The port `name`. Its core name is its source name. The root frame counts it with the
     /// bindings of its name, so a name that is taken is `S019`.
     fn port(&mut self, pos: Pos, input: bool, name: &Ident, (ty, tid): (Ty, TyId)) -> Res<Val> {
         let id = self.decl(name)?;
         let sym = self.sym(id);
+        self.publish(sym, Public::Scalar, pos);
         let key = (ROOT.id, sym);
         let v = self.naming.versions.get(&key).copied().unwrap_or(0);
         self.naming.versions.insert(key, v + 1);
@@ -1351,7 +1391,7 @@ impl Evaluator<'_> {
             let w = std::mem::replace(&mut ev.elab.work, parent);
             let mut body = w.body;
             body.lets = lets;
-            let iface = Iface::of(name, &body, i);
+            let iface = Iface::of(name, &body, i, &w.publics);
             let k = ev.elab.done.len();
             ev.elab.table.insert(key, Status::Done(k));
             ev.elab.done.push(Inst {
