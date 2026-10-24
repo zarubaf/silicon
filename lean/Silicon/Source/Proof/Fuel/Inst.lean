@@ -30,9 +30,9 @@ theorem dataType_f (p : Pos) (t : Ty) : Follows cap (Elab.dataType p t) (Elab.da
   unfold Elab.dataType; follows [notHandle_f]
 
 theorem resource_f (k : Kind) (path : Names.Path) (t : Ty) (p : Pos) (x : String)
-    (key : Option Nat) :
-    Follows cap (Elab.resource k path t p x key) (Elab.resource k path t p x key) := by
-  unfold Elab.resource; follows
+    (key : Option Nat) (binder : Option String) :
+    Follows cap (Elab.resource k path t p x key binder) (Elab.resource k path t p x key binder) :=
+  by unfold Elab.resource; follows
 
 theorem publish_f (y : Nat) (f : Elab.Public) (p : Pos) :
     Follows cap (Elab.publish y f p) (Elab.publish y f p) := by
@@ -45,21 +45,24 @@ theorem reserve_f (y : Nat) : Follows cap (Elab.reserve y) (Elab.reserve y) := b
   cases h
   exact ⟨rfl, fun _ => rfl⟩
 
-theorem port_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) :
-    Follows cap (Elab.port p input b t) (Elab.port p input b t) := by
-  unfold Elab.port; follows [publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
+theorem publicOf_f (y : Nat) : Follows cap (Elab.publicOf y) (Elab.publicOf y) := by
+  unfold Elab.publicOf; follows
 
-theorem helperPortLater_f (p : Pos) :
-    Follows cap (Elab.helperPortLater p) (Elab.helperPortLater p) := by
-  unfold Elab.helperPortLater; follows
+theorem port_f (p : Pos) (input : Bool) (x : String) (y : Nat) (t : Ty) (b : Option String) :
+    Follows cap (Elab.port p input x y t b) (Elab.port p input x y t b) := by
+  unfold Elab.port
+  follows [publicOf_f, publish_f, reserve_f, resource_f, modifyBody_f, normalize_f]
 
-theorem portKeyLater_f (p : Pos) :
-    Follows cap (Elab.portKeyLater p) (Elab.portKeyLater p) := by
-  unfold Elab.portKeyLater; follows
+theorem entry_f (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (b : Option String) :
+    Follows cap (Elab.entry p input x y k t b) (Elab.entry p input x y k t b) := by
+  unfold Elab.entry; follows [publicOf_f, publish_f, resource_f, modifyBody_f, normalize_f]
 
-theorem entry_f (p : Pos) (input : Bool) (b : Binder) (k : Nat) (t : Ty) :
-    Follows cap (Elab.entry p input b k t) (Elab.entry p input b k t) := by
-  unfold Elab.entry; follows [publish_f, resource_f, modifyBody_f, normalize_f]
+theorem symbolOf_f (x : String) : Follows cap (symbolOf x) (symbolOf x) := by
+  unfold symbolOf; follows
+
+theorem keyed_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : Value) :
+    Follows cap (Elab.keyed p input b t kp v) (Elab.keyed p input b t kp v) := by
+  unfold Elab.keyed; follows [symbolOf_f, port_f, entry_f, bindLocal_f]
 
 theorem familyKey_f (p : Pos) (v : Value) :
     Follows cap (Elab.familyKey p v) (Elab.familyKey p v) := by
@@ -186,11 +189,11 @@ theorem hwStmt_f (he : ∀ e, Follows m (eval k e) (eval m e))
   follows [he, ht, instantiate_f hb, arguments_f he ht, need_f, copy_f, conform_f, static_f,
     lit_f, fresh_f, bindLocal_f, dataType_f, memWord_f, memDepth_f, port_f, resource_f,
     modifyBody_f, target_f he, bindTarget_f, sinkValue_f, typedUse_f, settle_f, structural_f,
-    entryDecl_f he ht, portKeyLater_f]
+    entryDecl_f he ht, guardedBy_f, keyed_f]
 
 end walk
 
-set_option maxHeartbeats 400000 in
+set_option maxHeartbeats 800000 in
 /--
 Each function of the evaluator at any bound `n` is followed by the same function at the
 bound `n'`, with each fuel up to `n'`. The proof splits each branch of the evaluator, so it
@@ -254,15 +257,13 @@ theorem follows_all : ∀ n,
         intro _
         follows [he k, ht k, hs k, hb k, placeAt_f (he k), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he k) (ht k) (hb k),
-          helperPortLater_f]
+          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he k) (ht k) (hb k)]
       · rw [stmt.eq_def (k + 1), stmt.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, hs m, hb m, placeAt_f (he m), need_f, copy_f, typedUse_f,
           heldUse_f, known_f, named_f, bindLocal_f, test_f, int_f, range_f, iteration_f,
-          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he m) (ht m) (hb m),
-          helperPortLater_f]
+          static_f, store_f, hold_f, release_f, shut_f, hwStmt_f (he m) (ht m) (hb m)]
     · rcases n' with _ | m
       · rw [block.eq_def (k + 1), block.eq_def 0]
         apply Follows.exhaust (cap := k)

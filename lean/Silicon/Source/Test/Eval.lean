@@ -256,6 +256,7 @@ def evalHw : String :=
   "fn r() -> Int {\n    reg q: UInt[8] = 0;\n    return 1;\n}\n" ++
   "fn m() -> Int {\n    mem q: [UInt[8]; 4];\n    return 1;\n}\n" ++
   "fn i() -> Int {\n    instance u = C();\n    return 1;\n}\n" ++
+  "fn p() -> Int {\n    output q: Bool as \"q\";\n    return 1;\n}\n" ++
   "fn outer() -> Int {\n    return w();\n}\n" ++
   "comptime fn cw() -> Int {\n    return w();\n}\n" ++
   "module C() domains() {\n}\n"
@@ -278,6 +279,9 @@ def evalHwText (k h : String) : String :=
 #guard evalSaid evalHw "m()" == evalHwText "memory" "m"
 #guard evalSaid evalHw "i()" == evalHwText "instance" "i"
 #guard evalSaid evalHw "cw()" == evalHwText "wire" "w"
+-- A port is hardware too (slice 4): the mode comes before its type and its key.
+#guard out evalHw "p()" == "S011 19:5"
+#guard evalSaid evalHw "p()" == evalHwText "output" "p"
 
 /-! Constants evaluate once. A constant that depends on itself is `S019` at the use. -/
 def consts : String :=

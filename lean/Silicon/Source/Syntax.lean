@@ -204,7 +204,7 @@ inductive Item where
 inductive ErrorCode where
   | S001 | S002 | S003 | S004 | S005 | S006 | S007 | S008
   | S010 | S011 | S012 | S013 | S014 | S015 | S016 | S017 | S018 | S019 | S020
-  | S021
+  | S021 | S022
   deriving Repr, DecidableEq, BEq, Inhabited
 
 def ErrorCode.toString : ErrorCode → String
@@ -213,6 +213,7 @@ def ErrorCode.toString : ErrorCode → String
   | .S010 => "S010" | .S011 => "S011" | .S012 => "S012" | .S013 => "S013"
   | .S014 => "S014" | .S015 => "S015" | .S016 => "S016" | .S017 => "S017"
   | .S018 => "S018" | .S019 => "S019" | .S020 => "S020" | .S021 => "S021"
+  | .S022 => "S022"
 
 instance : ToString ErrorCode := ⟨ErrorCode.toString⟩
 

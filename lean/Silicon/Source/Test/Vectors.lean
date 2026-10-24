@@ -243,4 +243,19 @@ def families : String :=
   "out=(g[2] 2 g[10] 7)",
   "out=(g[2] 1 g[10] 2)"]
 
+/-!
+Public names (sections 5.6 and 11.2). A vector names a port with an `as` key by its public name,
+also a port of a helper and an entry of a `PortKey`. The layout sorts by the public name, so
+`_z` comes before `b0`, and `w$0k` is the core name of the public name `w`.
+-/
+def keyed : String :=
+  "module K() {\n  input x: UInt[4] as \"b0\";\n  input y: UInt[4] as \"_z\";\n" ++
+  "  output o: UInt[4] as PortKey(\"g\", true, 7);\n  o := x +% y +% lane(1);\n}\n" ++
+  "fn lane(comptime i: Nat) -> UInt[4] {\n  input l: UInt[4] as \"assign\";\n  return l;\n}\n"
+
+#guard names keyed "K" ==
+  ([("clock$0rst", "clock$0rst"), ("_z", "_z"), ("assign", "assign$0k"), ("b0", "b0")],
+   [("g[7]", "g$7f")])
+#guard run keyed "K" ["in=(clock$0rst false _z 1 assign 2 b0 3)"] == "out=(g[7] 6)\n"
+
 end Silicon.Source.Test.Vectors

@@ -3351,4 +3351,226 @@ def entryStatic (body : String) : String :=
   "S010 16:11 `read` takes a register or a wire, not the output `gnt[3]`; use the value " ++
     "directly, without `read`"
 
+/-!
+`as` keys and public names (sections 5.6 and 6.2). A module `M` with the input `a` runs `body`
+from line 3 on. The items `fs` follow the module. Each text of section 6.2 is in full, with its
+code and its position.
+-/
+def keyMod (body : String) (fs : String := "") : String :=
+  failure ("module M() {\n  input a: Bool;\n" ++ body ++ "}\n" ++ fs) 100000000
+def publicTwice (x b : String) : String :=
+  s!"the port name `{x}` is declared here and at {b}; give one of them another key with `as`, " ++
+    "for example from a parameter"
+def scalarFamily (x b : String) : String :=
+  s!"`{x}` names a scalar port and a port family, here and at {b}; give one of them another key " ++
+    "with `as`"
+def directions (x b : String) : String :=
+  s!"the port family `{x}` has an input entry and an output entry, here and at {b}; give the " ++
+    "entries of one direction another key with `as`"
+def taken (x : String) : String :=
+  s!"the port name `{x}` is already the core name of a hardware `let`, a resource, or an " ++
+    "instance of this module; rename that declaration or the port"
+def portKeyType (a : String) : String :=
+  s!"an `as` key is a static `String` or `PortKey`, not {a}; write the public name as a " ++
+    "string, for example `as \"req_0\"`"
+def nameRule (x : String) : String :=
+  s!"`{x}` is not a valid port name; use an ASCII letter or `_`, then letters, digits, or `_`"
+def keywordName (x : String) : String :=
+  s!"`{x}` is a keyword, so it cannot be a port name; choose another name"
+def scalarIndex (k : String) : String :=
+  s!"a scalar `PortKey` has the index 0, but it has {k}; set `indexed` to `true`, or the index " ++
+    "to 0"
+def unboundKeyed (r x : String) : String :=
+  s!"the output `{r}` has no binding; bind its binder with `{x} := ...;`, or remove its " ++
+    "declaration"
+
+/-! A `String` key and a `PortKey` key give the public name, and the binder reads the port. -/
+#guard keyMod ("  input x: Bool as \"if_\";\n  output o: Bool as PortKey(\"out\", false, 0);\n" ++
+  "  o := x;\n") == "ok"
+#guard keyMod "  input x: Bool as \"_\";\n" == "ok"
+#guard keyMod "  output o: Bool as \"q\";\n  o := a;\n" == "ok"
+
+/-! The port order of section 6.2: the type, the key checks in order, then the public name. -/
+#guard keyMod "  input x: fn () -> Bool as 3;\n" ==
+  "S010 3:3 a port, a register, and a wire need a hardware data type, not `fn () -> Bool`; " ++
+    "use a fixed-width type, for example `UInt[8]`"
+#guard keyMod "  input x: Bool as diagnostic(\"k\", \"p\");\n" ==
+  "S016 3:20 an `as` key has no graph effect such as `diagnostic`; call `diagnostic` before " ++
+    "this statement, keep the result in a `let`, and use that name in the key"
+#guard keyMod "  let mut l = list(String);\n  push(l, \"p\");\n  input x: Bool as pop(l);\n" ==
+  "S016 5:20 an `as` key cannot change `l`; change `l` before this statement, keep the result " ++
+    "in a `let`, and use that name in the key"
+#guard keyMod "  let h = a;\n  input x: Bool as h;\n" ==
+  s!"S011 4:20 {notStatic "a value of `Bool`"}"
+#guard keyMod "  input x: Bool as 3;\n" == s!"S010 3:20 {portKeyType "a value of `Int`"}"
+-- A user struct named `PortKey` is another type.
+#guard failure ("module M() {\n  input x: Bool as PortKey(\"p\");\n}\n" ++
+    "struct PortKey { name: String }\n") 100000000 ==
+  s!"S010 2:20 {portKeyType "a value of `PortKey`"}"
+#guard keyMod "  input x: Bool as PortKey(\"p\", false, 3);\n" == s!"S022 3:20 {scalarIndex "3"}"
+#guard keyMod "  input x: Bool as PortKey(\"p\", true, 1 << 32);\n" ==
+  s!"S012 3:20 {keyRange "4294967296"}"
+#guard keyMod "  input x: Bool as \"1x\";\n" == s!"S022 3:20 {nameRule "1x"}"
+#guard keyMod "  input x: Bool as \"a-b\";\n" == s!"S022 3:20 {nameRule "a-b"}"
+#guard keyMod "  input x: Bool as \"\";\n" == s!"S022 3:20 {nameRule ""}"
+#guard keyMod "  input x: Bool as \"match\";\n" == s!"S022 3:20 {keywordName "match"}"
+#guard keyMod "  input x: Bool as PortKey(\"in\", true, 0);\n" == s!"S022 3:20 {keywordName "in"}"
+
+/-!
+Collisions of public names (section 5.6), at the second declaration. A family of the module body
+holds its name from the start, at its first indexed declaration. This holds also in an arm that
+does not run and after the keyed port.
+-/
+#guard keyMod "  input x: Bool as \"p\";\n  input y: Bool as \"p\";\n" ==
+  s!"S019 4:3 {publicTwice "p" "3:3"}"
+#guard keyMod "  input p: Bool;\n  input y: Bool as \"p\";\n" ==
+  s!"S019 4:3 {publicTwice "p" "3:3"}"
+#guard keyMod "  comptime for i in 0..2 {\n    input x: Bool as \"p\";\n  }\n" ==
+  s!"S019 4:5 {publicTwice "p" "4:5"}"
+#guard keyMod "  input req[0]: Bool;\n  input x: Bool as \"req\";\n" ==
+  s!"S019 4:3 {scalarFamily "req" "3:3"}"
+#guard keyMod "  comptime if (false) { input req[0]: Bool; }\n  input x: Bool as \"req\";\n" ==
+  s!"S019 4:3 {scalarFamily "req" "3:25"}"
+#guard keyMod "  input x: Bool as \"req\";\n  input req[0]: Bool;\n" ==
+  s!"S019 3:3 {scalarFamily "req" "4:3"}"
+#guard keyMod "  input x: Bool as \"req\";\n  comptime if (false) { input req[0]: Bool; }\n" ==
+  s!"S019 3:3 {scalarFamily "req" "4:25"}"
+#guard keyMod ("  output gnt[1]: Bool;\n  gnt[1] := a;\n" ++
+    "  input x: Bool as PortKey(\"gnt\", true, 0);\n") == s!"S019 5:3 {directions "gnt" "3:3"}"
+#guard keyMod "  input x: Bool as PortKey(\"gnt\", true, 0);\n  output gnt[1]: Bool;\n" ==
+  s!"S019 3:3 {directions "gnt" "4:3"}"
+-- A `PortKey` entry joins the family, so a key that a declaration has is "Family key twice".
+#guard keyMod "  input req[0]: Bool;\n  input x: Bool as PortKey(\"req\", true, 0);\n" ==
+  s!"S019 4:3 {keyTwice "req" "0" "3:3"}"
+#guard keyMod ("  input req[0]: Bool;\n  input x: Bool as PortKey(\"req\", true, 1);\n" ++
+    "  output o: Bool;\n  o := req[1] && x;\n") == "ok"
+-- A hardware `let` of the module body takes the core name, and a static `let` does not.
+#guard keyMod "  let x = a;\n  input p: Bool as \"x\";\n" == s!"S019 4:3 {taken "x"}"
+#guard keyMod "  let x = 1;\n  input p: Bool as \"x\";\n" == "ok"
+#guard keyMod "  reg x: Bool = false;\n  x := a;\n  input p: Bool as \"x\";\n" ==
+  s!"S019 5:3 {taken "x"}"
+#guard keyMod "  input y: Bool;\n  let x = y;\n  { input x: Bool; }\n" == s!"S019 5:5 {taken "x"}"
+-- A public name in a message has the limit of a string (section 5.5).
+#guard keyMod (s!"  input x: Bool as \"{String.ofList (List.replicate 70 'a')}\";\n" ++
+    s!"  input y: Bool as \"{String.ofList (List.replicate 70 'a')}\";\n") ==
+  s!"S019 4:3 {publicTwice (String.ofList (List.replicate 64 'a') ++ "... (70 characters)") "3:3"}"
+#guard keyMod s!"  output o: Bool as \"{String.ofList (List.replicate 65 'b')}\";\n" ==
+  s!"S018 3:3 {unboundKeyed (String.ofList (List.replicate 64 'b') ++ "... (65 characters)") "o"}"
+
+/-!
+The `S018` texts of section 6.2 name a keyed port by its public name. An own output with an `as`
+key also names its binder, which the fix binds.
+-/
+#guard keyMod "  output o: Bool as \"q\";\n" == s!"S018 3:3 {unboundKeyed "q" "o"}"
+#guard keyMod "  output o: Bool as PortKey(\"g\", true, 4);\n" ==
+  s!"S018 3:3 {unboundKeyed "g[4]" "o"}"
+#guard keyMod "  output o: Bool as \"q\";\n  o := a;\n  o := a;\n" ==
+  "S018 5:3 `q` has a second binding; the first binding is at 4:3, and the declaration is at " ++
+    "3:3; remove one of the two bindings"
+
+/-!
+The core names of section 7.2: a public name that is a core keyword gets `0k`, and a `PortKey`
+entry gets `<k>f`. A port has no frame in its core name, also in a helper.
+-/
+def keyNames : String :=
+  "module M() {\n  input x: Bool as \"assign\";\n  output o: Bool as PortKey(\"g\", true, 2);\n" ++
+  "  o := x;\n  f(0);\n  f(1);\n}\n" ++
+  "fn f(comptime i: Nat) -> () {\n  input p: Bool as \"p\" + str(i);\n" ++
+  "  output q[i]: Bool;\n  q[i] := p;\n  return ();\n}\n"
+#guard ((design keyNames "M").map fun d => d.insts.toList.map fun i =>
+    i.body.ports.toList.map fun q => Names.encode q.path.name) ==
+  some [["assign$0k", "g$2f", "p0", "q$0f", "p1", "q$1f"]]
+#guard (cost keyNames "M").startsWith "total"
+
+/-!
+Ports in helpers (sections 5.6 and 9.4). A port in a helper is a graph effect, so a guard gives
+`S016`. The static mode gives `S011` with the kind `input` or `output`. A fixed port name of a
+helper that runs twice is "Public name twice". A name of a binding of the module body is "Port
+name taken".
+-/
+def lane : String := "fn f() -> Nat {\n  input p: Bool;\n  return 1;\n}\n"
+#guard keyMod "  let z = f();\n" lane == "ok"
+#guard keyMod "  let z = f();\n  let y = f();\n" lane == s!"S019 7:3 {publicTwice "p" "7:3"}"
+#guard keyMod "  let p = a;\n  let z = f();\n" lane == s!"S019 7:3 {taken "p"}"
+#guard keyMod "  let z = if (a) { f() } else { 1 };\n" lane ==
+  "S016 6:3 a hardware arm has no graph effect such as `f`; call `f` before the `if` or " ++
+    "`match`, and use its result in the arm"
+#guard keyMod "  let z: UInt[f()] = 0;\n" lane ==
+  "S016 6:3 a type or a constant has no graph effect such as `f`; call it before and use the " ++
+    "result"
+#guard keyMod "  let z = cf();\n" (lane ++ "comptime fn cf() -> Nat {\n  return f();\n}\n") ==
+  "S011 6:3 the `comptime fn` `cf` makes no hardware, but its call reaches this input in `f`; " ++
+    "call `f` from a `fn` or a module body"
+#guard keyMod "  let z = cf();\n"
+    ("fn f() -> Nat {\n  output p: Bool;\n  return 1;\n}\n" ++
+      "comptime fn cf() -> Nat {\n  return f();\n}\n") ==
+  "S011 6:3 the `comptime fn` `cf` makes no hardware, but its call reaches this output in `f`; " ++
+    "call `f` from a `fn` or a module body"
+
+/-!
+A family of a helper (section 5.6) is the family of the owner. A helper selects each entry that
+the run declared before, also one of the module body. A helper family and a scalar port of the
+module, or a family of the other direction, collide by their public names.
+-/
+def hfam : String :=
+  "fn f(comptime i: Nat) -> Bool {\n  input req[i]: Bool;\n  return req[1] && req[i];\n}\n"
+#guard keyMod "  input req[1]: Bool;\n  output o: Bool;\n  o := f(2);\n" hfam == "ok"
+#guard keyMod "  output o: Bool;\n  let x = f(1);\n  o := f(2);\n" hfam == "ok"
+#guard keyMod "  output o: Bool;\n  o := f(2);\n" hfam == s!"S013 8:14 {undeclared "req" "1"}"
+#guard keyMod "  input req: Bool;\n  output o: Bool;\n  o := f(1);\n" hfam ==
+  s!"S019 8:3 {scalarFamily "req" "3:3"}"
+#guard keyMod "  output req[0]: Bool;\n  req[0] := a;\n  output o: Bool;\n  o := f(1);\n" hfam ==
+  s!"S019 9:3 {directions "req" "3:3"}"
+#guard keyMod "  let x = f(1);\n  let y = f(1);\n" hfam == s!"S019 7:3 {keyTwice "req" "1" "7:3"}"
+-- The module body cannot select a family that only a helper declares.
+#guard cost ("module M() {\n  input a: Bool;\n  let x = f(1);\n  output o: Bool;\n" ++
+  "  o := req[1];\n}\n" ++ hfam) "M" == "S003 5:8"
+
+/-!
+A child with keyed ports, and with ports of helpers. A helper family enters the interface only
+with an entry, so `u.h` names no port. The ports of `lane` share one position, so the first
+free input is the first one at run time, `l[1]`. A parent `M` makes `u = C()` on line 22 and
+runs `body` from line 23 on.
+-/
+def keyKid : String :=
+  "module C() {\n  input x: Bool as \"k_in\";\n  output y: Bool as \"k_out\";\n  y := x;\n" ++
+  "  lane(1);\n  lane(0);\n  comptime if (false) {\n    hfam(0);\n  }\n}\n" ++
+  "fn lane(comptime i: Nat) -> () {\n  input l: Bool as PortKey(\"l\", true, i);\n" ++
+  "  return ();\n}\n" ++
+  "fn hfam(comptime i: Nat) -> () {\n  input h[i]: Bool;\n  return ();\n}\n"
+def keyPar (body : String) : String :=
+  failure (keyKid ++ "module M() {\n  input a: Bool;\n  output o: Bool;\n  instance u = C();\n" ++
+    body ++ "}\n") 100000000
+def keyBinds : String := "  u.k_in := a;\n  u.l[0] := a;\n  u.l[1] := a;\n"
+#guard keyPar (keyBinds ++ "  o := u.k_out;\n") == "ok"
+#guard keyPar "  u.l[0] := a;\n  u.l[1] := a;\n  o := u.k_out;\n" ==
+  "S018 22:3 the input `k_in` of the instance `u` has no binding; bind it with " ++
+    "`u.k_in := ...;`"
+#guard keyPar "  u.k_in := a;\n  o := u.k_out;\n" ==
+  "S018 22:3 the input `l[1]` of the instance `u` has no binding; bind it with " ++
+    "`u.l[1] := ...;`"
+#guard keyPar (keyBinds ++ "  u.k_out := a;\n  o := a;\n") ==
+  s!"S017 26:3 {Elab.outputText "k_out"}"
+#guard keyPar (keyBinds ++ "  u.x := a;\n  o := a;\n") ==
+  "S010 26:3 the instance has no port `x`"
+#guard keyPar (keyBinds ++ "  o := u.h[0];\n") == "S010 26:8 the instance has no port `h`"
+#guard keyPar (keyBinds ++ "  u.l[2] := a;\n  o := a;\n") ==
+  "S013 26:7 the child `Instance[C]` has no entry `l[2]`; select a key that `Instance[C]` " ++
+    "declares"
+#guard keyPar (keyBinds ++ "  let z = u.l;\n  o := a;\n") == s!"S010 26:11 {famValue "l"}"
+
+/-!
+The charges of section 5.4: a key charges its nodes, then the public name its size, 1 plus its
+bytes. A longer literal key thus charges one more unit as a string and one more as a name.
+-/
+def keyCost : String :=
+  "module M() {\n  input x: Bool as \"pin\";\n  output o: Bool as PortKey(\"g\", true, 2);\n" ++
+  "  o := x;\n}\n"
+def keyCostLong : String :=
+  "module M() {\n  input x: Bool as \"pin_\";\n  output o: Bool as PortKey(\"g\", true, 2);\n" ++
+  "  o := x;\n}\n"
+#guard elabUnits keyCostLong "M" == elabUnits keyCost "M" + 2
+#guard exact keyCost "M" (total keyCost "M")
+#guard exact keyNames "M" (total keyNames "M")
+
 end Silicon.Source.Test.Elab

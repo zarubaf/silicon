@@ -117,10 +117,11 @@ The operators follow v0.1 section 3. These rules settle the open points of slice
 - `resize` keeps the signedness. `reinterpret` keeps the width.
 - A typed-use error is at the node of the typed use: the statement, the call, or the operator.
   A function without `return` at its end is `S010` at the call.
-- A resource, an instance, or a `:=` in a helper runs as in a module body, after two checks
-  with no charge (section 6.2). Under a guard, it is `S016`, and the text names the function of
-  the outermost call under the guard. In the mode of a `comptime fn` or of the `eval` command, it is
-  `S011`. The parser rejects a port in a function body, so only a module body has one.
+- A port, a resource, an instance, or a `:=` in a helper runs as in a module body. Two checks
+  with no charge come first (section 6.2). Under a guard, it is `S016`, and the text names the
+  function of the outermost call under the guard. In the mode of a `comptime fn` or of the
+  `eval` command, it is `S011`. A port of a helper belongs to the owner of the caller. Its
+  public name has no call frame (section 5.6).
 - A static position needs a static value, else `S011` at the node that uses the value. The
   index arguments, the conditions, and the loop bounds are static positions. The arguments at
   a `comptime` parameter, of `static_assert`, of `error`, and of a constructor `T(x)` are too.
@@ -2420,9 +2421,11 @@ They call entry functions, `spec`, which a name of a struct item uses, and the h
 -/
 /-!
 The kind of a declaration or a `:=` statement in the text "Hardware in a `comptime fn`"
-(section 6.2).
+(section 6.2). A port is `input` or `output` (slice 4).
 -/
 def stmtKind : Resolve.Stmt → String
+  | .input .. => "input"
+  | .output .. => "output"
   | .reg .. => "register"
   | .wire .. => "wire"
   | .mem .. => "memory"
@@ -3015,7 +3018,8 @@ mutual
       | .expr _ v => do
         if let some o ← eval n v then known o.value
         return none
-      | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .inst p .. => do
+      | .connect p .. | .reg p .. | .wire p .. | .mem p .. | .inst p .. | .input p ..
+      | .output p .. => do
         let c ← read
         -- A statement reaches a guard only through a call, which records its item, so the
         -- current item stands in only for a guard without a call.
@@ -3026,10 +3030,6 @@ mutual
           fail .S011 p (staticHardware (c.itemName m) (stmtKind s) (c.itemName c.item))
         | some .eval => fail .S011 p (evalHardware (stmtKind s) (c.itemName c.item))
         | none => pure ()
-        hwStmt n s
-        return none
-      | .input p .. | .output p .. => do
-        Elab.helperPortLater p
         hwStmt n s
         return none
       | .alias _ x ty => do
@@ -3049,17 +3049,23 @@ mutual
   termination_by (b, 3)
 
   /--
-  A module statement: a port, a register, a wire, a memory, a `:=` binding, or an `instance`
-  (`Source.Eval.Inst`). `stmt` charged it.
+  A hardware statement: a port, a register, a wire, a memory, a `:=` binding, or an `instance`
+  (`Source.Eval.Inst`). `stmt` charged it and checked the guard and the mode. A port without a
+  key has its binder as its public name. A port with an `as` key evaluates its type, then its key
+  in a structural context of the kind `name`, which is static (`S011`). `Elab.keyed` does the
+  rest of the port order of section 6.2.
   -/
   def hwStmt (n : Nat) (s : Resolve.Stmt) : M Unit :=
     match s with
     | .input p x (.indexed k) ty | .output p x (.indexed k) ty =>
       entryDecl n p (s matches .input ..) x k ty
-    | .input _ _ (.keyed k) _ | .output _ _ (.keyed k) _ => Elab.portKeyLater k.pos
+    | .input p x (.keyed k) ty | .output p x (.keyed k) ty => do
+      let t ← Elab.dataType p (← typeExpr n ty)
+      let v ← guardedBy .name do return (← need k (← eval n k)).value
+      Elab.keyed p (s matches .input ..) x t k.pos (← static k.pos v)
     | .input p x .scalar ty | .output p x .scalar ty => do
       let t ← Elab.dataType p (← typeExpr n ty)
-      let v ← Elab.port p (s matches .input ..) x t
+      let v ← Elab.port p (s matches .input ..) x.name.name ((← read).binder x.id) t none
       bindLocal x.id ⟨some t, false, v⟩
     | .reg p x ty init => do
       if (← get).inst.work.body.domain.isNone then
@@ -3123,7 +3129,8 @@ mutual
       (ty : Resolve.TypeExpr) : M Unit := do
     let v ← guardedBy .key do return (← need k (← eval n k)).value
     let key ← Elab.familyKey k.pos (← static k.pos v)
-    Elab.entry p input x key (← Elab.dataType p (← typeExpr n ty))
+    let t ← Elab.dataType p (← typeExpr n ty)
+    let _ ← Elab.entry p input x.name.name ((← read).binder x.id) key t none
   termination_by (n, 4)
 
   /--
@@ -3158,7 +3165,8 @@ mutual
       modify fun t => { t with
         inst.table := t.inst.table.insert key .inProgress,
         inst.names := t.inst.names.insert text,
-        inst.work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name } },
+        inst.work := { body := { domain := ds.head?.map fun (d : Binder) => d.name.name },
+                       owner := i },
         naming := {} }
       let (made, used) ← measure do
         inFrame none <| withTheReader Ctx (fun c =>
@@ -3191,7 +3199,7 @@ local numbers, and the field names with their positions.
 structure Scan where
   binders : List (Nat × String) := []
   fields : List (Pos × String) := []
-  families : List (Nat × Bool) := []
+  families : List (Nat × Bool × Pos) := []
 
 abbrev ScanM := StateM Scan
 
@@ -3257,8 +3265,8 @@ mutual
     | .assign _ t v | .connect _ t v => do scanExpr t; scanExpr v
     | .reg _ b ty i => do scanType ty; scanExpr i; scanBinder b
     | .wire _ b ty => do scanType ty; scanBinder b
-    | .input _ b k ty => scanPort b k ty true
-    | .output _ b k ty => scanPort b k ty false
+    | .input p b k ty => scanPort p b k ty true
+    | .output p b k ty => scanPort p b k ty false
     | .mem _ b w d => do scanType w; scanExpr d; scanBinder b
     | .inst _ b _ _ xs => do
       for x in xs do scanExpr x
@@ -3273,15 +3281,18 @@ mutual
     | .expr _ v => scanExpr v
     | .alias _ b ty => do scanType ty; scanBinder b
 
-  /-- An indexed port of a module body has its family binder (section 5.6). -/
-  def scanPort (b : Binder) (k : PortForm Resolve.Expr) (ty : Resolve.TypeExpr) (input : Bool) :
-      ScanM Unit := do
+  /--
+  An indexed port at `p` has its family binder, with its direction and its position (section
+  5.6).
+  -/
+  def scanPort (p : Pos) (b : Binder) (k : PortForm Resolve.Expr) (ty : Resolve.TypeExpr)
+      (input : Bool) : ScanM Unit := do
     if let .indexed e := k then scanExpr e
     scanType ty
     if let .keyed e := k then scanExpr e
     scanBinder b
     if k matches .indexed _ then
-      modify fun t => { t with families := (b.id, input) :: t.families }
+      modify fun t => { t with families := (b.id, input, p) :: t.families }
 
   def scanStmts (ss : List Resolve.Stmt) : ScanM Unit := do
     for s in ss do scanStmt s
@@ -3364,8 +3375,9 @@ def symbols (items : Array Resolve.Item) (scans rests : Array Scan) : Syms := Id
       fm := fm.insert p k
     binders := binders.push arr
     fields := fields.push fm
+    -- The list is in reverse source order, so the first declaration of a family inserts last.
     families := families.push <|
-      sc.families.foldl (fun m (id, input) => m.insert (arr.getD id 0) input) {}
+      sc.families.foldl (fun m (id, f) => m.insert (arr.getD id 0) f) {}
   for (sc, i) in rests.zipIdx do
     for (p, x) in sc.fields do
       let (t, k) := intern table x
