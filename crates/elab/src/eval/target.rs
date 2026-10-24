@@ -46,20 +46,26 @@ impl Evaluator<'_> {
             }
             keys.push(self.key(step)?);
         }
-        let mut cur = match start {
+        let cur = match start {
             Ok(out) => out,
             Err(decl) => Out::Ref(Ref {
                 root: Root::Local(self.store.frame_index(), decl),
                 path: Vec::new(),
             }),
         };
-        let mut rest = keys.as_slice();
+        self.target_walk(e.pos(), cur, &keys)
+    }
+
+    /// The walk of the steps `keys` of a target that starts at `start`, from the base `cur`
+    /// outward (Lean `targetWalk`).
+    fn target_walk(&mut self, start: Pos, mut cur: Out, keys: &[Key<'_>]) -> Res<Out> {
+        let mut rest = keys;
         while let Some(key) = rest.first() {
             let (out, taken) = self.target_run(cur, rest)?;
             cur = out;
             rest = rest.get(taken..).unwrap_or_default();
             if taken == 0 {
-                cur = self.target_step(e.pos(), cur, key)?;
+                cur = self.target_step(start, cur, key)?;
                 rest = rest.get(1..).unwrap_or_default();
             }
         }
@@ -141,7 +147,7 @@ impl Evaluator<'_> {
             .syms
             .fields
             .get(&f.id)
-            .and_then(|s| self.elab.port(inst, *s));
+            .and_then(|s| self.elab.port(inst, (*s, None)));
         match port {
             Some(port) if port.input => Ok(Out::Made(Val::Handle(Handle::Input {
                 inst: id,

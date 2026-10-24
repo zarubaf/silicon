@@ -34,7 +34,7 @@
 use super::typed::Whole;
 use super::{Evaluator, Let, Mode, Out, ROOT, Res, Slot, fail, need};
 use crate::agg::{Agg, Base};
-use crate::hw::{Graph, Handle, Kind, Port, Seen, Val};
+use crate::hw::{Graph, Handle, Kind, Port, PortId, Seen, Val};
 use crate::int::Int;
 use crate::names::{Name, PathId, Paths, Sym, encode, module_name};
 use crate::scan::Scan;
@@ -46,9 +46,10 @@ use parse::ast::{Expr, Ident, Item, Pos, Stmt, TypeExpr, UnOp};
 use resolve::{Resolved, Target as Ref};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A port declaration. A port keeps its source name.
+/// A port declaration. A port keeps its source name. A family entry has its key.
 pub(crate) struct PortDecl {
     pub sym: Sym,
+    pub key: Option<u32>,
     pub input: bool,
     pub ty: Ty,
     pub tid: TyId,
@@ -148,6 +149,8 @@ impl Body {
 /// of the first one with its call frame number.
 struct Need {
     name: Sym,
+    #[expect(dead_code, reason = "the family entries of the next step read it")]
+    key: Option<u32>,
     pos: Pos,
     count: u64,
     first: Option<Here>,
@@ -203,7 +206,7 @@ struct Work {
     body: Body,
     needs: Vec<Need>,
     bound: Vec<usize>,
-    inputs: BTreeMap<(usize, Sym), (u64, Here)>,
+    inputs: BTreeMap<(usize, PortId), (u64, Here)>,
     dup: Option<(Pos, Breach)>,
     spent: u64,
 }
@@ -231,7 +234,10 @@ enum Status {
 /// name, its number of inputs, and its domain.
 pub(crate) struct Iface {
     pub name: Name,
-    ports: BTreeMap<Sym, Port>,
+    ports: BTreeMap<PortId, Port>,
+    /// The direction of each port family by the symbol of its name, `true` for an input.
+    #[expect(dead_code, reason = "the family selection of the next step reads it")]
+    families: BTreeMap<Sym, bool>,
     inputs: usize,
     pub domain: Option<Sym>,
 }
@@ -242,9 +248,10 @@ impl Iface {
         let mut inputs = 0;
         for q in &b.ports {
             ports.insert(
-                q.sym,
+                (q.sym, q.key),
                 Port {
                     sym: q.sym,
+                    key: q.key,
                     input: q.input,
                     ty: q.tid,
                     pos: q.pos,
@@ -255,6 +262,7 @@ impl Iface {
         Iface {
             name,
             ports,
+            families: BTreeMap::new(),
             inputs,
             domain: b.domain,
         }
@@ -299,10 +307,10 @@ impl Elab {
     }
 
     /// The port `sym` of the done instantiation `inst`.
-    pub(crate) fn port(&self, inst: usize, sym: Sym) -> Option<Port> {
+    pub(crate) fn port(&self, inst: usize, id: PortId) -> Option<Port> {
         self.done
             .get(inst)
-            .and_then(|i| i.iface.ports.get(&sym))
+            .and_then(|i| i.iface.ports.get(&id))
             .cloned()
     }
 }
@@ -799,6 +807,7 @@ impl Evaluator<'_> {
         let id = self.elab.work.needs.len();
         self.elab.work.needs.push(Need {
             name,
+            key: None,
             pos,
             count: 0,
             first: None,
@@ -828,6 +837,7 @@ impl Evaluator<'_> {
         }
         self.elab.work.body.ports.push(PortDecl {
             sym,
+            key: None,
             input,
             ty: ty.clone(),
             tid,
@@ -960,7 +970,7 @@ impl Evaluator<'_> {
                 Sink::Own { kind, ty, path }
             }
             Target::Child { inst, path, port } => {
-                let key = (inst, port.sym);
+                let key = (inst, port.id());
                 let (count, first) = self
                     .elab
                     .work
@@ -1059,7 +1069,7 @@ impl Evaluator<'_> {
         let port = iface.and_then(|i| {
             i.ports
                 .values()
-                .filter(|q| q.input && !work.inputs.contains_key(&(k, q.sym)))
+                .filter(|q| q.input && !work.inputs.contains_key(&(k, q.id())))
                 .min_by_key(|q| (q.pos.line, q.pos.col))
         });
         let name = port.map_or("", |q| text(q.sym));
