@@ -1,0 +1,5 @@
+// S001: a declaration of a family entry with two keys. The key is one expression.
+module M() {
+    // expected-error S001 @+1
+    input req[0, 1]: Bool;
+}
