@@ -307,6 +307,19 @@ impl Evaluator<'_> {
         Self::within(q, len, i)
     }
 
+    /// The number of the part that the evaluated step `key` takes from `base`, after its checks,
+    /// and the declared type of the part when the step names a field (Lean `placeStep`).
+    fn step_at(&self, key: &Key<'_>, base: Seen<'_>) -> Res<(usize, Option<TyId>)> {
+        match key {
+            Key::Index(q, xp, i) => Ok((self.pick_at(*q, *xp, base, i)?, None)),
+            Key::Select(q, r, index) => Ok((self.select_at(*q, *r, index, base)?, None)),
+            Key::Field(q, f) => {
+                let (k, ft) = self.field_at(*q, f, base)?;
+                Ok((k, Some(ft)))
+            }
+        }
+    }
+
     /// The number of the element that the selector `.index` with its literal at `q` picks
     /// from `base`, a result of a selector at `pos`.
     fn select_at(&self, pos: Pos, q: Pos, index: &Nat, base: Seen<'_>) -> Res<usize> {
@@ -768,9 +781,7 @@ impl Evaluator<'_> {
                         string_step = Some(at);
                         break;
                     }
-                    Key::Index(q, xp, i) => self.pick_at(*q, *xp, cur, i)?,
-                    Key::Select(q, r, index) => self.select_at(*q, *r, index, cur)?,
-                    Key::Field(q, f) => self.field_at(*q, f, cur)?.0,
+                    key => self.step_at(key, cur)?.0,
                 };
                 cur = self.store.step(cur, number);
                 numbers.push(number);
@@ -1208,14 +1219,7 @@ impl Evaluator<'_> {
         let mut keys = std::mem::take(&mut st.keys);
         for key in keyed {
             let seen = cur.seen();
-            let (k, field) = match key {
-                Key::Index(q, xp, i) => (self.pick_at(*q, *xp, seen, i)?, None),
-                Key::Select(q, r, index) => (self.select_at(*q, *r, index, seen)?, None),
-                Key::Field(q, f) => {
-                    let (k, ft) = self.field_at(*q, f, seen)?;
-                    (k, Some(ft))
-                }
-            };
+            let (k, field) = self.step_at(key, seen)?;
             known = match (field, known, seen) {
                 (Some(ft), _, _) => Known::Ty(ft),
                 (None, Known::Ty(t), _) => self.tys.part(t, k).map_or(Known::Absent, Known::Ty),
