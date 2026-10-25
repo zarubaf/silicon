@@ -16,12 +16,13 @@
 //! hardware value, and a handle of a register, a wire, an own output, or a child input keep only
 //! their data type, and every later step selects in the type.
 
-use super::place::{Index, Key, Sel, chain, selector_text};
+use super::field::{At, InstInfo, Pick, base_error};
+use super::place::{Index, Key, Named, Sel, chain, selector_text};
+use super::record::FieldName;
 use super::{Evaluator, GuardKind, Res, at, fail, need};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind as Resource, Port, Ref, Root, Seen, Val};
-use crate::names::PathId;
 use crate::ops::Fuel;
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
@@ -36,15 +37,6 @@ enum Part {
     Handle(Handle),
     /// Only a data type.
     Type(TyId),
-}
-
-/// An `Instance` handle: its child number, its path, its instantiation, and its type.
-#[derive(Clone, Copy)]
-struct InstInfo {
-    id: usize,
-    path: PathId,
-    inst: usize,
-    ty: TyId,
 }
 
 /// What the walk knows of the part after its pending steps, to tell if it is an `Instance`
@@ -344,6 +336,13 @@ impl Evaluator<'_> {
                 self.wait(walk, Key::Select(pos, lit, number));
                 *at += 1;
             }
+            Sel::Key(pos, base, key) => {
+                self.charge(pos, 1)?;
+                let key = self.named_key(pos, base, key, true)?;
+                self.wait(walk, key);
+                *at += 1;
+                self.pay_waiting(walk)?;
+            }
             Sel::Field(pos, field) => {
                 let Some(info) = self.instance_of(walk)? else {
                     self.charge(pos, 1)?;
@@ -438,6 +437,7 @@ impl Evaluator<'_> {
             pos,
             (info.inst, info.ty),
             (self.port_sym(field), &field.name),
+            None,
         )
     }
 
@@ -472,17 +472,39 @@ impl Evaluator<'_> {
 
     /// Applies the pending steps of `walk` to its part, in one pass along the part. A part that
     /// keeps only its type selects in the type from there. The answer about an `Instance` handle
-    /// is exact afterwards.
+    /// is exact afterwards. An `@field` step that selects a port of a child ends the pass at its
+    /// part, and the pass goes on at the port with the steps after it.
     fn settle_walk(&mut self, walk: &mut Walk<'_>) -> Res<()> {
         let pending = std::mem::take(&mut walk.pending);
+        let mut from = 0;
+        while let Some(next) = self.settle_from(walk, &pending, from)? {
+            from = next;
+        }
+        Ok(())
+    }
+
+    /// The pass of `settle_walk` over the steps of `pending` from the step `from`. The result is
+    /// the step after a port switch of an `@field`, else `None`.
+    fn settle_from(
+        &mut self,
+        walk: &mut Walk<'_>,
+        pending: &[Key<'_>],
+        from: usize,
+    ) -> Res<Option<usize>> {
+        let keys = pending.get(from..).unwrap_or_default();
         let ty = match &mut walk.part {
             Part::Type(ty) => *ty,
             Part::Handle(handle) => {
-                let Some(key) = pending.first() else {
+                let Some(key) = keys.first() else {
                     walk.known = Self::known_of(Seen::Handle(handle));
-                    return Ok(());
+                    return Ok(None);
                 };
                 let Some(only) = Self::only_of(&self.graph, Seen::Handle(handle)) else {
+                    if let Key::Named(n) = key {
+                        let stepped = self.named_on_handle(n, handle)?;
+                        *walk = Self::port_walk(stepped.0, stepped.1);
+                        return Ok(Some(from + 1));
+                    }
                     self.step_value(key, Seen::Handle(handle))?;
                     return no_type(
                         super::place::key_pos(key),
@@ -495,14 +517,34 @@ impl Evaluator<'_> {
                 let mut seen = self.store.at(r);
                 let mut done = 0;
                 let mut only = None;
-                for key in &pending {
+                let mut switch = None;
+                for key in keys {
                     only = Self::only_of(&self.graph, seen);
                     if only.is_some() {
                         break;
                     }
                     #[cfg(test)]
                     crate::counters::add(crate::counters::Count::Queried, 1);
-                    let (number, field) = self.step_value(key, seen)?;
+                    let (number, field) = if let Key::Named(n) = key {
+                        let at = At::Seen(seen);
+                        let plan = self.named_plan(n, at, self.store.value(&n.key))?;
+                        if !n.paid
+                            && let Some(name) = plan.name()
+                        {
+                            Self::pay_name(&mut self.fuel, n.kp, name)?;
+                        }
+                        match self.named_finish(n, seen, &plan)? {
+                            Pick::Field(number, ft, _) => (number, Some(ft)),
+                            Pick::Index(i) => self.step_value(&Key::Index(n.pos, n.kp, i), seen)?,
+                            Pick::Port(info, port) => {
+                                switch = Some((info, port));
+                                done += 1;
+                                break;
+                            }
+                        }
+                    } else {
+                        self.step_value(key, seen)?
+                    };
                     *declared = field.or_else(|| match declared {
                         Some(ty) => self.tys.part(*ty, number),
                         None => self.stored_part(seen, number),
@@ -511,15 +553,21 @@ impl Evaluator<'_> {
                     seen = self.store.step(seen, number);
                     done += 1;
                 }
+                if let Some((info, port)) = switch {
+                    *walk = Self::port_walk(info, port);
+                    return Ok(Some(from + done));
+                }
                 let Some(only) = only else {
                     walk.known = Self::known_of(seen);
-                    return Ok(());
+                    return Ok(None);
                 };
                 let ty = self.only_id(only);
-                return self.settle_type(walk, ty, pending.get(done..).unwrap_or_default());
+                self.settle_type(walk, ty, keys.get(done..).unwrap_or_default())?;
+                return Ok(None);
             }
         };
-        self.settle_type(walk, ty, &pending)
+        self.settle_type(walk, ty, keys)?;
+        Ok(None)
     }
 
     /// The part of `walk` is the type `ty`, and the steps `keys` select in it.
@@ -527,7 +575,10 @@ impl Evaluator<'_> {
         for key in keys {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Queried, 1);
-            ty = self.ty_step(ty, key)?;
+            ty = match key {
+                Key::Named(n) => self.named_ty(n, ty)?,
+                key => self.ty_step(ty, key)?,
+            };
         }
         walk.part = Part::Type(ty);
         walk.known = Known::Not;
@@ -589,14 +640,7 @@ impl Evaluator<'_> {
                 if let Some((number, field_ty)) = found {
                     return Ok((number, Some(field_ty)));
                 }
-                match record {
-                    Some(ty) => super::record::no_field(*pos, &self.tys.text(ty), &field.name),
-                    None => fail(
-                        Code::S010,
-                        *pos,
-                        format!("{} has no field `{}`", self.text(seen), field.name),
-                    ),
-                }
+                self.missing_field(*pos, self.field_name(field), record, seen)
             }
             key => self.step_at(key, seen),
         }
@@ -604,8 +648,17 @@ impl Evaluator<'_> {
 
     /// The number and the type of the field `field` of the struct type `ty`.
     fn struct_field(&self, ty: TyId, field: &Ident) -> Option<(usize, TyId)> {
+        self.struct_field_by(ty, self.field_name(field))
+    }
+
+    /// The number and the type of the field `f` of the struct type `ty`. A name from a key
+    /// without a symbol is no field of the file, so it needs no search by name.
+    fn struct_field_by(&self, ty: TyId, f: FieldName<'_>) -> Option<(usize, TyId)> {
+        if f.keyed && f.sym.is_none() {
+            return None;
+        }
         let parts = self.tys.parts(ty)?;
-        let number = self.field_number(parts.item()?, field)?;
+        let number = self.field_number_by(parts.item()?, f.sym, f.name)?;
         Some((number, parts.types.get(number).copied()?))
     }
 
@@ -617,6 +670,8 @@ impl Evaluator<'_> {
         match key {
             Key::Field(pos, field) => self.field_ty(ty, *pos, field),
             Key::Select(pos, lit, number) => self.select_ty(ty, (*pos, *lit), number),
+            // The step of an `@field` has its own walk (`named_ty`).
+            Key::Named(n) => Self::named_placeholder(n.pos),
             Key::Index(pos, key_pos, index) => {
                 let part = match self.tys.get(ty) {
                     Ty::Array(elem, count) => {
@@ -648,18 +703,86 @@ impl Evaluator<'_> {
 
     /// The field `field` at `pos` of a part of the data type `ty`.
     fn field_ty(&self, ty: TyId, pos: Pos, field: &Ident) -> Res<TyId> {
+        self.field_ty_by(ty, pos, self.field_name(field))
+    }
+
+    /// The field `f` at `pos` of a part of the data type `ty`.
+    fn field_ty_by(&self, ty: TyId, pos: Pos, f: FieldName<'_>) -> Res<TyId> {
         match self.tys.get(ty) {
-            Ty::Enum(_) => self.enum_field_error(pos, &field.name, ty),
-            Ty::Struct(_) => match self.struct_field(ty, field) {
+            Ty::Enum(_) => self.enum_field_error(pos, &f.shown(), ty),
+            Ty::Struct(_) => match self.struct_field_by(ty, f) {
                 Some((_, field_ty)) => Ok(field_ty),
-                None => super::record::no_field(pos, &self.tys.text(ty), &field.name),
+                None => super::record::no_field(pos, &self.tys.text(ty), &f.shown()),
             },
             _ => fail(
                 Code::S010,
                 pos,
-                format!("{} has no field `{}`", self.query_part_text(ty), field.name),
+                format!("{} has no field `{}`", self.query_part_text(ty), f.shown()),
             ),
         }
+    }
+
+    /// The `@field` step `n` of a query operand on the part of the data type `ty` (Lean
+    /// `queryField`). The checks of its key charge the size of a name that the step did not pay
+    /// yet, and the selection is the step of a field or an index in the type.
+    fn named_ty(&mut self, n: &Named<'_>, ty: TyId) -> Res<TyId> {
+        let key = self.store.value(&n.key);
+        let plan = self.named_plan(n, At::Ty(ty), key)?;
+        if !n.paid
+            && let Some(name) = plan.name()
+        {
+            Self::pay_name(&mut self.fuel, n.kp, name)?;
+        }
+        match plan {
+            super::field::Plan::Name(name) => {
+                let f = FieldName {
+                    sym: self.syms.find(name),
+                    name,
+                    keyed: true,
+                };
+                self.field_ty_by(ty, n.kp, f)
+            }
+            super::field::Plan::Index => {
+                self.ty_step(ty, &Key::Index(n.pos, n.kp, self.index_of(&n.key)))
+            }
+            // A data type is no `Instance` handle.
+            super::field::Plan::Port(..) => {
+                base_error(n.base.pos(), &format!("a value of `{}`", self.tys.text(ty)))
+            }
+        }
+    }
+
+    /// The `@field` step `n` on the handle `handle` that keeps its value in the query: an
+    /// `Instance` handle selects the port of its child.
+    fn named_on_handle(&mut self, n: &Named<'_>, handle: &Handle) -> Res<(InstInfo, Port)> {
+        let seen = Seen::Handle(handle);
+        let key = self.store.value(&n.key);
+        let plan = self.named_plan(n, At::Seen(seen), key)?;
+        if !n.paid
+            && let Some(name) = plan.name()
+        {
+            Self::pay_name(&mut self.fuel, n.kp, name)?;
+        }
+        match self.named_finish(n, seen, &plan)? {
+            Pick::Port(info, port) => Ok((info, port)),
+            // Only an `Instance` handle is a base of `@field`, and it selects a port.
+            _ => base_error(n.base.pos(), &self.about(seen)),
+        }
+    }
+
+    /// Pays the size of the name of the key that the walk just made wait. A query pays it at its
+    /// step, as Lean charges it at its step, and the pass checks the kind of the key later. An
+    /// error of that check wins over a failed payment, because the walk applies the steps that
+    /// wait before it returns an error.
+    fn pay_waiting(&mut self, walk: &mut Walk<'_>) -> Res<()> {
+        let Some(Key::Named(n)) = walk.pending.last_mut() else {
+            return Ok(());
+        };
+        if let Some(name) = self.key_name(self.store.value(&n.key)) {
+            Self::pay_name(&mut self.fuel, n.kp, name)?;
+            n.paid = true;
+        }
+        Ok(())
     }
 
     /// The selector `.number` at `pos`, with its literal at `lit`, of a part of the data type

@@ -58,7 +58,7 @@ mod work;
 pub use design::Design;
 pub(crate) use design::{Bind, Inst, Mem, Sink};
 use design::{Iface, PortDecl};
-pub(super) use family::{child_key, family_value};
+pub(super) use family::{child_key, family_value, no_port};
 use work::Work;
 
 /// The state of an `InstantiationId` in the table of instantiations.

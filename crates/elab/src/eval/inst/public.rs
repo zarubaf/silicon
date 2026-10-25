@@ -261,6 +261,19 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The name of the static `String` or `PortKey` `v`, if it is one, with no check of its
+    /// index.
+    pub(in crate::eval) fn key_name<'v>(&self, v: &'v Value) -> Option<&'v str> {
+        match v {
+            Value::Str(x) => Some(x),
+            Value::Record(t, fields) if self.is_port_key(*t) => match fields.first() {
+                Some(Value::Str(x)) => Some(x),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// The public name and the family key that the static `String` or `PortKey` `v` gives at
     /// `kp` (section 6.2, Lean `Elab.portKey?`). A `String` is a scalar name. A record of the
     /// prelude struct `PortKey` is a scalar name with the index 0, or an entry with an index

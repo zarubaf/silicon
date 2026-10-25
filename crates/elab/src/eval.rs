@@ -25,6 +25,7 @@ mod arms;
 mod call;
 mod container;
 mod data;
+mod field;
 mod handle;
 mod hwops;
 mod inst;
@@ -36,6 +37,7 @@ mod pack;
 mod place;
 mod record;
 mod reflect;
+mod source;
 mod store;
 mod string;
 mod target;
@@ -868,12 +870,6 @@ impl Evaluator<'_> {
                 builtin: Builtin::TypeOf,
                 args,
             } => self.type_of_builtin(*pos, args),
-            // TODO(#344): `@field` goes in steps 12 and 13.
-            Expr::Builtin { pos, .. } => fail(
-                Code::S004,
-                *pos,
-                "a builtin is not supported yet".to_owned(),
-            ),
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
                 Opnd::Static(a) if self.is_agg(&a) => fail(
                     Code::S010,
@@ -951,7 +947,12 @@ impl Evaluator<'_> {
                 self.read(e)
             }
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
-            Expr::Select { .. } | Expr::Field { .. } => self.read(e),
+            Expr::Select { .. }
+            | Expr::Field { .. }
+            | Expr::Builtin {
+                builtin: Builtin::Field,
+                ..
+            } => self.read(e),
             Expr::ArrayType { pos, elem, len } => {
                 let t = self.array_type(*pos, elem, len)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
@@ -1044,9 +1045,11 @@ impl Evaluator<'_> {
     /// output is hardware.
     fn field_part(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let b = match self.store.seen(&b) {
-            Seen::Handle(Handle::Inst { id, path, inst, .. }) => {
-                let (id, path, inst) = (*id, *path, *inst);
-                return self.port_of(pos, (id, path), inst, (self.port_sym(field), &field.name));
+            Seen::Handle(Handle::Inst { id, path, inst, ty }) => {
+                let (id, path, inst, ty) = (*id, *path, *inst, *ty);
+                let port =
+                    self.port_named(pos, (inst, ty), (self.port_sym(field), &field.name), None)?;
+                return self.port_out(pos, (id, path), port);
             }
             // A field selection is a data context (section 9.2): a child input is `S017`.
             Seen::Handle(Handle::Res { .. } | Handle::Input { .. }) => {
@@ -1058,29 +1061,6 @@ impl Evaluator<'_> {
             return self.agg_field(pos, field, b);
         }
         self.record_field(pos, b, field)
-    }
-
-    /// The port with the symbol `y` and the name `name` of the done instantiation `inst`, the
-    /// child number `id` with the path `path`: a child input is a target, and a child output
-    /// refers to its name. An output without a hardware leaf is a new static value. A family of
-    /// the child without a key is `S010` "Family as a value" (section 5.6). No symbol is no
-    /// port.
-    fn port_of(
-        &mut self,
-        pos: Pos,
-        (id, path): (usize, PathId),
-        inst: usize,
-        (y, name): (Option<Sym>, &str),
-    ) -> Res<Out> {
-        match y.and_then(|s| self.elab.port(inst, (s, None))) {
-            Some(q) => self.port_out(pos, (id, path), q),
-            None if y.is_some_and(|s| self.has_family(inst, s)) => family_value(pos, name),
-            None => fail(
-                Code::S010,
-                pos,
-                format!("the instance has no port `{name}`"),
-            ),
-        }
     }
 
     /// `==` and `!=` take no operand whose type holds a function type (section 5.1), else

@@ -16,33 +16,56 @@ use crate::names::Step;
 use crate::ops::{int_text, str_text};
 use crate::types::{Ty, TyId};
 use crate::value::Value;
-use parse::ast::{Expr, Ident, Nat, Pos};
+use parse::ast::{Builtin, Expr, Ident, Nat, Pos};
 use resolve::{DeclId, Target};
 use std::borrow::Cow;
 
 /// A step of a place or a read after its root: an index at the position with its arguments,
-/// a selector `.N` with the positions of its node and of its number literal, or a field `.f`.
+/// a selector `.N` with the positions of its node and of its number literal, a field `.f`, or an
+/// `@field` selection with its base and its key. The key of an `@field` is an index with a call
+/// for the scan (`CallArgs`), which marks the address of the key.
 #[derive(Clone, Copy)]
 pub(super) enum Sel<'a> {
     Index(Pos, &'a [Expr]),
     Select(Pos, Pos, &'a Nat),
     Field(Pos, &'a Ident),
+    Key(Pos, &'a Expr, &'a Expr),
 }
 
 impl Sel<'_> {
     /// The position of the node of the step, where the step charges.
     pub(super) fn pos(&self) -> Pos {
-        let (Sel::Index(q, _) | Sel::Select(q, ..) | Sel::Field(q, _)) = *self;
+        let (Sel::Index(q, _) | Sel::Select(q, ..) | Sel::Field(q, _) | Sel::Key(q, ..)) = *self;
         q
     }
 }
 
 /// A step of a place whose index evaluated: an index at its node, with the position of its
-/// index expression and the index, or a selector `.N` as in `Sel`.
+/// index expression and the index, or a selector `.N` as in `Sel`. The key of an `@field` step
+/// waits as a static result, because its kind checks need the base (`Named`).
 pub(super) enum Key<'a> {
     Index(Pos, Pos, Index),
     Select(Pos, Pos, &'a Nat),
     Field(Pos, &'a Ident),
+    Named(Named<'a>),
+}
+
+/// An `@field` step at `pos` after its key evaluated and passed the static check. The base is the
+/// expression of the first operand, for the position of an error and for the text of a family.
+/// The key is the static result at `kp`. `at` is its number if it is a non-negative integer, so
+/// the cursor of a read names the part before the base is known.
+pub(super) struct Named<'a> {
+    pub(super) pos: Pos,
+    pub(super) base: &'a Expr,
+    pub(super) kp: Pos,
+    pub(super) key: Out,
+    pub(super) at: Option<usize>,
+    /// The key is a `String` or a `PortKey`: its name charges its size.
+    pub(super) charges: bool,
+    /// The size of the name of the key is paid already. A read pays it at the step when the base
+    /// reads nothing, as Lean charges it before the next key evaluates, and a query pays it at
+    /// its step.
+    pub(super) paid: bool,
 }
 
 /// The result of the walk of a read (`follow`).
@@ -162,8 +185,10 @@ impl Cur<'_> {
 
 /// The position of the node of a step.
 pub(super) fn key_pos(key: &Key<'_>) -> Pos {
-    let (Key::Index(q, ..) | Key::Select(q, ..) | Key::Field(q, _)) = *key;
-    q
+    match key {
+        Key::Index(q, ..) | Key::Select(q, ..) | Key::Field(q, _) => *q,
+        Key::Named(n) => n.pos,
+    }
 }
 
 /// A place after its steps (section 5.2): its root, the number of each step, and the type and
@@ -218,6 +243,17 @@ pub(super) fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
                 steps.push(Sel::Field(*pos, field));
                 cur = base;
             }
+            Expr::Builtin {
+                pos,
+                builtin: Builtin::Field,
+                args,
+            } => {
+                let [base, key] = args.as_slice() else {
+                    return None;
+                };
+                steps.push(Sel::Key(*pos, base, key));
+                cur = base;
+            }
             Expr::Name { .. } => {
                 steps.reverse();
                 return Some((cur, steps));
@@ -258,7 +294,7 @@ fn take_element(v: &mut Value, k: usize) -> Value {
 
 impl Evaluator<'_> {
     /// What an operand is.
-    fn opnd_seen<'s>(&'s self, b: &'s Opnd) -> Seen<'s> {
+    pub(super) fn opnd_seen<'s>(&'s self, b: &'s Opnd) -> Seen<'s> {
         match b {
             Opnd::Static(o) => self.store.seen(o),
             Opnd::Hw(h) => Seen::Hw(*h),
@@ -317,7 +353,14 @@ impl Evaluator<'_> {
                 let (k, ft) = self.field_at(*q, f, base)?;
                 Ok((k, Some(ft)))
             }
+            Key::Named(n) => Self::named_placeholder(n.pos),
         }
+    }
+
+    /// The step of an `@field` in a place or a `:=` target, which a later step of #344 evaluates.
+    /// TODO(#344): remove it in step 13.
+    pub(super) fn named_placeholder<T>(pos: Pos) -> Res<T> {
+        fail(Code::S004, pos, "a builtin is not supported yet".to_owned())
     }
 
     /// The number of the element that the selector `.index` with its literal at `q` picks
@@ -376,6 +419,14 @@ impl Evaluator<'_> {
                 index,
             } => Some((Sel::Select(*pos, *lit_pos, index), &**base)),
             Expr::Field { pos, base, field } => Some((Sel::Field(*pos, field), &**base)),
+            Expr::Builtin {
+                pos,
+                builtin: Builtin::Field,
+                args,
+            } => match args.as_slice() {
+                [base, key] => Some((Sel::Key(*pos, base, key), base)),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -429,7 +480,11 @@ impl Evaluator<'_> {
         let Some(first) = steps.first().map(Sel::pos) else {
             return Ok(Some(b));
         };
-        let b = self.base_data(first, b)?;
+        // The base of an `@field` reads after its key evaluates (Lean `fieldOut`).
+        let b = match steps.first() {
+            Some(Sel::Key(..)) => Opnd::of_out(b),
+            _ => self.base_data(first, b)?,
+        };
         if let Some(Sel::Index(q, _)) = steps.first()
             && matches!(self.opnd_seen(&b), Seen::Static(Value::Type(_)))
         {
@@ -458,6 +513,10 @@ impl Evaluator<'_> {
                 && let Some(next) = rest.first()
             {
                 known = None;
+                // An `@field` reads its base after its key evaluates, so its segment starts here.
+                if let Sel::Key(..) = next {
+                    break;
+                }
                 if let Sel::Field(..) = next {
                     let (out, taken) = self.field_or_entry(base.into_out(), rest)?;
                     rest = rest.get(taken..).unwrap_or_default();
@@ -523,6 +582,12 @@ impl Evaluator<'_> {
         let held = self.held_path(&base, known);
         let tracked = held.is_none().then(|| self.static_path(&base)).flatten();
         let on_agg = matches!(self.opnd_seen(&base), Seen::Agg(_));
+        // A base that the step of an `@field` reads (Lean `baseData`) reads after the key of the
+        // step evaluates and before the next key, so such a step ends its segment.
+        let reads_base = matches!(
+            self.opnd_seen(&base),
+            Seen::Handle(Handle::Res { .. } | Handle::Input { .. }) | Seen::Pending(..)
+        );
         let root = base.changing_root();
         let mut moved = None;
         let at = self.store.park(base.into_out());
@@ -545,7 +610,7 @@ impl Evaluator<'_> {
             // index can evaluate first, and one walk then takes the whole run of steps.
             if on_agg
                 && n > 0
-                && matches!(step, Sel::Index(..))
+                && matches!(step, Sel::Index(..) | Sel::Key(..))
                 && known.is_none_or(|t| self.tys.meta(t).leaves.is_zero())
             {
                 break;
@@ -554,8 +619,7 @@ impl Evaluator<'_> {
             // to. At a static part the base holds the root local, as in Lean, to the end. An
             // index with no call cannot change the root, so the hold has no effect for it. For
             // an index with a call, the first change of the root decides the hold (`arm`).
-            let armed = held.is_some()
-                && matches!(step, Sel::Index(_, args) if self.call_args.has_call(args));
+            let armed = held.is_some() && self.has_call(step);
             if armed {
                 self.store.arm(at, steps.len() - n);
             }
@@ -565,7 +629,8 @@ impl Evaluator<'_> {
                 self.store.disarm(at);
             }
             match key {
-                Ok(k) => {
+                Ok(mut k) => {
+                    self.pay_named(&mut k, n == 0 && reads_base);
                     let next = held.and_then(|ty| self.held_step(ty, &k));
                     let number = if follows {
                         self.held_step(known, &k).map(|(number, _)| number)
@@ -578,10 +643,15 @@ impl Evaluator<'_> {
                     keyed.push(k);
                     // An index that changed the root reads an old part and pays for its result
                     // (section 5.4). Its step ends the segment, so the charge is the last step.
-                    if let Sel::Index(q, _) = step
+                    if let Sel::Index(q, _) | Sel::Key(q, ..) = step
                         && root.is_some_and(|r| Some(self.store.changes_of(r)) != before)
                     {
                         moved = Some(*q);
+                        break;
+                    }
+                    // A step that pays its name later, or that reads its base, ends the segment:
+                    // the charge comes before the next key evaluates.
+                    if n + 1 < steps.len() && Self::named_ends(keyed.last(), n == 0 && reads_base) {
                         break;
                     }
                     // The part is a handle, so the next step reads it before its index evaluates.
@@ -620,6 +690,32 @@ impl Evaluator<'_> {
         Ok((out, keyed.len(), after))
     }
 
+    /// Whether the key of the step can change a local of its frame while it evaluates: it holds a
+    /// call. The scan marked it.
+    fn has_call(&self, step: &Sel<'_>) -> bool {
+        match step {
+            Sel::Index(_, args) => self.call_args.has_call(args),
+            Sel::Key(_, _, key) => self.call_args.has_call(std::slice::from_ref(key)),
+            Sel::Select(..) | Sel::Field(..) => false,
+        }
+    }
+
+    /// Pays the name of the step `key` of an `@field` at its step, unless its base reads first.
+    fn pay_named(&mut self, key: &mut Key<'_>, reads_first: bool) {
+        if let Key::Named(named) = key
+            && named.charges
+            && !reads_first
+        {
+            self.pay_early(named);
+        }
+    }
+
+    /// Whether the last step `key` of a segment is a step of an `@field` that ends it: it reads
+    /// its base (`first` and `reads_base`), or the charge of its name waits.
+    fn named_ends(key: Option<&Key<'_>>, reads_first: bool) -> bool {
+        matches!(key, Some(Key::Named(m)) if reads_first || (m.charges && !m.paid))
+    }
+
     /// Whether a step ends the segment because the next step must see its result first. A string
     /// container ends the segment at an index, because the scan of the string charges before a
     /// later index evaluates. A step on a base of unknown type ends it too: that base is a new
@@ -627,7 +723,9 @@ impl Evaluator<'_> {
     /// applies. This one rule covers the index, the selector, and the field.
     fn ends_segment(&self, step: &Sel<'_>, known: Option<TyId>) -> bool {
         match step {
-            Sel::Index(..) => known.is_none_or(|t| matches!(self.tys.get(t), Ty::String)),
+            Sel::Index(..) | Sel::Key(..) => {
+                known.is_none_or(|t| matches!(self.tys.get(t), Ty::String))
+            }
             Sel::Select(..) | Sel::Field(..) => known.is_none(),
         }
     }
@@ -686,6 +784,8 @@ impl Evaluator<'_> {
             Key::Field(_, f) => ty
                 .and_then(|t| self.tys.parts(t))
                 .and_then(|parts| self.field_number(parts.item()?, f)),
+            // A name reads only after its size charge, so only a number names the part here.
+            Key::Named(n) => self.named_slot(ty, n),
         }?;
         Some((k, ty.and_then(|t| self.part_ty(t, k))))
     }
@@ -723,6 +823,7 @@ impl Evaluator<'_> {
                     .get(self.field_number(parts.item()?, f)?)
                     .copied()
             }
+            Key::Named(n) => self.part_ty(t, self.named_slot(Some(t), n)?),
         }
     }
 
@@ -745,6 +846,18 @@ impl Evaluator<'_> {
         let mut rest = keyed;
         let mut mark = mark;
         loop {
+            // An `@field` step that needs its whole base takes it as a result: a handle, or a name
+            // that waits for its charge. The steps after it go on from its part.
+            while let Some(Key::Named(n)) = rest.first()
+                && self.named_whole(n, &base)
+            {
+                let out = self.named_step(base.into_out(), n)?;
+                rest = rest.get(1..).unwrap_or_default();
+                if rest.is_empty() {
+                    return Ok(Followed::new(self.resolve_ref(mark, out), false, false));
+                }
+                base = Opnd::of_out(out);
+            }
             // The steps through the nodes of a stored root go on from the part that the last step
             // found, so the whole run walks the path from the root once.
             let (through, taken) = self.node_steps(base, rest);
@@ -762,7 +875,10 @@ impl Evaluator<'_> {
             while let Some(key) = rest.first()
                 && matches!(self.opnd_seen(&base), Seen::Agg(_))
             {
-                let out = self.agg_key(base.into_out(), key)?;
+                let out = match key {
+                    Key::Named(n) => self.named_step(base.into_out(), n)?,
+                    key => self.agg_key(base.into_out(), key)?,
+                };
                 rest = rest.get(1..).unwrap_or_default();
                 if rest.is_empty() {
                     return Ok(Followed::new(self.resolve_ref(mark, out), false, false));
@@ -781,6 +897,7 @@ impl Evaluator<'_> {
                         string_step = Some(at);
                         break;
                     }
+                    Key::Named(n) => self.named_number(n, cur)?.0,
                     key => self.step_at(key, cur)?.0,
                 };
                 cur = self.store.step(cur, number);
@@ -832,14 +949,18 @@ impl Evaluator<'_> {
         mark: Option<&Mark>,
     ) -> Res<Followed> {
         let list = self.follow(Opnd::of_out(parked), first, None)?.out;
-        if let (Some(mark), Some(Key::Index(_, _, Index::Number(j))), Out::Ref(r)) =
-            (mark, rest.first(), &list)
+        let step = rest.first().and_then(|key| match key {
+            Key::Index(_, _, Index::Number(j)) => Some(*j),
+            Key::Named(n) => n.at,
+            _ => None,
+        });
+        if let (Some(mark), Some(j), Out::Ref(r)) = (mark, step, &list)
             && self
                 .store
                 .old_len(*mark, &r.path)
-                .is_some_and(|len| *j < len)
+                .is_some_and(|len| j < len)
         {
-            let element = elem(Opnd::Static(list), *j);
+            let element = elem(Opnd::Static(list), j);
             let out = self.resolve_ref(Some(mark), element);
             return self.follow(Opnd::of_out(out), rest.get(1..).unwrap_or_default(), None);
         }
@@ -917,6 +1038,10 @@ impl Evaluator<'_> {
                 .ok()
                 .filter(|k| *k < p.0.len()),
             (Key::Field(_, f), Agg::Record(..)) => self.agg_field_at(a, f).map(|(k, _)| k),
+            (Key::Named(n), Agg::Array(_, p) | Agg::Tuple(_, p) | Agg::List(_, p)) => {
+                n.at.filter(|k| *k < p.0.len())
+            }
+            (Key::Named(n), Agg::Record(..)) => self.named_agg_field(n, a),
             _ => None,
         }
     }
@@ -927,6 +1052,7 @@ impl Evaluator<'_> {
             Key::Index(q, xp, i) => self.agg_index(*q, *xp, b, i),
             Key::Select(q, r, index) => self.agg_select(*q, *r, index, b),
             Key::Field(q, f) => self.agg_field(*q, f, b),
+            Key::Named(n) => Self::named_placeholder(n.pos),
         }
     }
 
@@ -1063,6 +1189,10 @@ impl Evaluator<'_> {
         let Some((Expr::Name { id: root_id, .. }, steps)) = chain(target) else {
             return bad();
         };
+        // TODO(#344): the places of an `@field` are step 13.
+        if let Some(step) = steps.iter().find(|s| matches!(s, Sel::Key(..))) {
+            return Self::named_placeholder(step.pos());
+        }
         let found = match self.target(*root_id) {
             Some(Target::Decl(id)) => self
                 .store
@@ -1197,6 +1327,7 @@ impl Evaluator<'_> {
             }
             Sel::Select(q, r, index) => Ok(Key::Select(q, r, index)),
             Sel::Field(q, f) => Ok(Key::Field(q, f)),
+            Sel::Key(q, base, key) => self.named_key(q, base, key, false),
         }
     }
 

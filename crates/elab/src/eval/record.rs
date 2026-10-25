@@ -14,19 +14,48 @@ use crate::hw::{Seen, Val};
 use crate::int::BitBuf;
 use crate::limit;
 use crate::names::Sym;
-use crate::ops::int_text;
+use crate::ops::{int_text, str_text};
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size, width_size};
 use parse::ast::{Expr, Ident, Item, Pos};
 
+/// A field name at a selection: its symbol, if the file or the run has one, and its text. A name
+/// that comes from a key has the limit of a string in a message (section 5.5), and a name of the
+/// source has none.
+#[derive(Clone, Copy)]
+pub(super) struct FieldName<'a> {
+    pub(super) sym: Option<Sym>,
+    pub(super) name: &'a str,
+    pub(super) keyed: bool,
+}
+
+impl FieldName<'_> {
+    /// The name as a message shows it. It renders only in an error.
+    pub(super) fn shown(&self) -> String {
+        let text = if self.keyed {
+            str_text(self.name)
+        } else {
+            self.name.to_owned()
+        };
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::TextBytes, text.len() as u64);
+        text
+    }
+}
+
 /// The `S010` "No field" of section 6.2 at `pos`, for the struct type `ty` and the field name
 /// `field`. The name has the limit of a string in a message (section 5.5).
 pub(super) fn no_field<T>(pos: Pos, ty: &str, field: &str) -> Res<T> {
-    fail(
+    let err = fail(
         Code::S010,
         pos,
         format!("`{ty}` has no field `{field}`; select a field that `{ty}` declares"),
-    )
+    );
+    #[cfg(test)]
+    if let Err(super::Stop::Error(e)) = &err {
+        crate::counters::add(crate::counters::Count::TextBytes, e.message.len() as u64);
+    }
+    err
 }
 
 impl Evaluator<'_> {
@@ -309,66 +338,74 @@ impl Evaluator<'_> {
         self.field_number_by(item, self.port_sym(f), &f.name)
     }
 
-    /// The number of the field with the symbol `y` and the name `name` of the record that `cur`
-    /// finds, and its type. A field selection refers to the field, so it charges no size. A
-    /// missing field is `S010`.
+    /// The number of the field `f` of the record that `cur` finds, and its type. A field
+    /// selection refers to the field, so it charges no size. A missing field is `S010`: "No
+    /// field" for a struct type, else the text of the value.
     pub(super) fn field_at_by(
         &self,
         pos: Pos,
-        (y, name): (Option<Sym>, &str),
+        f: FieldName<'_>,
         cur: Seen<'_>,
     ) -> Res<(usize, TyId)> {
-        self.no_enum_field(pos, name, cur)?;
-        let missing = || {
-            fail(
-                Code::S010,
-                pos,
-                format!("{} has no field `{name}`", self.text(cur)),
-            )
-        };
+        self.no_enum_field(pos, f.name, cur)?;
         if let Seen::Agg(a) = cur {
             return self
-                .agg_field_at_by(a, y, name)
+                .agg_field_at_by(a, f.sym, f.name)
                 .ok_or(())
-                .or_else(|()| missing());
+                .or_else(|()| self.missing_field(pos, f, self.record_ty(a), cur));
         }
-        let Seen::Static(Value::Record(t, _)) = cur else {
-            return missing();
+        let record = match cur {
+            Seen::Static(Value::Record(t, _)) => Some(*t),
+            _ => None,
         };
-        let Some(parts) = self.tys.parts(*t) else {
-            return missing();
-        };
-        let types = parts.types;
-        match parts
-            .item()
-            .and_then(|item| self.field_number_by(item, y, name))
-            .and_then(|k| types.get(k).map(|ft| (k, *ft)))
-        {
+        let found = record.and_then(|t| {
+            let parts = self.tys.parts(t)?;
+            let k = self.field_number_by(parts.item()?, f.sym, f.name)?;
+            Some((k, parts.types.get(k).copied()?))
+        });
+        match found {
             Some(found) => Ok(found),
-            None => missing(),
+            None => self.missing_field(pos, f, record, cur),
+        }
+    }
+
+    /// The `S010` of the field `f` that the value `cur` does not have, at `pos`. A struct type
+    /// `record` gives "No field" (section 6.2). Another value gives its text.
+    pub(super) fn missing_field<T>(
+        &self,
+        pos: Pos,
+        f: FieldName<'_>,
+        record: Option<TyId>,
+        cur: Seen<'_>,
+    ) -> Res<T> {
+        match record {
+            Some(ty) => no_field(pos, &self.tys.text(ty), &f.shown()),
+            None => fail(
+                Code::S010,
+                pos,
+                format!("{} has no field `{}`", self.text(cur), f.shown()),
+            ),
         }
     }
 
     /// The number of the field `f` of the record that `cur` finds, and its type
     /// (`field_at_by`), by the symbol of its name.
     pub(super) fn field_at(&self, pos: Pos, f: &Ident, cur: Seen<'_>) -> Res<(usize, TyId)> {
-        self.field_at_by(pos, (self.port_sym(f), &f.name), cur)
+        self.field_at_by(pos, self.field_name(f), cur)
+    }
+
+    /// The name of the field `f` of the source, with its symbol.
+    pub(super) fn field_name<'f>(&self, f: &'f Ident) -> FieldName<'f> {
+        FieldName {
+            sym: self.port_sym(f),
+            name: &f.name,
+            keyed: false,
+        }
     }
 
     /// The field `.f` of a record: a reference to the field.
     pub(super) fn record_field(&mut self, pos: Pos, b: Out, f: &Ident) -> Res<Out> {
-        self.record_field_by(pos, (self.port_sym(f), &f.name), b)
-    }
-
-    /// The field with the symbol `y` and the name `name` of the record `b`: a reference to the
-    /// field. The look-up and its errors are at `kp`.
-    pub(super) fn record_field_by(
-        &mut self,
-        kp: Pos,
-        (y, name): (Option<Sym>, &str),
-        b: Out,
-    ) -> Res<Out> {
-        let (k, _) = self.field_at_by(kp, (y, name), self.store.seen(&b))?;
+        let (k, _) = self.field_at(pos, f, self.store.seen(&b))?;
         Ok(super::place::elem(Opnd::Static(b), k))
     }
 

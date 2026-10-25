@@ -7,6 +7,7 @@
 //! it pays for.
 
 use super::place::{Index, PartInfo};
+use super::record::FieldName;
 use super::{Code, Evaluator, Let, Names, Out, Res, at, fail};
 use crate::agg::{Agg, Base, Node};
 use crate::hw::{Seen, Val};
@@ -124,7 +125,14 @@ impl Evaluator<'_> {
     /// (`normalize`). A node that a reference to a local names gives a reference to the part by
     /// its number, so the node is not copied. A new node gives its part in its normal form, and
     /// moves it out.
-    fn agg_part(&mut self, pos: Pos, out: Out, k: usize, step: Step, ft: Option<TyId>) -> Res<Out> {
+    pub(super) fn agg_part(
+        &mut self,
+        pos: Pos,
+        out: Out,
+        k: usize,
+        step: Step,
+        ft: Option<TyId>,
+    ) -> Res<Out> {
         let kept = out.kept();
         let part = self.agg_part_of(pos, out, k, step, ft)?;
         // A part of a copy that still holds its local holds it too.
@@ -368,44 +376,45 @@ impl Evaluator<'_> {
     /// number of its specialization, and the symbol of `f` finds the number of the field, so
     /// the selection compares no name.
     pub(super) fn agg_field(&mut self, pos: Pos, f: &Ident, out: Out) -> Res<Out> {
-        let sym = self.field_sym(f);
-        self.agg_field_by((pos, pos), (self.port_sym(f), &f.name, sym), out)
-    }
-
-    /// The field with the symbol `y` and the name `name` of the aggregate `out`, a result of the
-    /// field at `pos`. The look-up and its errors are at `kp`. A reference to a record gives a
-    /// reference to the part with the leaf field, named by the symbol `leaf`.
-    pub(super) fn agg_field_by(
-        &mut self,
-        (pos, kp): (Pos, Pos),
-        (y, name, leaf): (Option<Sym>, &str, Option<Sym>),
-        out: Out,
-    ) -> Res<Out> {
         let Seen::Agg(agg) = self.store.seen(&out) else {
             return fail(
                 Code::S010,
-                kp,
+                pos,
                 "a hardware aggregate is expected".to_owned(),
             );
         };
-        self.no_enum_field(kp, name, Seen::Agg(agg))?;
-        let Some((k, ft)) = self.agg_field_at_by(agg, y, name) else {
-            return fail(
-                Code::S010,
-                kp,
-                format!("{} has no field `{name}`", self.text(Seen::Agg(agg))),
-            );
+        let (k, ft, step) = self.agg_field_find(pos, self.field_name(f), self.field_sym(f), agg)?;
+        self.agg_part(pos, out, k, step, Some(ft))
+    }
+
+    /// The number, the type, and the step of the field `f` of the aggregate `agg` (section 5.4).
+    /// The look-up and its errors are at `kp`. A reference to a record gives a reference to the
+    /// part with the leaf field, named by the symbol `leaf`.
+    pub(super) fn agg_field_find(
+        &self,
+        kp: Pos,
+        f: FieldName<'_>,
+        leaf: Option<Sym>,
+        agg: &Agg,
+    ) -> Res<(usize, TyId, Step)> {
+        self.no_enum_field(kp, f.name, Seen::Agg(agg))?;
+        let Some((k, ft)) = self.agg_field_at_by(agg, f.sym, f.name) else {
+            return self.missing_field(kp, f, self.record_ty(agg), Seen::Agg(agg));
         };
         let step = match agg {
             Agg::Ref(..) => match leaf {
                 Some(sym) => Step::User(sym),
                 None => {
-                    return fail(Code::S010, kp, format!("the field `{name}` has no symbol"));
+                    return fail(
+                        Code::S010,
+                        kp,
+                        format!("the field `{}` has no symbol", f.shown()),
+                    );
                 }
             },
             _ => Step::Elem(0),
         };
-        self.agg_part(pos, out, k, step, Some(ft))
+        Ok((k, ft, step))
     }
 
     /// `len` of the aggregate `o` at the call `pos`. A node of an array holds its parts, and a
