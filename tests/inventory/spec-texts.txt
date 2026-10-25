@@ -35,9 +35,6 @@ pin | S010 `@ports` of a non-instance | 346
 lean | S022 Second field name | 345
 rust | S022 Second field name | 345
 pin | S022 Second field name | 345
-fix | S010 Builtin as a type | 377
-lean | S010 Builtin as a type | 377
-rust | S010 Builtin as a type | 377
 lean | S010 Builtin as a type | 381
 rust | S010 Builtin as a type | 381
 pin | S010 Builtin as a type | 381
