@@ -654,33 +654,64 @@ fn w7c_an_alternating_chain_of_local_keys_and_calls_walks_once() {
     }
 }
 
-/// W7c. A read and a place through `d` steps `[one()]` over the part `m.0` of a nest of arrays.
-/// No key refers to a local, so the check before each key with a call visits no waiting key. A
-/// check that scans the waiting keys at each call visits `d * d / 2` of them.
-#[test]
-fn w7c_a_chain_of_calls_with_literal_keys_scans_no_waiting_key() {
-    let one = ("fn one() -> Int { return 0; }\n", "one()");
-    for (d, key) in [(32, 160), (64, 161)] {
-        let read = chain_run(d, false, one, key);
-        let place = place_call_run(d, key + 10);
-        for r in [&read, &place] {
-            assert!(
-                r.counts.waited <= d as u64,
-                "{} waiting keys visited at d = {d}",
-                r.counts.waited
-            );
-        }
+/// The run of a read or a place through an alternating chain of `d` steps `@field(..., s)` and
+/// `@field(..., name())` over a record that nests `d` structs, or the same run without it. The
+/// local `s` holds the name `"a"`, and it is `let mut` if `mutable`; `name()` returns it too.
+fn name_key_run(d: usize, (place, mutable, with): (bool, bool, bool), run_key: u64) -> Run {
+    let mut src =
+        "fn name() -> String { return \"a\"; }\nstruct S0 {\n    a: UInt[8],\n}\n".to_owned();
+    for i in 1..d {
+        writeln!(src, "struct S{i} {{\n    a: S{},\n}}", i - 1).unwrap();
     }
+    let chain = (0..d).fold("p".to_owned(), |inner, i| {
+        let key = if i % 2 == 0 { "s" } else { "name()" };
+        format!("@field({inner}, {key})")
+    });
+    let value = (0..d).fold("x".to_owned(), |inner, i| format!("S{i}({inner})"));
+    let binding = if mutable { "let mut" } else { "let" };
+    let body = match (with, place) {
+        (false, _) => "    o := x;\n".to_owned(),
+        (true, true) => format!("    {chain} = x;\n    o := x;\n"),
+        (true, false) => format!("    let y = {chain};\n    o := y;\n"),
+    };
+    write!(
+        src,
+        "module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    {binding} s = \"a\";\n    \
+         let mut p = {value};\n{body}}}\n"
+    )
+    .unwrap();
+    passing(KEY + run_key, 100_000, &src)
 }
 
-/// The run of a place `m.0[one()]...[one()] = x` of depth `d` over a nest of arrays.
-fn place_call_run(d: usize, run_key: u64) -> Run {
-    let nest = format!("{}x{}", "[".repeat(d), "]".repeat(d));
-    let src = format!(
-        "fn one() -> Int {{ return 0; }}\nmodule M() {{\n    input x: UInt[8];\n    \
-         output o: UInt[8];\n    let mut m = ({nest}, list(Int), [1, 2]);\n    \
-         m.0{} = x;\n    o := x;\n}}\n",
-        "[one()]".repeat(d)
-    );
-    passing(KEY + run_key, 100_000, &src)
+/// W7c. The same as the chain of local number keys, with a local name key `s`. The name of the
+/// key of a step was paid at its step, so a waiting key takes its own name once before a later key
+/// with a call. A walk of the path again for each such key grows the steps with `d` times `d`.
+#[test]
+fn w7c_an_alternating_chain_of_local_name_keys_and_calls_walks_once() {
+    let mut key = 180;
+    for place in [false, true] {
+        for mutable in [false, true] {
+            let mut at = |d: usize| {
+                let with = name_key_run(d, (place, mutable, true), key);
+                let without = name_key_run(d, (place, mutable, false), key + 1);
+                key += 2;
+                let steps = with.counts.stepped - without.counts.stepped;
+                (steps, extra(&with, &without).0, with.counts.waited)
+            };
+            let ((a, work_a, _), (b, work_b, waited)) = (at(32), at(64));
+            let case = format!("place {place}, mutable {mutable}");
+            assert!(
+                a > 0 && b <= 2 * a + 16,
+                "the steps {a} at d and {b} at 2d ({case})"
+            );
+            assert!(
+                work_b <= 2 * work_a + 64,
+                "the work {work_a} at d and {work_b} at 2d ({case})"
+            );
+            assert!(waited <= 64, "{waited} waiting keys visited ({case})");
+            if mutable {
+                assert!(waited > 0, "no waiting key took its name ({case})");
+            }
+        }
+    }
 }
