@@ -12,6 +12,14 @@
 //! each placeholder as a wildcard. A text that the code builds in pieces needs an entry in `ALLOW_FILE`.
 //! A string literal of `CLI_PINS` that is a whole `error[Sxxx]: LINE:COL: MESSAGE` line is a pin too.
 //!
+//! A note of section 6.2 can close a placeholder with a sentence `Values of `{p}`: `a`, `b`.` after
+//! the quoted case names of the rows it applies to. The rule then expands such a row over the
+//! values, and a front end holds the row when, for each value, a literal matches the text with the
+//! value filled in, where a hole `{}` of the literal may stand for the value, or for the value
+//! without its leading `@`. So `` `@{}` `` and `` `{}` `` both hold `{g}` = `@TypeOf`, but a hole in
+//! another place of the literal does not. A closed placeholder that ends the text is a fix clause
+//! when each value has two words or more. The rule does not check that a hole holds the values.
+//!
 //! The rule also reads the other direction. Each message literal at an error site of a front end
 //! (see `sites`) must be in a row, or `ALLOW_FILE` lists it as `unlisted`. A site that builds its
 //! message in a helper is unscannable, and `ALLOW_FILE` lists it by its file.
@@ -19,7 +27,7 @@
 mod scan;
 mod sites;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use anyhow::{Result, bail};
@@ -125,6 +133,8 @@ struct Row {
     code: String,
     case: String,
     text: String,
+    /// The values of each closed placeholder of the text, by its name.
+    closed: BTreeMap<String, Vec<String>>,
 }
 
 impl Row {
@@ -166,13 +176,162 @@ fn spec_rows(spec: &str) -> Result<Vec<Row>> {
                 code: c[0].trim_matches('`').to_owned(),
                 case: c[1].to_owned(),
                 text: c[2].to_owned(),
+                closed: BTreeMap::new(),
             });
         }
     }
     if rows.is_empty() {
         bail!("{SPEC} has no `Code | Case | Message` table in section 6.2");
     }
+    close_placeholders(spec, &mut rows)?;
     Ok(rows)
+}
+
+/// The length of the backtick run that starts at byte `at`.
+fn ticks(line: &str, at: usize) -> usize {
+    line[at..].bytes().take_while(|b| *b == b'`').count()
+}
+
+/// The code spans of a line: the text between two backtick runs of one length.
+fn code_spans(line: &str) -> Vec<String> {
+    let mut spans = Vec::new();
+    let mut from = 0;
+    while let Some(open) = line[from..].find('`').map(|off| off + from) {
+        let width = ticks(line, open);
+        let body = open + width;
+        let mut scan = body;
+        let mut close = None;
+        while let Some(at) = line[scan..].find('`').map(|off| off + scan) {
+            let run = ticks(line, at);
+            if run == width {
+                close = Some(at);
+                break;
+            }
+            scan = at + run;
+        }
+        match close {
+            Some(at) => {
+                spans.push(line[body..at].trim().to_owned());
+                from = at + width;
+            }
+            None => from = body,
+        }
+    }
+    spans
+}
+
+const VALUES: &str = "Values of `{";
+
+/// Gives each row a closed placeholder from the sentence `Values of `{p}`: `a`, `b`.` of a note in
+/// section 6.2. The quoted strings before the sentence name the rows, by case.
+fn close_placeholders(spec: &str, rows: &mut [Row]) -> Result<()> {
+    let mut in_section = false;
+    for (i, line) in spec.lines().enumerate() {
+        if line.starts_with("### ") || line.starts_with("## ") {
+            in_section = line.starts_with(SECTION);
+        }
+        let Some(at) = line.find(VALUES).filter(|_| in_section) else {
+            continue;
+        };
+        let here = i + 1;
+        let tail = &line[at + VALUES.len()..];
+        let Some((name, tail)) = tail.split_once("}`:") else {
+            bail!("{SPEC}:{here}: write `Values of `{{p}}`: `a`, `b`.`");
+        };
+        let values = code_spans(tail);
+        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphabetic()) || values.is_empty() {
+            bail!("{SPEC}:{here}: write `Values of `{{p}}`: `a`, `b`.` with one or more values");
+        }
+        let mut found = false;
+        for case in line[..at].split('"').skip(1).step_by(2) {
+            for row in rows.iter_mut().filter(|r| r.case == case) {
+                row.closed.insert(name.to_owned(), values.clone());
+                found = true;
+            }
+        }
+        if !found {
+            bail!("{SPEC}:{here}: the values of `{{{name}}}` follow no quoted case of a row");
+        }
+    }
+    Ok(())
+}
+
+/// A hole of the code stands for a closed value, or for the value without its `@`.
+fn value_pattern(value: &str) -> String {
+    let mut alts = vec![regex::escape(&normalize(value)), r"\{\}".to_owned()];
+    if value.starts_with('@') {
+        alts.push(r"@\{\}".to_owned());
+    }
+    format!("(?:{})", alts.join("|"))
+}
+
+/// One regex for each choice of a value for each closed placeholder of the row. It matches the
+/// literals of a front end that hold the text with those values filled in.
+fn closed_patterns(row: &Row) -> Result<Vec<Regex>> {
+    let mut raw = row.text.clone();
+    for name in row.closed.keys() {
+        raw = raw.replace(&format!("{{{name}}}"), &format!("\u{1}{name}\u{1}"));
+    }
+    let normal = normalize(&raw);
+    let pieces: Vec<&str> = normal.split('\u{1}').collect();
+    let mut picks: Vec<BTreeMap<&str, &str>> = vec![BTreeMap::new()];
+    for (name, values) in &row.closed {
+        picks = picks
+            .into_iter()
+            .flat_map(|pick| {
+                values.iter().map(move |v| {
+                    let mut next = pick.clone();
+                    next.insert(name.as_str(), v.as_str());
+                    next
+                })
+            })
+            .collect();
+    }
+    picks
+        .iter()
+        .map(|pick| {
+            let src: String = pieces
+                .iter()
+                .enumerate()
+                .map(|(k, piece)| {
+                    if k % 2 == 0 {
+                        regex::escape(piece)
+                    } else {
+                        value_pattern(pick[piece])
+                    }
+                })
+                .collect();
+            Ok(Regex::new(&src)?)
+        })
+        .collect()
+}
+
+/// Whether some literal of `runs` holds the text of the row. A row with a closed placeholder needs
+/// a literal for each value.
+fn holds(row: &Row, normal: &str, runs: &[String]) -> Result<bool> {
+    if row.closed.is_empty() {
+        return Ok(runs.iter().any(|r| r.contains(normal)));
+    }
+    Ok(closed_patterns(row)?
+        .iter()
+        .all(|re| runs.iter().any(|r| re.is_match(r))))
+}
+
+/// Whether the text ends with a clause that tells the user what to do. The clause can be a closed
+/// placeholder, whose values are each such a clause.
+fn has_fix(row: &Row) -> bool {
+    let words = |t: &str| t.split_whitespace().count() >= 2;
+    if fix(&row.text).is_some() {
+        return true;
+    }
+    let Some((_, last)) = row.text.rsplit_once("; ") else {
+        return false;
+    };
+    last.trim()
+        .strip_prefix('{')
+        .and_then(|l| l.strip_suffix('}'))
+        .and_then(|name| row.closed.get(name))
+        .is_some_and(|values| values.iter().all(|v| words(v)))
 }
 
 /// The clause after the last `; `, when the text has one with at least two words.
@@ -245,9 +404,9 @@ fn row_checks(row: &Row, src: &Sources) -> Result<[(Part, bool); 4]> {
     let normal = normalize(&row.text);
     let pin = pin_regex(&normal)?;
     Ok([
-        (Part::Fix, fix(&row.text).is_some()),
-        (Part::Lean, src.lean.iter().any(|r| r.contains(&normal))),
-        (Part::Rust, src.rust.iter().any(|r| r.contains(&normal))),
+        (Part::Fix, has_fix(row)),
+        (Part::Lean, holds(row, &normal, &src.lean)?),
+        (Part::Rust, holds(row, &normal, &src.rust)?),
         (
             Part::Pin,
             src.pins
@@ -778,6 +937,7 @@ mod tests {
             code: "S011".to_owned(),
             case: "Hardware".to_owned(),
             text: "the `eval` command makes no hardware, but its expression reaches this {s} in `{h}`; fix".to_owned(),
+            closed: BTreeMap::new(),
         }];
         let mut s = src(&[], &[], &[]);
         s.pins.push(pin);
