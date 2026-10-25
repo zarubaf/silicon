@@ -4,8 +4,8 @@
 
 use crate::{Code, Error};
 use parse::ast::{
-    Arm, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, PortForm, Pos, Stmt,
-    TypeExpr,
+    Arm, Builtin, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, PortForm, Pos,
+    Stmt, TypeExpr,
 };
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
@@ -115,6 +115,16 @@ fn prelude_statics(p: Prelude) -> Statics {
 /// Whether a call or a static position makes an expression static: the context, or the callee.
 fn static_at(is_static: bool, callee: Option<&Callee<'_>>, k: usize) -> bool {
     is_static || callee.is_some_and(|c| c.is_static(k))
+}
+
+/// Whether operand `k` of a builtin is a static position. The operand of `@TypeOf` is none,
+/// also in a static position, so it can name a resource. The base of `@field` takes the context
+/// of the builtin. The key of `@field` is always a static position (design section 9.2).
+fn builtin_operand_is_static(builtin: Builtin, k: usize, is_static: bool) -> bool {
+    match builtin {
+        Builtin::TypeOf => false,
+        Builtin::Field => k == 1 || is_static,
+    }
 }
 
 pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
@@ -487,6 +497,11 @@ impl<'a> Walker<'a> {
                 Expr::Index { base, .. } | Expr::Select { base, .. } | Expr::Field { base, .. } => {
                     cur = base;
                 }
+                Expr::Builtin {
+                    builtin: Builtin::Field,
+                    args,
+                    ..
+                } => cur = args.first()?,
                 _ => return None,
             }
         }
@@ -627,12 +642,7 @@ impl<'a> Walker<'a> {
     /// expression gives `None`. Thus the walk visits each node once.
     fn visit(&mut self, is_static: bool, base: bool, expr: &Expr) -> Option<Head> {
         match expr {
-            // TODO(#344): check the operands of a builtin.
-            Expr::Num { .. }
-            | Expr::Bool { .. }
-            | Expr::Str { .. }
-            | Expr::Unit { .. }
-            | Expr::Builtin { .. } => None,
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => None,
             Expr::Path { pos, ty, variant } => {
                 self.constructor(*pos, ty, variant, &[], is_static);
                 None
@@ -724,6 +734,12 @@ impl<'a> Walker<'a> {
                 Some(Head::complete(Ctor::Convert))
             }
             Expr::Match { scrut, arms, .. } => self.matched(is_static, scrut, arms),
+            Expr::Builtin { builtin, args, .. } => {
+                for (k, arg) in args.iter().enumerate() {
+                    self.expr(builtin_operand_is_static(*builtin, k, is_static), arg);
+                }
+                None
+            }
             Expr::FnType { params, ret, .. } => Some(self.fn_type_head(params, ret)),
         }
     }
