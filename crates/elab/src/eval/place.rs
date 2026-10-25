@@ -146,9 +146,13 @@ struct Walked {
 /// The steps of a read or a place whose keys evaluated and that no walk took yet, in their order.
 /// `waiting` holds the numbers of the steps whose `@field` key refers to a `let mut` local, or to
 /// a part of one (`push_key`): a later key with a call can change the local before the walk.
+/// `within` holds the type of the container of each step, if it is known, and the first `checked`
+/// steps passed their checks by that type (`Evaluator::checked`).
 struct Keyed<'a> {
     keys: Vec<Key<'a>>,
     waiting: Vec<usize>,
+    within: Vec<Option<TyId>>,
+    checked: usize,
 }
 
 impl<'a> Keyed<'a> {
@@ -156,6 +160,8 @@ impl<'a> Keyed<'a> {
         Keyed {
             keys: Vec::with_capacity(capacity),
             waiting: Vec::new(),
+            within: Vec::with_capacity(capacity),
+            checked: 0,
         }
     }
 
@@ -167,6 +173,8 @@ impl<'a> Keyed<'a> {
     fn clear(&mut self) {
         self.keys.clear();
         self.waiting.clear();
+        self.within.clear();
+        self.checked = 0;
     }
 }
 
@@ -461,8 +469,10 @@ impl Evaluator<'_> {
     ///
     /// Lean checks the container and the index of each step before the next index evaluates.
     /// Here the checks of each segment (`segment`) run in one walk along the path after its
-    /// indices, so no step walks again from the root. A failed check comes before an error of a later index, so the
-    /// first error is that of Lean. Only a static container has elements, so each base after
+    /// indices, so no step walks again from the root. A failed check comes before an error of a
+    /// later index, so the first error is that of Lean. A key with a call can make a record, so
+    /// the steps before it pass their checks by their types first (`checked`), or the segment
+    /// ends before it. Only a static container has elements, so each base after
     /// the first is static data. A field of a root that is not static, for example a port of
     /// an instance, applies at once by the rule of `field`, before the walk.
     pub(super) fn read(&mut self, e: &Expr) -> Res<Option<Out>> {
@@ -638,6 +648,12 @@ impl Evaluator<'_> {
             {
                 break;
             }
+            // Lean checks each step before the next key evaluates, and a key with a call can make
+            // a record. So the steps before it pass their checks first, by their types, or the
+            // segment ends before it and its walk checks them.
+            if self.has_call(step) && !self.checked(&mut keyed) {
+                break;
+            }
             // A key with a call can change a `let mut` local that a waiting key reads, so the
             // waiting keys take their values first. A key that cannot fails at the walk.
             if !self.own_waiting(step, &mut keyed) {
@@ -668,7 +684,7 @@ impl Evaluator<'_> {
                     self.store.cursor_step(at, number);
                     held = next.map(|(_, ty)| ty);
                     after = known.and_then(|t| self.key_ty(t, &k));
-                    self.push_key(&mut keyed, k);
+                    self.push_key(&mut keyed, k, known);
                     // An index that changed the root reads an old part and pays for its result
                     // (section 5.4). Its step ends the segment, so the charge is the last step.
                     if let Sel::Index(q, _) | Sel::Key(q, ..) = step
@@ -712,10 +728,11 @@ impl Evaluator<'_> {
         Ok((out, keyed.keys().len(), after))
     }
 
-    /// Pushes the evaluated step `key` onto `keyed`. An `@field` key that refers to a `let mut`
-    /// local, or to a part of one, waits in the store for the walk, so its number joins the
-    /// waiting keys: a later key with a call can change the local before the walk reads it.
-    fn push_key<'a>(&self, keyed: &mut Keyed<'a>, key: Key<'a>) {
+    /// Pushes the evaluated step `key` on a container of the type `within` onto `keyed`. An
+    /// `@field` key that refers to a `let mut` local, or to a part of one, waits in the store for
+    /// the walk, so its number joins the waiting keys: a later key with a call can change the
+    /// local before the walk reads it.
+    fn push_key<'a>(&self, keyed: &mut Keyed<'a>, key: Key<'a>, within: Option<TyId>) {
         if let Key::Named(Named {
             key: Out::Ref(r), ..
         }) = &key
@@ -724,6 +741,50 @@ impl Evaluator<'_> {
             keyed.waiting.push(keyed.keys.len());
         }
         keyed.keys.push(key);
+        keyed.within.push(within);
+    }
+
+    /// Whether each step of `keyed` passes its checks by the type of its container (`passes`).
+    /// The check goes on from the last step that it passed, so it takes each step once. A key
+    /// with a call then evaluates after the checks of the steps before it, as in Lean. A step that
+    /// its type does not pass stops the check, and the walk of the steps gives its result.
+    fn checked(&self, keyed: &mut Keyed<'_>) -> bool {
+        while let (Some(key), Some(within)) = (
+            keyed.keys.get(keyed.checked),
+            keyed.within.get(keyed.checked),
+        ) {
+            if !within.is_some_and(|t| self.passes(t, key)) {
+                return false;
+            }
+            keyed.checked += 1;
+        }
+        true
+    }
+
+    /// Whether the type `t` of its container shows that the evaluated step `key` passes its
+    /// checks, and that its walk charges nothing: a number in the range of an array or a tuple, a
+    /// selector of a tuple, or a field or a paid `@field` name that a struct declares. Only the
+    /// value decides another step, for example an index of a list, and some steps fail.
+    fn passes(&self, t: TyId, key: &Key<'_>) -> bool {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Checked, 1);
+        let ty = self.tys.get(t);
+        let number = match key {
+            Key::Index(_, _, Index::Number(k)) | Key::Named(Named { at: Some(k), .. }) => *k,
+            Key::Select(_, _, index) => match index.as_str().parse::<usize>() {
+                Ok(k) if matches!(ty, Ty::Tuple(_)) => k,
+                _ => return false,
+            },
+            Key::Field(..) | Key::Named(_) => {
+                return matches!(ty, Ty::Struct(_)) && self.key_ty(t, key).is_some();
+            }
+            Key::Index(..) => return false,
+        };
+        match ty {
+            Ty::Array(_, len) => len.to_u64().is_some_and(|len| (number as u64) < len),
+            Ty::Tuple(parts) => number < parts.len(),
+            _ => false,
+        }
     }
 
     /// Before the key of `step` evaluates, gives each waiting key of `keyed` its own value if the
@@ -1275,7 +1336,8 @@ impl Evaluator<'_> {
     /// Here the checks run in one walk along the path after the indices, so no step walks
     /// again from the root. `S008` keeps the root unchanged while the indices evaluate, and
     /// a failed check comes before an error of a later step. Thus the first error is that of
-    /// Lean.
+    /// Lean. A key with a call can make a record, so the steps before it pass their checks by
+    /// their types first (`checked`), or the walk catches up before it.
     pub(super) fn place_at(&mut self, pos: Pos, code: Code, target: &Expr) -> Res<Place> {
         let bad = || {
             fail(
@@ -1319,6 +1381,13 @@ impl Evaluator<'_> {
         });
         let mut stop = None;
         for (n, step) in steps.iter().enumerate() {
+            // Lean checks each step before the next step charges, and a key with a call can make
+            // a record. So the steps before it pass their checks first, by their types, or the
+            // walk catches up.
+            if self.has_call(step) && !self.checked(&mut keyed) {
+                state = self.walk(root, state, keyed.keys(), false)?;
+                keyed.clear();
+            }
             // A key with a call can change a `let mut` local that a waiting key reads, so the
             // waiting keys take their values first. A key that cannot fails at the walk.
             if !self.own_waiting(step, &mut keyed) {
@@ -1351,12 +1420,13 @@ impl Evaluator<'_> {
                 Ok(mut k) => {
                     // A place reads no base, so the name of an `@field` pays at its step.
                     self.pay_named(&mut k, false);
+                    let within = part_ty;
                     part_ty = part_ty.and_then(|t| self.key_ty(t, &k));
                     shape = shape.and_then(|t| self.key_ty(t, &k));
                     // A name that the fuel could not pay ends the walk of the steps: the checks of
                     // its step come first, and then its charge fails before a later node charges.
                     let unpaid = matches!(&k, Key::Named(n) if n.charges && !n.paid);
-                    self.push_key(&mut keyed, k);
+                    self.push_key(&mut keyed, k, within);
                     if unpaid {
                         break;
                     }
