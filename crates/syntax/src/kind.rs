@@ -179,6 +179,8 @@ kinds! {
     TupleExpr,
     /// `[a, b]`: the elements are in an `ArgList`.
     ArrayExpr,
+    /// `@name(args)`: a builtin. The name is a token, and the operands are in an `ArgList`.
+    BuiltinExpr,
     LetStmt,
     AssignStmt,
     ConnectStmt,

@@ -627,7 +627,12 @@ impl<'a> Walker<'a> {
     /// expression gives `None`. Thus the walk visits each node once.
     fn visit(&mut self, is_static: bool, base: bool, expr: &Expr) -> Option<Head> {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => None,
+            // TODO(#344): check the operands of a builtin.
+            Expr::Num { .. }
+            | Expr::Bool { .. }
+            | Expr::Str { .. }
+            | Expr::Unit { .. }
+            | Expr::Builtin { .. } => None,
             Expr::Path { pos, ty, variant } => {
                 self.constructor(*pos, ty, variant, &[], is_static);
                 None

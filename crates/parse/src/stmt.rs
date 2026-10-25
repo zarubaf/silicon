@@ -245,9 +245,9 @@ impl<'a> Parser<'a> {
     }
 
     /// An assignment, a connection, or an expression statement. A statement that starts with
-    /// a name parses its postfix form first, because it can be a place.
+    /// a name or a builtin parses its postfix form first, because it can be a place.
     fn expr_or_assign(&mut self) -> Res {
-        if !self.is(Ident) {
+        if !self.is(Ident) && !self.is(At) {
             return self.node(ExprStmt, |p| {
                 p.expr()?;
                 p.expect(Semi, "`;`")

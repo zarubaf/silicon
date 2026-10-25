@@ -184,6 +184,12 @@ fn expr(e: &Expr, out: &mut String) {
             ident(variant, out);
         }),
         Expr::Match { scrut, arms, .. } => match_expr(scrut, arms, out),
+        Expr::Builtin { builtin, args, .. } => node("builtin", out, |out| {
+            sp(out);
+            out.push_str(builtin.name());
+            sp(out);
+            list(args, out, expr);
+        }),
         Expr::ArrayType { .. } | Expr::FnType { .. } => type_expr_in_expr(e, out),
     }
 }

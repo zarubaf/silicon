@@ -2,6 +2,7 @@
 //! The grammar of types and expressions, with the precedence of the grammar file.
 #![allow(clippy::enum_glob_use)] // The grammar names token kinds on almost every line.
 
+use crate::ast::Builtin;
 use crate::parser::{Parser, Res};
 use crate::tree::Checkpoint;
 use syntax::SyntaxKind::{self, *};
@@ -53,7 +54,7 @@ impl Parser<'_> {
             Some(LBracket) => self.array_type()?,
             // The result type of a function type takes the suffixes, so the chain ends here.
             Some(FnKw) => return self.fn_chain(FnType),
-            Some(At) => return self.builtin(),
+            Some(At) => return self.later_builtin(),
             _ => {
                 self.syntax_error("expected a type");
                 return None;
@@ -192,9 +193,13 @@ impl Parser<'_> {
         let start = self.offset();
         self.outermost(start, |p| {
             if p.is(MatchKw) {
-                p.match_form()
+                let res = p.match_form();
+                p.ast_place = false;
+                res
             } else if p.is(IfKw) {
-                p.cond_form()
+                let res = p.cond_form();
+                p.ast_place = false;
+                res
             } else {
                 p.binary(0)
             }
@@ -342,6 +347,7 @@ impl Parser<'_> {
                 p.bump();
                 p.binary(power + 1)
             })?;
+            self.ast_place = false;
             height = height.max(self.height) + 1;
             if power == COMPARISON && self.cur().and_then(binding_power) == Some(COMPARISON) {
                 self.syntax_error("a comparison does not chain");
@@ -364,10 +370,15 @@ impl Parser<'_> {
         let res = if self.is(FnKw) {
             // A function type is a unary operand: its result type takes the suffixes.
             self.place = false;
-            self.fn_chain(FnTypeExpr)
+            let res = self.fn_chain(FnTypeExpr);
+            self.ast_place = false;
+            res
         } else {
             self.postfix_expr()
         };
+        if ops > 0 {
+            self.ast_place = false;
+        }
         for _ in 0..ops {
             self.finish_node();
         }
@@ -379,13 +390,19 @@ impl Parser<'_> {
     /// A primary expression with its calls, indexes, field selections, and selectors `.N`.
     pub(crate) fn postfix_expr(&mut self) -> Res {
         let checkpoint = self.checkpoint();
+        let at_builtin = self.is(At);
         let mut place = self.is(Ident) && self.next() != Some(ColonColon);
         self.primary()?;
+        if at_builtin {
+            place = self.ast_place;
+        }
+        let mut ast_place = self.ast_place;
         let mut height = self.height;
         loop {
             match self.cur() {
                 Some(LParen) => {
                     place = false;
+                    ast_place = false;
                     self.chain_at(checkpoint, CallExpr, height, |p| p.arg_list(RParen, true))?;
                 }
                 Some(LBracket) => {
@@ -403,6 +420,7 @@ impl Parser<'_> {
                 }
                 Some(Dot) if self.next() == Some(Ident) && self.after_next() == Some(LParen) => {
                     place = false;
+                    ast_place = false;
                     self.chain_at(checkpoint, MethodExpr, height, |p| {
                         p.bump();
                         p.bump();
@@ -426,12 +444,23 @@ impl Parser<'_> {
         }
         self.height = height;
         self.place = place;
+        self.ast_place = ast_place;
         Some(())
     }
 
     /// The arguments between a pair of delimiters, with an optional trailing comma. The
     /// opening delimiter is the one that pairs with `close`.
     pub(crate) fn arg_list(&mut self, close: SyntaxKind, may_be_empty: bool) -> Res {
+        self.arg_list_with(close, may_be_empty, |_, _| {})
+    }
+
+    /// Like `arg_list`, and `each` sees the start offset of each argument after its parse.
+    fn arg_list_with(
+        &mut self,
+        close: SyntaxKind,
+        may_be_empty: bool,
+        mut each: impl FnMut(&Self, usize),
+    ) -> Res {
         let (open, what, next) = if close == RParen {
             (LParen, "`(`", "`,` or `)`")
         } else {
@@ -442,7 +471,9 @@ impl Parser<'_> {
             let mut height = 0;
             if !(may_be_empty && p.is(close)) {
                 loop {
+                    let start = p.offset();
                     p.expr()?;
+                    each(p, start);
                     height = height.max(p.height);
                     if !p.eat(Comma) || p.is(close) {
                         break;
@@ -455,7 +486,22 @@ impl Parser<'_> {
         })
     }
 
+    /// A primary expression. It sets `ast_place`: a name is a place, a group has the place of
+    /// its expression, and a builtin sets its own.
     fn primary(&mut self) -> Res {
+        let name = self.is(Ident) && self.next() != Some(ColonColon);
+        let keeps = self.is(At) || (self.is(LParen) && !self.at_unit_or_tuple());
+        self.ast_place = false;
+        self.primary_form()?;
+        if name {
+            self.ast_place = true;
+        } else if !keeps {
+            self.ast_place = false;
+        }
+        Some(())
+    }
+
+    fn primary_form(&mut self) -> Res {
         match self.cur() {
             Some(Dec | Hex | Bin | Str | TrueKw | FalseKw) => {
                 self.node(Literal, |p| {
@@ -483,7 +529,7 @@ impl Parser<'_> {
             }
             Some(LParen) => return self.paren(),
             Some(LBracket) => return self.array(),
-            Some(At) => return self.builtin(),
+            Some(At) => return self.builtin_expr(),
             _ => {
                 self.syntax_error("expected an expression");
                 return None;
@@ -493,15 +539,74 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// `@` in an expression or a type: a builtin belongs to a later slice, and any other
-    /// name after `@` is a syntax error at that name.
-    fn builtin(&mut self) -> Res {
-        if self.next() == Some(Ident) && BUILTINS.contains(&self.next_text()) {
+    /// `@` where no builtin node can stand: a builtin of a later phase is `S004` at the `@`,
+    /// and any other name after `@` is `S001` "Not a builtin" at that name.
+    fn later_builtin(&mut self) -> Res {
+        let name = self.next_text();
+        if self.next() != Some(Ident) {
+            self.syntax_error_at(self.offset_of(1), "expected the name of a builtin");
+        } else if BUILTINS.contains(&name) {
             self.later_slice(self.offset(), "a builtin");
         } else {
-            self.syntax_error_at(self.offset_of(1), "expected the name of a builtin");
+            self.syntax_error_at(
+                self.offset_of(1),
+                &format!(
+                    "`@{}` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or \
+                     `@ports`",
+                    str_text(name)
+                ),
+            );
         }
         None
+    }
+
+    /// `@TypeOf(x)` or `@field(x, k)`, a primary. It reads all operands, then checks their
+    /// number at the name, then the form of the operand of `@TypeOf` at its first token. Thus
+    /// a syntax error in an operand comes first. Another builtin is `S004`.
+    fn builtin_expr(&mut self) -> Res {
+        let known = (self.next() == Some(Ident))
+            .then(|| Builtin::of_name(self.next_text()))
+            .flatten();
+        let Some(builtin) = known else {
+            return self.later_builtin();
+        };
+        let name_offset = self.offset_of(1);
+        let mut operands = Vec::new();
+        self.node(BuiltinExpr, |p| {
+            p.bump();
+            p.bump();
+            p.arg_list_with(RParen, true, |p, start| operands.push((start, p.ast_place)))
+        })?;
+        if operands.len() != builtin.arity() {
+            self.syntax_error_at(
+                name_offset,
+                &format!(
+                    "`{}` takes {} argument(s), but it has {}; write `{}`",
+                    builtin.at_name(),
+                    builtin.arity(),
+                    operands.len(),
+                    builtin.form()
+                ),
+            );
+            return None;
+        }
+        if builtin == Builtin::TypeOf
+            && let Some(&(start, false)) = operands.first()
+        {
+            self.syntax_error_at(
+                start,
+                &format!(
+                    "`{}` takes a name or a selection of a name; bind the value with `let` and \
+                     pass the name",
+                    builtin.at_name()
+                ),
+            );
+            return None;
+        }
+        self.height += 1;
+        // The `@field` of a place is a place, so it can be a target.
+        self.ast_place = builtin == Builtin::Field && operands.first().is_some_and(|o| o.1);
+        Some(())
     }
 
     /// A parenthesized expression, `()`, or a tuple. Parentheses make no node of the AST, so a
@@ -541,5 +646,13 @@ impl Parser<'_> {
     /// `[T; N]` in an expression.
     fn array_type_expr(&mut self) -> Res {
         self.node(ArrayTypeExpr, Self::array_type_parts)
+    }
+}
+
+/// A string in a message: at most 64 characters, then a note of the full length.
+fn str_text(m: &str) -> String {
+    match m.char_indices().nth(64) {
+        None => m.to_owned(),
+        Some((cut, _)) => format!("{}... ({} characters)", &m[..cut], m.chars().count()),
     }
 }

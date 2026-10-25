@@ -518,7 +518,9 @@ impl Walk<'_> {
                 }
                 calls
             }
-            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
+            Expr::Tuple { elems, .. }
+            | Expr::Array { elems, .. }
+            | Expr::Builtin { args: elems, .. } => {
                 let mut calls = false;
                 for e in elems {
                     calls |= self.expr(e, d);

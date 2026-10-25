@@ -832,6 +832,8 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(v))))
     }
 
+    // TODO(#344): the arm of `Expr::Builtin` goes in steps 11 to 13.
+    #[allow(clippy::too_many_lines)]
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
         match e {
@@ -846,6 +848,11 @@ impl Evaluator<'_> {
             }
             Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
             Expr::Match { pos, scrut, arms } => self.match_expr(*pos, scrut, arms),
+            Expr::Builtin { pos, .. } => fail(
+                Code::S004,
+                *pos,
+                "a builtin is not supported yet".to_owned(),
+            ),
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
                 Opnd::Static(a) if self.is_agg(&a) => fail(
                     Code::S010,
