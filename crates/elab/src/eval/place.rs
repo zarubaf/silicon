@@ -1577,11 +1577,20 @@ impl Evaluator<'_> {
                 };
                 (field, Step::User(sym))
             }
-            // A name that selected a field of a record has a symbol: the look-up found it.
-            Key::Named(n) => match (field, self.named_sym(n)) {
-                (Some(_), Some(sym)) => (field, Step::User(sym)),
-                _ => (self.tys.part(t, k), Step::Elem(k as u64)),
-            },
+            Key::Named(n) if field.is_some() => {
+                let Some(sym) = self.named_sym(n) else {
+                    let name = match self.store.value(&n.key) {
+                        Value::Str(name) => name.as_str(),
+                        _ => "",
+                    };
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("the field `{}` has no symbol", str_text(name)),
+                    );
+                };
+                (field, Step::User(sym))
+            }
             _ => (self.tys.part(t, k), Step::Elem(k as u64)),
         };
         let Some(part) = part else {
