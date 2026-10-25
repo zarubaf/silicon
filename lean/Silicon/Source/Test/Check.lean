@@ -772,5 +772,23 @@ operand in it.
   "let t = @typeInfo(rs[w]);")) .S005 4 22
 #guard fails (modBody ("reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\n" ++
   "let t = @typeInfo(@TypeOf(rs[w]));")) .S005 4 30
+#guard ok (modBody "reg r: Bool = false;\nlet t = @Struct(r);")
+
+/-!
+A builtin in a type position (F39) is no static position, so `@field(rs, 0)` there names the
+registers `rs` without `S005`. The key of `@field` there is still static. An index after the
+builtin is `S007` "Index of a builtin type" at the `@`.
+-/
+#guard ok (modBody "reg rs: [Bool; 2] = [false, false];\nlet y: @field(rs, 0) = 0;")
+#guard ok (modBody "reg rs: [Bool; 2] = [false, false];\nlet y: [@field(rs, 0); 2] = 0;")
+#guard fails (modBody "wire w: UInt[1];\nlet xs = [1, 2];\nlet y: @field(xs, w) = 0;") .S005 4 19
+#guard fails (modBody "let x = 1;\nlet y: @TypeOf(x)[8] = x;") .S007 3 8
+#guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[8] = x;") ==
+  "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+#guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[8][2] = x;") ==
+  "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+#guard fails (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") .S007 3 9
+#guard message (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") ==
+  "a type from `@Struct` takes 0 argument(s), but it has 2; remove the index after `@Struct(...)`"
 
 end Silicon.Source.Test.Check
