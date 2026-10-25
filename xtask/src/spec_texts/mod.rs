@@ -265,9 +265,15 @@ fn value_pattern(value: &str) -> String {
     format!("(?:{})", alts.join("|"))
 }
 
-/// One regex for each choice of a value for each closed placeholder of the row. It matches the
-/// literals of a front end that hold the text with those values filled in.
-fn closed_patterns(row: &Row) -> Result<Vec<Regex>> {
+/// The text of a row with one choice of a value for each closed placeholder, or the text itself
+/// when the row has none.
+struct Expansion {
+    /// Matches a literal that holds the text, where a hole stands for a value.
+    whole: Regex,
+    /// The text with the values filled in and the other placeholders as `{}`.
+    text: String,
+}
+fn expansions(row: &Row) -> Result<Vec<Expansion>> {
     let mut raw = row.text.clone();
     for name in row.closed.keys() {
         raw = raw.replace(&format!("{{{name}}}"), &format!("\u{1}{name}\u{1}"));
@@ -290,6 +296,17 @@ fn closed_patterns(row: &Row) -> Result<Vec<Regex>> {
     picks
         .iter()
         .map(|pick| {
+            let text: String = pieces
+                .iter()
+                .enumerate()
+                .map(|(k, piece)| {
+                    if k % 2 == 0 {
+                        (*piece).to_owned()
+                    } else {
+                        normalize(pick[piece])
+                    }
+                })
+                .collect();
             let src: String = pieces
                 .iter()
                 .enumerate()
@@ -301,20 +318,45 @@ fn closed_patterns(row: &Row) -> Result<Vec<Regex>> {
                     }
                 })
                 .collect();
-            Ok(Regex::new(&src)?)
+            Ok(Expansion {
+                whole: Regex::new(&src)?,
+                text,
+            })
         })
         .collect()
 }
 
 /// Whether some literal of `runs` holds the text of the row. A row with a closed placeholder needs
 /// a literal for each value.
-fn holds(row: &Row, normal: &str, runs: &[String]) -> Result<bool> {
-    if row.closed.is_empty() {
-        return Ok(runs.iter().any(|r| r.contains(normal)));
-    }
-    Ok(closed_patterns(row)?
+fn holds(forms: &[Expansion], runs: &[String]) -> bool {
+    forms
         .iter()
-        .all(|re| runs.iter().any(|r| re.is_match(r))))
+        .all(|form| runs.iter().any(|r| form.whole.is_match(r)))
+}
+
+/// Whether the literal of an error site belongs to the row: it holds the text of a value, or it is
+/// a part of that text. A hole of the literal stands for a value only where the row is closed.
+fn belongs(row: &Row, forms: &[Expansion], literal: &str) -> bool {
+    let values: Vec<String> = row
+        .closed
+        .values()
+        .flatten()
+        .map(|v| value_pattern(v))
+        .collect();
+    let hole = if values.is_empty() {
+        r"\{\}".to_owned()
+    } else {
+        format!("(?:{}|\\{{\\}})", values.join("|"))
+    };
+    let part = literal
+        .split("{}")
+        .map(regex::escape)
+        .collect::<Vec<_>>()
+        .join(&hole);
+    let part = Regex::new(&part).ok();
+    forms.iter().any(|form| {
+        form.whole.is_match(literal) || part.as_ref().is_some_and(|re| re.is_match(&form.text))
+    })
 }
 
 /// Whether the text ends with a clause that tells the user what to do. The clause can be a closed
@@ -400,13 +442,13 @@ struct Sources {
 }
 
 /// Whether each part of a row is present. The fix is in the spec text, the rest is in `src`.
-fn row_checks(row: &Row, src: &Sources) -> Result<[(Part, bool); 4]> {
+fn row_checks(row: &Row, forms: &[Expansion], src: &Sources) -> Result<[(Part, bool); 4]> {
     let normal = normalize(&row.text);
     let pin = pin_regex(&normal)?;
     Ok([
         (Part::Fix, has_fix(row)),
-        (Part::Lean, holds(row, &normal, &src.lean)?),
-        (Part::Rust, holds(row, &normal, &src.rust)?),
+        (Part::Lean, holds(forms, &src.lean)),
+        (Part::Rust, holds(forms, &src.rust)),
         (
             Part::Pin,
             src.pins
@@ -428,7 +470,7 @@ fn violations(
         out.push(finding(strict, ALLOW_FILE, None, problem.clone()));
     }
     for row in rows {
-        let checks = row_checks(row, src)?;
+        let checks = row_checks(row, &expansions(row)?, src)?;
         for (part, ok) in checks {
             let id = row.id();
             let gap = allow.iter().find(|g| g.row == id && g.part == part);
@@ -450,7 +492,7 @@ fn violations(
             }
         }
     }
-    unlisted(rows, src, allow, strict, &mut out);
+    unlisted(rows, src, allow, strict, &mut out)?;
     for g in allow.iter().filter(|g| g.part != Part::Unlisted) {
         if !rows.iter().any(|r| r.id() == g.row) {
             out.push(finding(
@@ -485,12 +527,18 @@ fn unlisted_key(site: &Site) -> String {
 
 /// The findings for the error sites with a text that no row of section 6.2 holds, and for the
 /// lines of `unlisted` that no site needs any more.
-fn unlisted(rows: &[Row], src: &Sources, allow: &[Gap], strict: bool, out: &mut Vec<Violation>) {
-    let normals: Vec<String> = rows.iter().map(|r| normalize(&r.text)).collect();
+fn unlisted(
+    rows: &[Row],
+    src: &Sources,
+    allow: &[Gap],
+    strict: bool,
+    out: &mut Vec<Violation>,
+) -> Result<()> {
+    let forms: Vec<Vec<Expansion>> = rows.iter().map(expansions).collect::<Result<_>>()?;
     let listed = |t: &str| {
-        normals
-            .iter()
-            .any(|r| t.contains(r.as_str()) || r.contains(t))
+        rows.iter()
+            .zip(&forms)
+            .any(|(row, form)| belongs(row, form, t))
     };
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let sides = [("Lean", &src.lean_sites), ("Rust", &src.rust_sites)];
@@ -533,6 +581,7 @@ fn unlisted(rows: &[Row], src: &Sources, allow: &[Gap], strict: bool, out: &mut 
             ));
         }
     }
+    Ok(())
 }
 
 fn missing(id: &str, part: Part) -> String {
@@ -953,7 +1002,7 @@ mod tests {
 
     fn holds_in(row: &Row, runs: &[&str]) -> bool {
         let runs: Vec<String> = runs.iter().map(|r| (*r).to_owned()).collect();
-        holds(row, &normalize(&row.text), &runs).unwrap()
+        holds(&expansions(row).unwrap(), &runs)
     }
 
     #[test]
