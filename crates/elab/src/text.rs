@@ -52,6 +52,8 @@ impl<'a> Text<'a> {
 
     /// The node `ty`. Its parts wait on the stack.
     pub(crate) fn ty_node(&mut self, tys: &'a Types, ty: &'a Ty) {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::TypeNodes, 1);
         match ty {
             Ty::Bool => self.out.push_str("Bool"),
             Ty::Nat => self.out.push_str("Nat"),

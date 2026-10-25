@@ -1247,6 +1247,10 @@ impl Types {
         let mut done: Vec<Value> = Vec::new();
         let mut work = vec![Step::Visit(t)];
         while let Some(step) = work.pop() {
+            #[cfg(test)]
+            if matches!(step, Step::Visit(_)) {
+                crate::counters::add(crate::counters::Count::TypeNodes, 1);
+            }
             match step {
                 Step::Visit(t) => match self.get(t) {
                     Ty::Bool => done.push(Value::Bool(false)),
