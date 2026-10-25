@@ -99,7 +99,7 @@ theorem fieldTarget_f (s q : Pos) (v : Val) (b : Resolve.Expr) (kp : Pos) (k : V
     Follows cap (fieldTarget s q v b kp k) (fieldTarget s q v b kp k) := by
   unfold fieldTarget; follows [fieldKeyOf_f, pickKey_f, fieldKeyBy_f, keyPort_f, targetPort_f]
 
-theorem targetStep_f (s : Pos) (v : Val) (step : Sel × Option Value) :
+theorem targetStep_f (s : Pos) (v : Val) (step : TargetStep) :
     Follows cap (targetStep s v step) (targetStep s v step) := by
   unfold targetStep
   follows [pickKey_f, selectKey_f, fieldKey_f, targetPort_f, fieldTarget_f]
@@ -112,12 +112,12 @@ theorem childTarget_f (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) :
     Follows cap (childTarget s v f kp k) (childTarget s v f kp k) := by
   unfold childTarget; follows [familyKey_f, childPort_f, targetPort_f]
 
-theorem walkStep_f (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
+theorem walkStep_f (s : Pos) (v : Val) (fam : Option Ident) (step : TargetStep) :
     Follows cap (walkStep s v fam step) (walkStep s v fam step) := by
   unfold walkStep; follows [targetStep_f, childFamily_f, childTarget_f]
 
 theorem targetWalk_f (s : Pos) :
-    ∀ (v : Val) (fam : Option Ident) (steps : List (Sel × Option Value)),
+    ∀ (v : Val) (fam : Option Ident) (steps : List TargetStep),
       Follows cap (targetWalk s v fam steps) (targetWalk s v fam steps)
   | v, none, [] => by rw [targetWalk]; follows
   | v, some f, [] => by rw [targetWalk]; follows

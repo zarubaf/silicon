@@ -2454,35 +2454,46 @@ def fieldTarget (s q : Pos) (v : Val) (b : Resolve.Expr) (kp : Pos) (k : Value) 
   | .port id path iface ty y name key => targetPort s id path (← keyPort kp iface ty b y name key)
 
 /-!
-The step `sel` of a `:=` target that starts at `s`, on the base `v`, with the index `k` of
-`targetKeys` (sections 5.2 and 9.4). The static type of the base decides. A field of an
-`Instance` handle selects the child port with no charge (`targetPort`). An `@field` step selects
-in `fieldTarget`. On a container of a type with the handle flag, a field and a selector charge
-1, and an index step charged with its index. Then the step selects the part with its checks
-(`S010` and `S013`). Each other base, also another handle, is `S017` at `s`.
+A step of a `:=` target after its key evaluated (`targetKeys`). It is an index at `pos` with the
+static key `k` at `kp`, a selector `.i` with its literal at `q`, or a field `.f` at `pos`. An
+`@field` step at `pos` holds its base `b` and its static key `k` at `kp`.
 -/
-def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : M Val := do
-  let (sel, key) := step
-  match v, sel, key with
-  | .handle (.inst k path iface ty), .field q f, _ =>
+inductive TargetStep where
+  | index (pos kp : Pos) (k : Value)
+  | select (pos q : Pos) (i : Nat)
+  | field (pos : Pos) (f : Ident)
+  | key (pos : Pos) (b : Resolve.Expr) (kp : Pos) (k : Value)
+
+/-!
+The step `step` of a `:=` target that starts at `s`, on the base `v` (sections 5.2 and 9.4).
+The static type of the base decides. A field of an `Instance` handle selects the child port
+with no charge (`targetPort`). An `@field` step selects in `fieldTarget`. On a container of a
+type with the handle flag, a field and a selector charge 1, and an index step charged with its
+index. Then the step selects the part with its checks (`S010` and `S013`). Each other base, also
+another handle, is `S017` at `s`.
+-/
+def targetStep (s : Pos) (v : Val) (step : TargetStep) : M Val := do
+  let handles : Bool := match v with
+    | .agg a => a.ty?.any (·.info.handles)
+    | _ => false
+  let container : M Unit := do unless handles do fail .S017 s Elab.partText
+  match v, step with
+  | v, .key q b kp k => fieldTarget s q v b kp k
+  | .handle (.inst k path iface ty), .field q f =>
     match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
     | some port => targetPort s k path port
     | none => fail .S010 q (Elab.noPortText ty.text f.name)
-  | v, .key q b i, some k => fieldTarget s q v b i.pos k
-  | .agg a, sel, key =>
-    unless a.ty?.any (·.info.handles) do fail .S017 s Elab.partText
-    match sel, key with
-    | .index q [i], some k => return (← pickKey q i.pos v k).2
-    | .index q _, _ => fail .S010 q "an index of a value has one argument"
-    | .select q r i, _ =>
-      charge q 1
-      return (← selectKey q r i v).2
-    | .field q f, _ =>
-      charge q 1
-      return (← fieldKey q f v).2.1
-    -- `targetKeys` gives each `@field` step its key, so the case before selects it.
-    | .key .., _ => fail .S017 s Elab.partText
-  | _, _, _ => fail .S017 s Elab.partText
+  | v, .index q kp k => do
+    container
+    return (← pickKey q kp v k).2
+  | v, .select q r i => do
+    container
+    charge q 1
+    return (← selectKey q r i v).2
+  | v, .field q f => do
+    container
+    charge q 1
+    return (← fieldKey q f v).2.1
 
 /-!
 The entry of the family `f` of the child behind the `Instance` handle `v`, with the static key
@@ -2503,12 +2514,12 @@ of a child keeps it for the next step, so the walk does not start again from the
 is an index, and its key selects the entry (`childTarget`). Else it is `S010` "Family as a
 value" at `s`. Each other step selects in `targetStep`.
 -/
-def walkStep (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
+def walkStep (s : Pos) (v : Val) (fam : Option Ident) (step : TargetStep) :
     M (Val × Option Ident) := do
   match fam, step with
-  | some f, (.index _ [i], some k) => return (← childTarget s v f i.pos k, none)
+  | some f, .index _ kp k => return (← childTarget s v f kp k, none)
   | some f, _ => fail .S010 s (Elab.familyValueText f.name)
-  | none, (.field _ f, _) =>
+  | none, .field _ f =>
     if ← Elab.childFamily v f then return (v, some f) else return (← targetStep s v step, none)
   | none, _ => return (← targetStep s v step, none)
 
@@ -2517,7 +2528,7 @@ The walk of the steps `steps` of a `:=` target that starts at `s`, from the base
 with a pending family `fam` of a child (`walkStep`). A family without its key at the end is
 `S010` "Family as a value" at `s`.
 -/
-def targetWalk (s : Pos) (v : Val) (fam : Option Ident) : List (Sel × Option Value) → M Val
+def targetWalk (s : Pos) (v : Val) (fam : Option Ident) : List TargetStep → M Val
   | [] => match fam with
     | some f => fail .S010 s (Elab.familyValueText f.name)
     | none => pure v
@@ -2533,23 +2544,24 @@ charges 1, then its index evaluates by `ev` in a structural context (section 9.4
 `fieldTarget`, after all keys evaluate (section 6.2). Another step has no index here.
 -/
 def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
-    M (List (Sel × Option Value)) := do
-  let mut keys : Array (Sel × Option Value) := #[]
+    M (List TargetStep) := do
+  let mut keys : Array TargetStep := #[]
   for sel in sels do
     match sel with
     | .index q [i] =>
       charge q 1
       let o ← guardedBy .index do need i (← ev i)
-      keys := keys.push (sel, some (← static i.pos o.value))
+      keys := keys.push (.index q i.pos (← static i.pos o.value))
     | .index q _ =>
       charge q 1
       fail .S010 q "an index of a value has one argument"
-    | .key q _ i =>
+    | .key q b i =>
       charge q 1
       let o ← guardedBy .index do need i (← ev i)
       staticValue i.pos "a key of `@field`" o.value
-      keys := keys.push (sel, some (← static i.pos o.value))
-    | _ => keys := keys.push (sel, none)
+      keys := keys.push (.key q b i.pos (← static i.pos o.value))
+    | .select q r i => keys := keys.push (.select q r i)
+    | .field q f => keys := keys.push (.field q f)
   return keys.toList
 
 /-!
