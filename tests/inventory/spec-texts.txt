@@ -38,6 +38,10 @@ pin | S010 `@ports` of a non-instance | 346
 lean | S010 No public port | 344
 rust | S010 No public port | 344
 pin | S010 No public port | 344
+rust | S010 Port in a place | 344
+pin | S010 Port in a place | 344
+rust | S010 Query without a type | 344
+pin | S010 Query without a type | 344
 lean | S001 Not a builtin | 344
 rust | S001 Not a builtin | 344
 pin | S001 Not a builtin | 344
