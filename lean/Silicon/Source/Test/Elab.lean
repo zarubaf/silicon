@@ -3822,6 +3822,22 @@ def tiKey (q : String) : String :=
   ["S011 10:74"]
 
 /-!
+The check runs when a node has its value. A field base of an index is `S011` before the key, so
+before its range check (`S013`). A whole place keeps its own step errors. An element that reads an
+own output is `S011` before a later element. An `S016` of an earlier element comes first, at the
+node of the effect. A nested `@typeInfo` gives the record back. An `@field` place and an index
+place are whole places too.
+-/
+def tiG : String := "fn g() -> Type { diagnostic(\"a\", 0); return Bool; }\n"
+#guard tyRecords "  let t = @typeInfo(if (rg.b[5]) { Bool } else { Bool });\n" == ["S011 21:25"]
+#guard tyRecords "  let t = @typeInfo(rg.b[5]);\n" == ["S013 21:26"]
+#guard tyRecords "  let t = @typeInfo((o, g()));\n" tiG == ["S011 22:22"]
+#guard tyRecords "  let t = @typeInfo((g(), o));\n" tiG == ["S016 10:18"]
+#guard tyRecords "  let h = s +% 1;\n  let t = @typeInfo((@typeInfo(Bool), h));\n" == ["S011 22:39"]
+#guard tyRecords "  let t = @typeInfo(@field(rg, \"a\"));\n" == ["S010 21:21"]
+#guard tyRecords "  let t = @typeInfo(rg.b[0]);\n" == ["S010 21:21"]
+
+/-!
 `@field` in a module (section 9.3). On an `Instance` handle, a `String` key and a scalar `PortKey`
 select a public port. This includes a port that a helper of the child declares with a computed name:
 its symbol is in the run-time table. An indexed `PortKey` selects an entry of a family. A register
