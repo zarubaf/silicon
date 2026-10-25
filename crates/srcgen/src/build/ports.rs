@@ -383,36 +383,10 @@ fn port(output: bool, name: &str, key: Option<SExpr>, public: Option<SExpr>, ty:
 }
 
 impl Builder {
-    /// Runs `f` with the port tape as the tape. Unlike `on_hand`, it also
-    /// takes the port tape from the tape of another form that is swapped
-    /// in: a port draw never comes from another tape (tape isolation).
+    /// Runs `f` with the port tape as the tape, isolated from the other
+    /// tapes (see `isolated`).
     pub(super) fn on_port<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
-        let outer = self.swapped;
-        if outer == Some(Lane::Port) {
-            return f(self);
-        }
-        if let Some(lane) = outer {
-            self.exchange(lane);
-        }
-        self.swapped = Some(Lane::Port);
-        std::mem::swap(&mut self.tape, &mut self.port);
-        let out = f(self);
-        std::mem::swap(&mut self.tape, &mut self.port);
-        self.swapped = outer;
-        if let Some(lane) = outer {
-            self.exchange(lane);
-        }
-        out
-    }
-
-    /// Swaps `tape` with the parked tape of `lane`.
-    fn exchange(&mut self, lane: Lane) {
-        let parked = match lane {
-            Lane::Side => &mut self.side,
-            Lane::Hand => &mut self.hand,
-            Lane::Port => &mut self.port,
-        };
-        std::mem::swap(&mut self.tape, parked);
+        self.isolated(Lane::Port, f)
     }
 
     /// The items of the helpers that declare a port.
@@ -1118,7 +1092,11 @@ impl Builder {
                 continue;
             };
             let expr = match d.public.key {
-                Some(k) => HExpr::ChildEntry(child.name.clone(), d.public.base.clone(), lit(k)),
+                Some(k) => HExpr::ChildEntry(
+                    Box::new(HExpr::Name(child.name.clone())),
+                    d.public.base.clone(),
+                    lit(k),
+                ),
                 None => HExpr::Field(child.name.clone(), d.public.base.clone()),
             };
             let types = self.types(t, &child.envs)?;

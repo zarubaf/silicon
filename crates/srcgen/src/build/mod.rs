@@ -606,6 +606,39 @@ struct Builder {
 }
 
 impl Builder {
+    /// Runs `f` with the tape of `lane` as the tape. Unlike `on_hand`, it
+    /// also takes the tape of `lane` from the tape of another form that is
+    /// swapped in: a draw of one form never comes from another tape (tape
+    /// isolation).
+    fn isolated<T>(&mut self, lane: Lane, f: impl FnOnce(&mut Builder) -> T) -> T {
+        let outer = self.swapped;
+        if outer == Some(lane) {
+            return f(self);
+        }
+        if let Some(outer) = outer {
+            self.exchange(outer);
+        }
+        self.swapped = Some(lane);
+        self.exchange(lane);
+        let out = f(self);
+        self.exchange(lane);
+        self.swapped = outer;
+        if let Some(outer) = outer {
+            self.exchange(outer);
+        }
+        out
+    }
+
+    /// Swaps `tape` with the parked tape of `lane`.
+    fn exchange(&mut self, lane: Lane) {
+        let parked = match lane {
+            Lane::Side => &mut self.side,
+            Lane::Hand => &mut self.hand,
+            Lane::Port => &mut self.port,
+        };
+        std::mem::swap(&mut self.tape, parked);
+    }
+
     fn new(tape: Vec<u32>) -> Builder {
         Builder {
             side: Tape {
