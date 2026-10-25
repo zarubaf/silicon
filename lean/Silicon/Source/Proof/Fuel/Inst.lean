@@ -95,9 +95,14 @@ theorem targetPort_f (s : Pos) (id : Nat) (path : Names.Path) (q : Port) :
     Follows cap (targetPort s id path q) (targetPort s id path q) := by
   unfold targetPort; follows
 
+theorem fieldTarget_f (s q : Pos) (v : Val) (b : Resolve.Expr) (kp : Pos) (k : Value) :
+    Follows cap (fieldTarget s q v b kp k) (fieldTarget s q v b kp k) := by
+  unfold fieldTarget; follows [fieldKeyOf_f, pickKey_f, fieldKeyBy_f, keyPort_f, targetPort_f]
+
 theorem targetStep_f (s : Pos) (v : Val) (step : Sel × Option Value) :
     Follows cap (targetStep s v step) (targetStep s v step) := by
-  unfold targetStep; follows [pickKey_f, selectKey_f, fieldKey_f, targetPort_f]
+  unfold targetStep
+  follows [pickKey_f, selectKey_f, fieldKey_f, targetPort_f, fieldTarget_f]
 
 theorem childFamily_f (v : Val) (f : Ident) :
     Follows cap (Elab.childFamily v f) (Elab.childFamily v f) := by
@@ -127,7 +132,7 @@ theorem sinkValue_f (p : Pos) (t : Ty) (v : Val) :
 theorem targetKeys_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (sels : List Sel) :
     Follows cap (targetKeys ev sels) (targetKeys ev' sels) := by
-  unfold targetKeys; follows [he, need_f, static_f, guardedBy_f]
+  unfold targetKeys; follows [he, need_f, static_f, guardedBy_f, staticValue_f]
 
 theorem targetRoot_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (root : Resolve.Expr) :
