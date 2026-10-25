@@ -78,6 +78,27 @@ pub(super) struct Followed {
     string_last: bool,
 }
 
+impl Named<'_> {
+    /// The key refers to a local, so it reads the value that the local holds when the walk looks
+    /// it up. An index keeps its number, but a name or a key of another kind waits in the store.
+    fn refers_to_local(&self) -> bool {
+        matches!(
+            &self.key,
+            Out::Ref(Ref {
+                root: Root::Local(..),
+                ..
+            })
+        )
+    }
+}
+
+/// Whether a step of `keyed` waits to read a key that refers to a local.
+fn waits_on_local(keyed: &[Key<'_>]) -> bool {
+    keyed
+        .iter()
+        .any(|k| matches!(k, Key::Named(n) if n.refers_to_local()))
+}
+
 impl Opnd {
     /// The local that an index of this base can change while its own index evaluates: the local
     /// of a reference, or of a copy that still holds its local.
@@ -645,6 +666,12 @@ impl Evaluator<'_> {
                         moved = Some(*q);
                         break;
                     }
+                    // A key that refers to a local reads at the walk. A later key with a call can
+                    // change that local, so the walk applies the step first (Lean reads the key
+                    // at its step).
+                    if self.may_change_waiting_key(steps.get(n + 1), &keyed) {
+                        break;
+                    }
                     // A step that pays its name later, or that reads its base, ends the segment:
                     // the charge comes before the next key evaluates.
                     if n + 1 < steps.len() && Self::named_ends(keyed.last(), n == 0 && reads_base) {
@@ -684,6 +711,12 @@ impl Evaluator<'_> {
             return Err(e);
         }
         Ok((out, keyed.len(), after))
+    }
+
+    /// Whether the key of the step `next` can change a local that a key of `keyed` refers to, and
+    /// that key still waits for its look-up.
+    fn may_change_waiting_key(&self, next: Option<&Sel<'_>>, keyed: &[Key<'_>]) -> bool {
+        next.is_some_and(|step| self.has_call(step)) && waits_on_local(keyed)
     }
 
     /// Whether the key of the step can change a local of its frame while it evaluates: it holds a
@@ -1232,6 +1265,12 @@ impl Evaluator<'_> {
         });
         let mut stop = None;
         for (n, step) in steps.iter().enumerate() {
+            // A key that refers to a local reads at the walk. A key with a call can change that
+            // local, so the walk catches up first, as Lean applies each step before the next key.
+            if self.may_change_waiting_key(Some(step), &keyed) {
+                state = self.walk(root, state, &keyed, false)?;
+                keyed.clear();
+            }
             // A step into a reference normalizes an empty part, which charges its size. As in
             // Lean, that comes before the next step charges, so the walk catches up first.
             if aggregate
