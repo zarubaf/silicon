@@ -3680,6 +3680,14 @@ def tyWire : String := "(type (wire (struct root P ())))"
 #guard tyRecords (tyOf "clk") == ["S010 21:19"]
 #guard said (tyMod (tyOf "clk")) == "`@TypeOf` takes a part with a type, not the domain " ++
   "`clk`; pass a value, a port, or a resource"
+-- A string has no index in a query: "String index in a query" at the index node, also in a
+-- tuple and for a parameter of the type `String`.
+#guard tyRecords ("  let st = \"ab\";\n" ++ tyOf "st[0]") == ["S010 22:27"]
+#guard said (tyMod ("  let st = \"ab\";\n" ++ tyOf "st[0]")) == "a query cannot index a " ++
+  "string; an index of a string has the type `String`, so write `String` instead of the query"
+#guard tyRecords ("  let st = (\"ab\", 1);\n" ++ tyOf "st.0[0]") == ["S010 22:27"]
+#guard tyRecords "  diagnostic(\"t\", fs(\"ab\"));\n"
+    "fn fs(x: String) -> Type { return @TypeOf(x[0]); }\n" == ["S010 10:43"]
 -- A hardware local, a container of handles, and a tuple of a handle and a static value.
 #guard tyRecords ("  let h = s +% 1;\n  let rs = [rg, rg];\n  let x = (rg, 1);\n" ++
     String.join (["h", "rs", "rs[1]", "rs[1].a", "x", "x.0", "x.0.b.1", "x.1"].map tyOf)) ==
