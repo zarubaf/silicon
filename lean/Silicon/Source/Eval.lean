@@ -2579,26 +2579,32 @@ def queryKey (ev : Resolve.Expr → M (Option Out)) (i : Resolve.Expr) : M Value
 The steps `sels` of a `@TypeOf` operand from the part `q`, once from the root outward (section
 6.2, **`@TypeOf` order**). Each step charges 1 at its node. Then the key of an index evaluates
 (`queryKey`), and the step selects the part or its type (`queryStep`). A field of an `Instance`
-handle selects the child port with no read (`portFind`, `portQuery`). A field that names a family
-of the child takes the next index as its key. The index charges 1, and the key evaluates in a
+handle selects the child port with no read (`portFind`, `portQuery`). A field with an index
+after it charges as the **Selection order** of a value: the index node, then the field node. A
+field that names a family of the child takes this index as its key. The key evaluates in a
 structural context of the kind `query`. It gets the checks of a selection key (`selectionKey`),
-and it selects the entry of the child (`childPort`).
+and it selects the entry of the child (`childPort`). Another field selects its port, and the
+index then takes its key as a step.
 -/
 def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M Query
   | q, [] => pure q
-  | .value v@(.handle (.inst id path iface ty)) _, .field fp f :: rest => do
+  | .value v@(.handle (.inst id path iface ty)) _, .field fp f :: .index ip ks :: rest => do
+    charge ip 1
+    let [k] := ks | fail .S010 ip "an index of a value has one argument"
     charge fp 1
-    match ← Elab.childFamily v f, rest with
-    | true, .index ip ks :: rest => do
-      charge ip 1
-      let [k] := ks | fail .S010 ip "an index of a value has one argument"
+    if ← Elab.childFamily v f then
       let w ← guardedBy (.query .typeOf) do return (← need k (← ev k)).value
       let key ← selectionKey fp k.pos f.name w
       let y := ((← read).field f.pos).getD 0
       queryWalk ev (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
-    | _, rest => do
+    else
       let port ← portFind fp iface ty ((← read).field f.pos) f.name
-      queryWalk ev (portQuery id path port) rest
+      let r ← queryStep (portQuery id path port) (.index ip k.pos (← queryKey ev k))
+      queryWalk ev r rest
+  | .value (.handle (.inst id path iface ty)) _, .field fp f :: rest => do
+    charge fp 1
+    let port ← portFind fp iface ty ((← read).field f.pos) f.name
+    queryWalk ev (portQuery id path port) rest
   | q, .index p [i] :: rest => do
     charge p 1
     queryWalk ev (← queryStep q (.index p i.pos (← queryKey ev i))) rest
