@@ -1,0 +1,14 @@
+// Pins a type that a query builds with uncharged work. A static tuple nested N levels stores no type, so each query
+// builds it: each tuple node charges before its parts, then the type charges its size. A walk that ticks without a
+// charge, as `Value::ty` does, gives work in `O(N^2)` for a query against the fuel in `O(N)`.
+// SCALE typeof_static_tuple 16 32 64 128 256
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let v = NEST{(1, |0|)};
+// REPEAT i 8
+    let t{i} = @TypeOf(v);
+// END
+    o := x;
+}
