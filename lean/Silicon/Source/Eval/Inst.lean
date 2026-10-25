@@ -1,6 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Source.Eval.Container
-import Silicon.Source.Lex
 
 /-!
 This module holds the parts of the instantiations and of the checks for each instantiation
@@ -232,15 +231,6 @@ def scalarIndexText (k : Int) : String :=
   s!"a scalar `PortKey` has the index 0, but it has {intText k}; set `indexed` to `true`, or " ++
     "the index to 0"
 
-/-! The `S022` text "Name rule" of section 6.2, for the name `s` of the kind `kind`. -/
-def nameRuleText (s kind : String) : String :=
-  s!"`{strText s}` is not a valid {kind} name; use an ASCII letter or `_`, then letters, " ++
-    "digits, or `_`"
-
-/-! The `S022` text "Keyword name" of section 6.2, for the name `s` of the kind `kind`. -/
-def keywordText (s kind : String) : String :=
-  s!"`{strText s}` is a keyword, so it cannot be a {kind} name; choose another name"
-
 /-! The `S010` text "Family as a value" of section 6.2, for the family `x`. -/
 def familyValueText (x : String) : String :=
   s!"`{x}` is a port family, not a value; select one port with `{x}[k]`"
@@ -362,17 +352,15 @@ The port at `p` with the binder `b`, the type `t`, and the static `as` key `v` a
 6.2, steps 6 to 11 of the port order). The key gives the public name and the key of an entry
 (`portKey`). The name charges its size, 1 plus its characters (section 5.4). This charge comes
 before the scan of the name rule and the look-up of the symbol. A name that is not an identifier
-is `S022` "Name rule", and a keyword is `S022` "Keyword name". Then the port exists by its public
-name, as a scalar port (`port`) or a family entry (`entry`). The binder refers to it. The port
-keeps the name with no copy.
+is `S022` "Name rule", and a keyword is `S022` "Keyword name" (`nameRule`). Then the port
+exists by its public name, as a scalar port (`port`) or a family entry (`entry`). The binder
+refers to it. The port keeps the name with no copy.
 -/
 def keyed (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : Value) :
     Eval.M Unit := do
   let (x, key) ← lift kp (portKey v)
   charge kp (1 + x.length)
-  let kind := "port"
-  unless Lex.identifier x do fail .S022 kp (nameRuleText x kind)
-  if Lex.keywords.contains x then fail .S022 kp (keywordText x kind)
+  nameRule kp x "port"
   let y ← symbolOf x
   let binder := some b.name.name
   let w ← match key with

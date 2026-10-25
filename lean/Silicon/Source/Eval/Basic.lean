@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Source.Resolve
 import Silicon.Source.Names
+import Silicon.Source.Lex
 import Std.Data.HashMap
 import Std.Data.TreeMap
 
@@ -1166,6 +1167,24 @@ def symbolOf (x : String) : M Nat := do
     let k := (← read).syms.table.size + (← get).names.size
     modify fun s => { s with names := s.names.insert x k }
     return k
+
+/-! The `S022` text "Name rule" of section 6.2, for the name `s` of the kind `kind`. -/
+def nameRuleText (s kind : String) : String :=
+  s!"`{strText s}` is not a valid {kind} name; use an ASCII letter or `_`, then letters, " ++
+    "digits, or `_`"
+
+/-! The `S022` text "Keyword name" of section 6.2, for the name `s` of the kind `kind`. -/
+def keywordText (s kind : String) : String :=
+  s!"`{strText s}` is a keyword, so it cannot be a {kind} name; choose another name"
+
+/-!
+The name rule of section 5.6 for the name `x` of the kind `kind` at `p`. A name that is not an
+identifier is `S022` "Name rule", and a keyword is `S022` "Keyword name". The caller charges the
+size of `x` first (section 5.4).
+-/
+def nameRule (p : Pos) (x kind : String) : M Unit := do
+  unless Lex.identifier x do fail .S022 p (nameRuleText x kind)
+  if Lex.keywords.contains x then fail .S022 p (keywordText x kind)
 
 /-!
 Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The level reports its
