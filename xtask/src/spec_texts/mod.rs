@@ -337,22 +337,26 @@ fn holds(forms: &[Expansion], runs: &[String]) -> bool {
 /// Whether the literal of an error site belongs to the row: it holds the text of a value, or it is
 /// a part of that text. A hole of the literal stands for a value only where the row is closed.
 fn belongs(row: &Row, forms: &[Expansion], literal: &str) -> bool {
-    let values: Vec<String> = row
-        .closed
-        .values()
-        .flatten()
-        .map(|v| value_pattern(v))
-        .collect();
-    let hole = if values.is_empty() {
-        r"\{\}".to_owned()
-    } else {
-        format!("(?:{}|\\{{\\}})", values.join("|"))
+    // A hole after an `@` of the literal stands for the value without its `@`.
+    let hole = |after_at: bool| {
+        let mut alts = vec![r"\{\}".to_owned()];
+        for value in row.closed.values().flatten() {
+            match (after_at, value.strip_prefix('@')) {
+                (true, Some(bare)) => alts.push(regex::escape(&normalize(bare))),
+                (true, None) => {}
+                (false, _) => alts.push(regex::escape(&normalize(value))),
+            }
+        }
+        format!("(?:{})", alts.join("|"))
     };
-    let part = literal
-        .split("{}")
-        .map(regex::escape)
-        .collect::<Vec<_>>()
-        .join(&hole);
+    let pieces: Vec<&str> = literal.split("{}").collect();
+    let mut part = String::new();
+    for (k, piece) in pieces.iter().enumerate() {
+        part.push_str(&regex::escape(piece));
+        if k + 1 < pieces.len() {
+            part.push_str(&hole(piece.ends_with('@')));
+        }
+    }
     let part = Regex::new(&part).ok();
     forms.iter().any(|form| {
         form.whole.is_match(literal) || part.as_ref().is_some_and(|re| re.is_match(&form.text))
