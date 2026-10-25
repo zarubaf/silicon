@@ -127,7 +127,7 @@ fn parse_allow(text: &str) -> (Vec<Gap>, Vec<String>) {
     (gaps, problems)
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Row {
     line: usize,
     code: String,
@@ -943,6 +943,113 @@ mod tests {
         s.pins.push(pin);
         assert!(messages(&rows, &s, &[]).iter().all(|m| !m.contains("pin")),);
         assert_eq!(cli_pin("error[S011]: text"), None);
+    }
+
+    const CLOSED: &str = "### 6.2 Closed\n\n| Code | Case | Message |\n| --- | --- | --- |\n| `S001` | Operand | `{g}` takes a name; bind it with `let` |\n| `S010` | Place | no place for `{k}`; {h} |\n\n- In \"Operand\", `{g}` is the builtin. Values of `{g}`: `@TypeOf`, `@ports`.\n- In \"Place\", `{h}` is the fix. Values of `{h}`: `` bind it with `:=`, for example `u.{k} := e` ``, `read it as a value`.\n";
+
+    fn closed_rows() -> Vec<Row> {
+        spec_rows(CLOSED).unwrap()
+    }
+
+    fn holds_in(row: &Row, runs: &[&str]) -> bool {
+        let runs: Vec<String> = runs.iter().map(|r| (*r).to_owned()).collect();
+        holds(row, &normalize(&row.text), &runs).unwrap()
+    }
+
+    #[test]
+    fn a_note_closes_a_placeholder_of_the_quoted_rows() {
+        let rows = closed_rows();
+        assert_eq!(rows[0].closed["g"], ["@TypeOf", "@ports"]);
+        assert_eq!(
+            rows[1].closed["h"],
+            [
+                "bind it with `:=`, for example `u.{k} := e`",
+                "read it as a value"
+            ]
+        );
+        assert!(!rows[0].closed.contains_key("h") && !rows[1].closed.contains_key("g"));
+        assert_eq!(code_spans("a `b` `` c`d `` e"), ["b", "c`d"]);
+        for bad in [
+            "- In \"Operand\", Values of `{g}`: none.\n",
+            "- In \"Operand\", Values of `{g}` `@a`.\n",
+            "- In \"Gone\", Values of `{g}`: `@a`.\n",
+            "- Values of `{g}`: `@a`.\n",
+        ] {
+            let spec = CLOSED.replace(CLOSED.lines().nth(7).unwrap(), bad.trim_end());
+            assert!(spec_rows(&spec).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_hole_at_a_closed_placeholder_holds_every_value() {
+        let row = &closed_rows()[0];
+        let tail = " takes a name; bind it with `let`";
+        assert!(holds_in(row, &[&format!("`@{{}}`{tail}")]));
+        assert!(holds_in(row, &[&format!("`{{}}`{tail}")]));
+        assert!(holds_in(row, &[&format!("x `@{{}}`{tail} y")]));
+    }
+
+    #[test]
+    fn a_literal_needs_each_value_when_it_has_no_hole() {
+        let row = &closed_rows()[0];
+        let one = "`@TypeOf` takes a name; bind it with `let`";
+        let two = "`@ports` takes a name; bind it with `let`";
+        assert!(holds_in(row, &[one, two]));
+        assert!(!holds_in(row, &[one]));
+        assert!(!holds_in(
+            row,
+            &["`@typeInfo` takes a name; bind it with `let`", two]
+        ));
+    }
+
+    #[test]
+    fn a_near_miss_does_not_hold() {
+        let row = &closed_rows()[0];
+        for run in [
+            "`@{}` takes a name; bind it with `var`",
+            "`@{}` takes a type; bind it with `let`",
+            "`@@{}` takes a name; bind it with `let`",
+            "{} takes a name; bind it with `let`",
+            "`{}`takes a name; bind it with `let`",
+            "",
+        ] {
+            assert!(!holds_in(row, &[run]), "{run}");
+        }
+        let place = &closed_rows()[1];
+        assert!(!holds_in(place, &["no place for `{}`"]));
+        assert!(holds_in(place, &["no place for `{}`; {}"]));
+    }
+
+    #[test]
+    fn a_hole_stands_only_at_the_closed_placeholder() {
+        let rows = spec_rows(
+            &CLOSED
+                .replace("no place for `{k}`", "no place for {k} of `{g}`")
+                .replace("In \"Operand\"", "In \"Operand\" and \"Place\""),
+        )
+        .unwrap();
+        let place = &rows[1];
+        assert!(holds_in(place, &["no place for {} of `@{}`; {}"]));
+        assert!(!holds_in(place, &["no place for `{}` of `@{}`; {}"]));
+        assert!(!holds_in(place, &["no place for {} of `@{}` in {}; {}"]));
+    }
+
+    #[test]
+    fn a_closed_placeholder_at_the_end_is_a_fix_when_each_value_is() {
+        let rows = closed_rows();
+        assert!(has_fix(&rows[0]) && has_fix(&rows[1]));
+        let mut short = rows[1].clone();
+        short.closed.insert(
+            "h".to_owned(),
+            vec!["bind it".to_owned(), "stop".to_owned()],
+        );
+        assert!(!has_fix(&short));
+        let mut open = rows[1].clone();
+        open.closed.clear();
+        assert!(!has_fix(&open));
+        let mut mid = rows[0].clone();
+        mid.text = "`{g}` takes a name".to_owned();
+        assert!(!has_fix(&mid));
     }
 
     #[test]
