@@ -249,7 +249,6 @@ unlisted | S010 {} has no key literal | 354
 unlisted | S010 {} has no payload leaf | 354
 unlisted | S010 {} has no specialization | 354
 unlisted | S010 {} has no static unpack | 354
-unlisted | S010 {} has no struct item | 354
 unlisted | S010 {} has no tag leaf | 354
 unlisted | S010 {} has no variant {} | 354
 unlisted | S010 {} has no zero | 354
@@ -336,4 +335,4 @@ unlisted | S021 the `match` has no arm for its value | 354
 unlisted | S021 the `match` has no arm {} | 354
 unlisted | S001 brackets nest deeper than {} levels; raise --syn | 354
 unlisted | S001 invalid character in string | 354
-unlisted | S022 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
+unlisted | S022 unscannable lean/Silicon/Source/Eval/Basic.lean | 354
