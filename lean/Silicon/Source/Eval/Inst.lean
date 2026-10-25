@@ -276,12 +276,15 @@ def noPortText (m k : String) : String :=
 
 /-!
 The `S010` text "Port in a place" of section 6.2, for the port with the public name `k` of the
-child of the type `m`. The name has the limit of a string.
+child of the type `m`. The name has the limit of a string. The fix follows the direction: an
+input takes a `:=` target, and the child drives an output, so the fix reads it as a value.
 -/
-def portPlaceText (m k : String) : String :=
+def portPlaceText (m k : String) (input : Bool) : String :=
   let k := strText k
-  s!"a place cannot select the port `{k}` of `{m}`; bind the input with a `:=` target, for " ++
-    s!"example `u.{k} := e`"
+  let fix :=
+    if input then s!"bind the input with a `:=` target, for example `u.{k} := e`"
+    else s!"the child drives the output, so read it as a value, for example `x = u.{k}`"
+  s!"a place cannot select the port `{k}` of `{m}`; {fix}"
 
 /-!
 The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A key below 0
