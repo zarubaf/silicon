@@ -240,6 +240,23 @@ struct Sources {
     rust_sites: Vec<Site>,
 }
 
+/// Whether each part of a row is present. The fix is in the spec text, the rest is in `src`.
+fn row_checks(row: &Row, src: &Sources) -> Result<[(Part, bool); 4]> {
+    let normal = normalize(&row.text);
+    let pin = pin_regex(&normal)?;
+    Ok([
+        (Part::Fix, fix(&row.text).is_some()),
+        (Part::Lean, src.lean.iter().any(|r| r.contains(&normal))),
+        (Part::Rust, src.rust.iter().any(|r| r.contains(&normal))),
+        (
+            Part::Pin,
+            src.pins
+                .iter()
+                .any(|(c, m)| *c == row.code && pin.is_match(m)),
+        ),
+    ])
+}
+
 fn violations(
     rows: &[Row],
     src: &Sources,
@@ -252,19 +269,7 @@ fn violations(
         out.push(finding(strict, ALLOW_FILE, None, problem.clone()));
     }
     for row in rows {
-        let normal = normalize(&row.text);
-        let pin = pin_regex(&normal)?;
-        let checks = [
-            (Part::Fix, fix(&row.text).is_some()),
-            (Part::Lean, src.lean.iter().any(|r| r.contains(&normal))),
-            (Part::Rust, src.rust.iter().any(|r| r.contains(&normal))),
-            (
-                Part::Pin,
-                src.pins
-                    .iter()
-                    .any(|(c, m)| *c == row.code && pin.is_match(m)),
-            ),
-        ];
+        let checks = row_checks(row, src)?;
         for (part, ok) in checks {
             let id = row.id();
             let gap = allow.iter().find(|g| g.row == id && g.part == part);
