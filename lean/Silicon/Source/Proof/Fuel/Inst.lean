@@ -164,7 +164,7 @@ theorem instantiate_f (hb : ∀ p ss, Follows m (block k p ss) (block m p ss)) (
 theorem childSel_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows m (ev e) (ev' e)) (p q : Pos) (o : Out) (f : Ident) (x : Resolve.Expr) :
     Follows m (childSel ev p q o f x) (childSel ev' p q o f x) := by
-  unfold childSel; follows [he, childFamily_f, need_f, guardedBy_f, selectionKey_f, portPart_f]
+  unfold childSel; follows [he, childFamily_f, need_f, guardedBy_f, selectionKey_f, childEntry_f]
 
 theorem indexBase_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos)
     (b x : Resolve.Expr) : Follows m (indexBase k p b x) (indexBase m p b x) := by
