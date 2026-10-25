@@ -33,6 +33,7 @@ fn first_error_64(input: &str) -> Option<(Code, usize, usize)> {
 }
 
 /// An expression as a short S-expression, to compare shapes.
+#[allow(clippy::match_wildcard_for_single_variants)]
 fn sx(e: &Expr) -> String {
     let list = |xs: &[Expr]| xs.iter().map(sx).collect::<Vec<_>>().join(" ");
     match e {
@@ -73,6 +74,9 @@ fn sx(e: &Expr) -> String {
         ),
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
         Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
+        // The shape of a node that the parser does not make yet.
+        #[allow(unreachable_patterns)]
+        _ => "?".to_owned(),
     }
 }
 
