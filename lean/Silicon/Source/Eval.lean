@@ -2360,11 +2360,10 @@ selection key (`selectionKey`) with `S010` at `q`, and selects the entry of the 
 -/
 def childSel (ev : Resolve.Expr → M (Option Out)) (p q : Pos) (o : Out) (f : Ident)
     (k : Resolve.Expr) : M (Option Out) := do
-  unless ← Elab.childFamily o.value f do return none
+  let some y ← Elab.childFamily o.value f | return none
   let .handle (.inst id path iface ty) := o.value | return none
   let v ← guardedBy .key do return (← need k (← ev k)).value
   let key ← selectionKey q k.pos f.name v
-  let y := ((← read).field f.pos).getD 0
   return some (← childEntry p k.pos id path iface ty y f.name key)
 
 /-!
@@ -2520,7 +2519,8 @@ def walkStep (s : Pos) (v : Val) (fam : Option Ident) (step : TargetStep) :
   | some f, .index _ kp k => return (← childTarget s v f kp k, none)
   | some f, _ => fail .S010 s (Elab.familyValueText f.name)
   | none, .field _ f =>
-    if ← Elab.childFamily v f then return (v, some f) else return (← targetStep s v step, none)
+    if (← Elab.childFamily v f).isSome then return (v, some f)
+    else return (← targetStep s v step, none)
   | none, _ => return (← targetStep s v step, none)
 
 /-!
@@ -2592,10 +2592,9 @@ def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M 
     charge ip 1
     let [k] := ks | fail .S010 ip "an index of a value has one argument"
     charge fp 1
-    if ← Elab.childFamily v f then
+    if let some y ← Elab.childFamily v f then
       let w ← guardedBy (.query .typeOf) do return (← need k (← ev k)).value
       let key ← selectionKey fp k.pos f.name w
-      let y := ((← read).field f.pos).getD 0
       queryWalk ev (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
     else
       let port ← portFind fp iface ty ((← read).field f.pos) f.name
@@ -2681,10 +2680,10 @@ def placePort (ev : Resolve.Expr → M (Option Out)) (v : Val) (iface : Iface) (
       charge ip 1
       let [k] := ks | fail .S010 ip "an index of a value has one argument"
       charge fp 1
-      if ← Elab.childFamily v f then
+      if let some y ← Elab.childFamily v f then
         let w ← guardedBy .key do return (← need k (← ev k)).value
         let key ← selectionKey fp k.pos f.name w
-        childPort k.pos iface t (((← read).field f.pos).getD 0) f.name key
+        childPort k.pos iface t y f.name key
       else portFind fp iface t ((← read).field f.pos) f.name
     | _ => do
       charge fp 1
