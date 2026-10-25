@@ -684,9 +684,7 @@ hardware leaf, so it does not open.
 -/
 def Agg.opened : Value → Option (Array Agg × (Array Agg → Agg))
   | .array e xs => some (xs.map .static, .mkArray e)
-  | .tuple xs => do
-    let ts ← Value.tyAll? xs.toList
-    return (xs.map .static, .mkTuple ts.toArray)
+  | .tuple xs => some (xs.map .static, .mkTuple (Value.tyAll xs.toList).toArray)
   | .record t xs => some (xs.map .static, .mkRecord t)
   | .enum t w x p y => some ((Value.enumParts w x p y).map .static, .mkRecord t)
   | _ => none

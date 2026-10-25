@@ -804,27 +804,33 @@ def Ty.text (t : Ty) : String := boundText (t.put "")
 /-! The source text of a static argument in a message, at most `textLimit` bytes and `...`. -/
 def Value.literal (v : Value) : String := boundText (v.put "")
 
-/-! The type of a value. A type value has the type `Type`, and a function its signature. -/
+/-!
+The type of a value. A type value has the type `Type`, and a function its signature. A tuple
+walks its elements, because it stores no type.
+-/
 mutual
-  def Value.ty? : Value → Option Ty
-    | .int _ => some .int
-    | .bool _ => some .bool
-    | .uint w _ => some (.uint w)
-    | .sint w _ => some (.sint w)
-    | .unit => some .unit
-    | .array t xs => some (.array t xs.size)
-    | .tuple ⟨xs⟩ => (Value.tyAll? xs).map fun ts => .tuple ts.toArray
-    | .record t _ => some t
-    | .type _ => some .type
-    | .str _ => some .string
-    | .list t _ => some (.list t)
-    | .function _ _ ps r => some (.fn ps r)
-    | .enum t .. => some t
+  def Value.ty : Value → Ty
+    | .int _ => .int
+    | .bool _ => .bool
+    | .uint w _ => .uint w
+    | .sint w _ => .sint w
+    | .unit => .unit
+    | .array t xs => .array t xs.size
+    | .tuple ⟨xs⟩ => .tuple (Value.tyAll xs).toArray
+    | .record t _ => t
+    | .type _ => .type
+    | .str _ => .string
+    | .list t _ => .list t
+    | .function _ _ ps r => .fn ps r
+    | .enum t .. => t
 
-  def Value.tyAll? : List Value → Option (List Ty)
-    | [] => some []
-    | x :: xs => do return (← x.ty?) :: (← Value.tyAll? xs)
+  def Value.tyAll : List Value → List Ty
+    | [] => []
+    | x :: xs => x.ty :: Value.tyAll xs
 end
+
+/-! The type of a value as an option, for the callers that join it with the type of a part. -/
+def Value.ty? (v : Value) : Option Ty := some v.ty
 
 /-!
 The text of the type of a value, appended to `o`. A tuple walks its elements, so it builds no
