@@ -3813,6 +3813,29 @@ of a family selection in a query operand is this `S011` too. Without the argumen
   ["S011 22:25"]
 def tiFn : String := "fn tq(x: P) -> Type { return Bool; }\n"
 #guard tyRecords "  let t = @typeInfo(tq(rg));\n" tiFn == ["S011 22:21"]
+#guard tyRecords "  let t = @typeInfo(tq(o));\n" tiFn == ["S011 22:21"]
+-- An own input is a hardware value at its name, so the name reports, not the call.
+#guard tyRecords "  let t = @typeInfo(tu(s));\n" "fn tu(x: UInt[8]) -> Type { return Bool; }\n" ==
+  ["S011 22:24"]
+-- A register or a wire name gives a handle. The condition reads it at its node (`operand`).
+#guard tyRecords "  reg r: Bool = false;\n  let t = @typeInfo(if (r) { Bool } else { Bool });\n" ==
+  ["S011 22:25"]
+#guard tyRecords "  wire r: Bool;\n  let t = @typeInfo(if (r) { Bool } else { Bool });\n" ==
+  ["S011 22:25"]
+-- A field of a record constructor reports at its argument, and a `let` with a type in a callee
+-- at its statement.
+#guard tyRecords "  reg r: Bool = false;\n  let t = @typeInfo(tq(Q(r, true)));\n"
+  "struct Q { x: Bool, y: Bool }\nfn tq(x: Q) -> Type { return Bool; }\n" == ["S011 24:26"]
+#guard tyRecords "  reg r: Bool = false;\n  let t = @typeInfo(tl(r));\n"
+  "fn tl(h: Reg[Bool]) -> Type { let v: Bool = h; return Bool; }\n" == ["S011 10:31"]
+-- A new tuple of a handle is no reference, so its typed use reads the handle with no copy.
+#guard tyRecords "  reg r: Bool = false;\n  let t = @typeInfo(tl(r));\n"
+  "fn tl(h: Reg[Bool]) -> Type { let v: (Bool, Bool) = (h, true); return Bool; }\n" ==
+    ["S011 10:31"]
+-- A read of an aggregate handle is `S011` before the charge of its zero size: unit 231 is the
+-- copy of the handle.
+#guard (failure (tyMod "  let t = @typeInfo(tq(rg));\n" tiFn) 231).startsWith "S011 22:21"
+#guard (failure (tyMod "  let t = @typeInfo(tq(rg));\n" tiFn) 230).startsWith "S015 22:21"
 #guard tyRecords "  diagnostic(\"t\", @typeInfo(@TypeOf(rg)).kind);\n" ==
   ["(string \"reg\")", "ok"]
 #guard tyRecords "  diagnostic(\"t\", @typeInfo(@TypeOf(rg.b)).length);\n" == ["(int 2)", "ok"]
