@@ -720,20 +720,17 @@ def noFieldText (t f : String) : String :=
 
 /-!
 The number and the type of the field with the symbol `y` of the struct type `t` at `pos`. `name`
-is the name in a message, and `text` names the value. The record type holds the number of its
-specialization, and the symbol finds the number of the field, so the selection compares no name.
-No symbol is no field.
+is the name in a message, and `text` names the value. The member map of the type
+(`Specs.members`) gives the number of the field by its symbol, so the selection compares no
+name. No symbol is no field.
 -/
 def fieldBy (pos : Pos) (y : Option Nat) (name : String) (t : Ty) (text : String) :
     M (Nat × Ty) := do
   let specs := (← get).specs
-  let (some i, some fs) := (specs.item t, specs.parts t)
+  let (some ms, some fs) := (specs.members (← read).syms t, specs.parts t)
     | fail .S010 pos s!"{text} has no specialization"
-  let some (.struct ..) := (← read).items[i]?
-    | fail .S010 pos s!"{text} has no struct item"
-  let c ← read
   let found := do
-    let k ← y >>= fun x => c.syms.members[i]? >>= (·[x]?)
+    let k ← y >>= (ms[·]?)
     return (k, ← fs[k]?.map (·.2))
   match found with
   | some r => return r

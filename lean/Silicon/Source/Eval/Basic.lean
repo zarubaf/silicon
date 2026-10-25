@@ -643,6 +643,15 @@ structure Syms where
   families : Array (Std.HashMap Nat (Bool × Pos))
 
 /-!
+The member map of the struct type `t`: the number of each field by the symbol of its name. A
+struct type reads the map of the struct item of its entry (`Syms.members`). Each look-up of a
+field of a struct type by its symbol reads the map here and nowhere else. A type without an
+entry has no map.
+-/
+def Specs.members (s : Specs) (syms : Syms) (t : Ty) : Option (Std.TreeMap Nat Nat compare) :=
+  s.item t >>= (syms.members[·]?)
+
+/-!
 The kind of a guard (section 9.4): a hardware arm or a structural context. Some structural
 contexts have their own texts: a family key (`key`), an index of a `:=` target (`index`), and an
 `as` key (`name`). A key of the operand of the builtin `q` (`query`) and the argument of the
