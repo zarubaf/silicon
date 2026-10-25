@@ -275,6 +275,15 @@ def noPortText (m k : String) : String :=
   s!"`{m}` has no public port `{k}`; select a port that `{m}` declares"
 
 /-!
+The `S010` text "Port in a place" of section 6.2, for the port with the public name `k` of the
+child of the type `m`. The name has the limit of a string.
+-/
+def portPlaceText (m k : String) : String :=
+  let k := strText k
+  s!"a place cannot select the port `{k}` of `{m}`; bind the input with a `:=` target, for " ++
+    s!"example `u.{k} := e`"
+
+/-!
 The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A key below 0
 or of 2^32 or more is `S012` "Family key range", and a key of another type is `S010` "Family key
 type". A static `UInt` is such a type. The key fits 32 bits, so each later compare and name of it

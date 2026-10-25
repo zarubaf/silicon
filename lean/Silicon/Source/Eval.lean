@@ -2627,8 +2627,9 @@ A step `sel` of a place from the part `cur` with the type `ty` (section 5.2). Th
 at its node before it applies. Then the index of an index step evaluates by `ev` and checks
 against `cur`. The key of an `@field` step evaluates by `ev` with no guard of its own, after the
 window of the root opened (section 9.1). It is static (`S011`), then it gets the checks of
-`@field` (`fieldKeyOf`) and selects as an index or a field of a place. The result is the number
-of the part, the part, and its type.
+`@field` (`fieldKeyOf`) and selects as an index or a field of a place. A port key of an
+`Instance` handle is "Port in a place" after its look-up (`keyPort`). The result is the number of
+the part, the part, and its type.
 -/
 def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty) (sel : Sel) :
     M (Nat × Val × Option Ty) := do
@@ -2653,14 +2654,42 @@ def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty
       | .index k => do
         let (j, w) ← pickKey q i.pos cur k
         pure (j, w, none)
-      | .field y name | .port _ _ _ _ y name _ => do
+      | .field y name => do
         let (j, w, ft) ← fieldKeyBy q i.pos y name (strText name) cur
         pure (j, w, some ft)
+      | .port _ _ iface t y name k => do
+        let port ← keyPort i.pos iface t b y name k
+        fail .S010 i.pos (Elab.portPlaceText t.text port.text)
   let ty := match ft, ty with
     | some t, _ => some t
     | none, some t => partTy t k
     | none, none => w.ty?
   return (k, w, ty)
+
+/-!
+A field `.f` at `fp` on the `Instance` handle `v` of the interface `iface` and the type `t` in a
+place, with the steps `rest` after it (section 9.3). A place cannot hold a port, so the step is
+`S010` "Port in a place" after the look-up of the port. A field with an index after it charges
+in the **Selection order**: the index node, then the field node. A family of the child then
+takes the index as its key in a structural context of the kind `key` (`selectionKey`), and the
+key selects the entry (`childPort`). Another field selects its port (`portFind`).
+-/
+def placePort (ev : Resolve.Expr → M (Option Out)) (v : Val) (iface : Iface) (t : Ty)
+    (fp : Pos) (f : Ident) (rest : List Sel) : M α := do
+  let port ← match rest with
+    | .index ip ks :: _ => do
+      charge ip 1
+      let [k] := ks | fail .S010 ip "an index of a value has one argument"
+      charge fp 1
+      if ← Elab.childFamily v f then
+        let w ← guardedBy .key do return (← need k (← ev k)).value
+        let key ← selectionKey fp k.pos f.name w
+        childPort k.pos iface t (((← read).field f.pos).getD 0) f.name key
+      else portFind fp iface t ((← read).field f.pos) f.name
+    | _ => do
+      charge fp 1
+      portFind fp iface t ((← read).field f.pos) f.name
+  fail .S010 fp (Elab.portPlaceText t.text port.text)
 
 /-! A list, static or a node. -/
 def Val.isList : Val → Bool
@@ -2669,13 +2698,16 @@ def Val.isList : Val → Bool
 
 /-!
 The steps `sels` of a place from the part `cur` with the type `ty`, once from the root outward
-(`placeStep`). `keys` holds the number of each part so far, and `inList` tells whether a step
-selected in a list. The result is the part, its type, the numbers, and `inList`.
+(`placeStep`). A field of an `Instance` handle is "Port in a place" (`placePort`). `keys` holds
+the number of each part so far, and `inList` tells whether a step selected in a list. The
+result is the part, its type, the numbers, and `inList`.
 -/
 def placeWalk (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty)
     (keys : Array Nat) (inList : Bool) : List Sel → M (Val × Option Ty × List Nat × Bool)
   | [] => pure (cur, ty, keys.toList, inList)
   | sel :: rest => do
+    if let (.handle (.inst _ _ iface it), .field fp f) := (cur, sel) then
+      return ← placePort ev cur iface it fp f rest
     let (k, w, t) ← placeStep ev cur ty sel
     placeWalk ev w t (keys.push k) (inList || cur.isList) rest
 

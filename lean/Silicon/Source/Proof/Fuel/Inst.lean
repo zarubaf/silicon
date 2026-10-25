@@ -67,14 +67,6 @@ theorem keyed_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : V
 theorem hwCheck_f (p : Pos) (s : Resolve.Stmt) : Follows cap (hwCheck p s) (hwCheck p s) := by
   unfold hwCheck; follows
 
-theorem familyKey_f (p : Pos) (v : Value) :
-    Follows cap (Elab.familyKey p v) (Elab.familyKey p v) := by
-  unfold Elab.familyKey; follows
-
-theorem selectionKey_f (np p : Pos) (x : String) (v : Val) :
-    Follows cap (selectionKey np p x v) (selectionKey np p x v) := by
-  unfold selectionKey; follows [static_f, familyKey_f]
-
 theorem entryVal_f (p : Pos) (x : String) (id k : Nat) :
     Follows cap (entryVal p x id k) (entryVal p x id k) := by
   unfold entryVal; follows
@@ -103,10 +95,6 @@ theorem targetStep_f (s : Pos) (v : Val) (step : TargetStep) :
     Follows cap (targetStep s v step) (targetStep s v step) := by
   unfold targetStep
   follows [pickKey_f, selectKey_f, fieldKey_f, targetPort_f, fieldTarget_f]
-
-theorem childFamily_f (v : Val) (f : Ident) :
-    Follows cap (Elab.childFamily v f) (Elab.childFamily v f) := by
-  unfold Elab.childFamily; follows
 
 theorem childTarget_f (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) :
     Follows cap (childTarget s v f kp k) (childTarget s v f kp k) := by
