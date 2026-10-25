@@ -1527,6 +1527,22 @@ fn the_operand_of_typeof_is_no_static_position_but_its_indices_and_keys_are() {
     );
 }
 
+#[test]
+fn the_argument_of_typeinfo_is_no_static_position_but_its_indices_are() {
+    ok(&mod_body("reg r: Bool = false;\nlet t = @typeInfo(r);"));
+    ok(&mod_body(
+        "reg r: UInt[8] = 0;\nlet x: UInt[data_bits(@typeInfo(r))] = 0;",
+    ));
+    fails(
+        &mod_body(
+            "reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t = @typeInfo(rs[w]);",
+        ),
+        S005,
+        4,
+        22,
+    );
+}
+
 fn mut_fns(s: &str) -> String {
     format!(
         "fn g(mut a: Nat) -> Nat {{ return 1; }}\n\
