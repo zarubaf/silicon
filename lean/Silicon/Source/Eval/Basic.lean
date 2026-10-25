@@ -1120,18 +1120,26 @@ def measure (act : M α) : M (α × Nat) := do
   return (a, start - (← get).fuel)
 
 /-!
-The symbol of the name `x` that the run computes. A text of the scan has its symbol in the text
-table (`Syms.table`). Another text takes the next free symbol once, in the run-time extension
-(`St.names`), so each text has one symbol and the symbols stay distinct. The caller charges the
-size of `x` first (section 5.4).
+The symbol of the name `x`, if it has one. A text of the scan has its symbol in the text table
+(`Syms.table`). A text that the run computed has it in the run-time extension (`St.names`). The
+look-up adds no name. The caller charges the size of `x` first (section 5.4).
+-/
+def symbolFind (x : String) : M (Option Nat) := do
+  if let some k := (← read).syms.table[x]? then return some k
+  return (← get).names[x]?
+
+/-!
+The symbol of the name `x` that the run computes (`symbolFind`). A text without a symbol takes
+the next free symbol once, in the run-time extension. Thus each text has one symbol, and the
+symbols stay distinct. The caller charges the size of `x` first (section 5.4).
 -/
 def symbolOf (x : String) : M Nat := do
-  let table := (← read).syms.table
-  if let some k := table[x]? then return k
-  if let some k := (← get).names[x]? then return k
-  let k := table.size + (← get).names.size
-  modify fun s => { s with names := s.names.insert x k }
-  return k
+  match ← symbolFind x with
+  | some k => return k
+  | none =>
+    let k := (← read).syms.table.size + (← get).names.size
+    modify fun s => { s with names := s.names.insert x k }
+    return k
 
 /-!
 Runs `act` one level deeper, or gives `S015` at `pos` above the limit. The level reports its

@@ -2407,14 +2407,18 @@ def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M 
     | _, rest => do
       let port ← portFind fp iface ((← read).field f.pos) f.name
       queryWalk ev (portQuery id path port) rest
-  | q, sel :: rest => do
-    charge sel.pos 1
-    let s ← match sel with
-      | .index p [i] => do pure (QueryStep.index p i.pos (← queryKey ev i))
-      | .index p _ => fail .S010 p "an index of a value has one argument"
-      | .select p r i => pure (.select p r i)
-      | .field p f => pure (.field p f)
-    queryWalk ev (← queryStep q s) rest
+  | q, .index p [i] :: rest => do
+    charge p 1
+    queryWalk ev (← queryStep q (.index p i.pos (← queryKey ev i))) rest
+  | _, .index p _ :: _ => do
+    charge p 1
+    fail .S010 p "an index of a value has one argument"
+  | q, .select p r i :: rest => do
+    charge p 1
+    queryWalk ev (← queryStep q (.select p r i)) rest
+  | q, .field p f :: rest => do
+    charge p 1
+    queryWalk ev (← queryStep q (.field p ((← read).field f.pos) f.name f.name)) rest
 termination_by _ sels => sels.length
 
 /-!

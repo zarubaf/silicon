@@ -316,19 +316,26 @@ def entry (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (binder : O
   return v
 
 /-!
-The public name and the family key of the static `as` key (section 6.2, steps 6 and 7 of the
-port order). A `String` is a scalar name. A record of the prelude struct `PortKey` is a
-scalar name with the index 0, or an entry with an index below 2^32. A user struct named
-`PortKey` is another type. Each other value is `S010` "Port key type". The index check reads
-the bit length, so it takes constant work, and the index renders only in an error.
+The public name and the family key of the static key `v` of a port, if `v` has the kind of a
+port key (section 6.2). A `String` is a scalar name. A record of the prelude struct `PortKey` is
+a scalar name with the index 0, or an entry with an index below 2^32. Its fields are read by
+their position. A user struct named `PortKey` is another type, so it has no such kind. The index
+check reads the bit length, so it takes constant work, and the index renders only in an error.
 -/
-def portKey : Value → Except Fault (String × Option Nat)
-  | .str x => .ok (x, none)
+def portKey? : Value → Option (Except Fault (String × Option Nat))
+  | .str x => some (.ok (x, none))
   | .record (.struct _ "PortKey" _ _ true) #[.str x, .bool false, .int k] =>
-    if k == 0 then .ok (x, none) else .error (.S022, scalarIndexText k)
+    some (if k == 0 then .ok (x, none) else .error (.S022, scalarIndexText k))
   | .record (.struct _ "PortKey" _ _ true) #[.str x, .bool true, .int k] =>
-    if k < 2 ^ 32 then .ok (x, some k.toNat) else .error (.S012, keyRangeText k)
-  | v => .error (.S010, portKeyText (Val.static v).about)
+    some (if k < 2 ^ 32 then .ok (x, some k.toNat) else .error (.S012, keyRangeText k))
+  | _ => none
+
+/-!
+The public name and the family key of the static `as` key (section 6.2, steps 6 and 7 of the
+port order), by `portKey?`. Another value is `S010` "Port key type".
+-/
+def portKey (v : Value) : Except Fault (String × Option Nat) :=
+  (portKey? v).getD (.error (.S010, portKeyText (Val.static v).about))
 
 /-!
 The port at `p` with the binder `b`, the type `t`, and the static `as` key `v` at `kp` (section

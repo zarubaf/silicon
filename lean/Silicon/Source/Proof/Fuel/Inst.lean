@@ -57,8 +57,11 @@ theorem entry_f (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (b : 
     Follows cap (Elab.entry p input x y k t b) (Elab.entry p input x y k t b) := by
   unfold Elab.entry; follows [publicOf_f, publish_f, resource_f, modifyBody_f, normalize_f]
 
+theorem symbolFind_f (x : String) : Follows cap (symbolFind x) (symbolFind x) := by
+  unfold symbolFind; follows
+
 theorem symbolOf_f (x : String) : Follows cap (symbolOf x) (symbolOf x) := by
-  unfold symbolOf; follows
+  unfold symbolOf; follows [symbolFind_f]
 
 theorem keyed_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : Value) :
     Follows cap (Elab.keyed p input b t kp v) (Elab.keyed p input b t kp v) := by
