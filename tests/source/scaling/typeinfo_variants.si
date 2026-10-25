@@ -1,0 +1,19 @@
+// T2 of the work-counter tests of `@typeInfo` (issue #345). An enum has N variants with 2 payload types each, and the
+// module asks for its `@typeInfo` 8 times. Each call charges 1 for each variant and 1 for each payload type, then the
+// size of the result. A visit of the payload types with no charge makes more work than the fuel pays for, and the work
+// escapes the bound.
+// SCALE typeinfo_variants 16 32 64 128 256
+// TOP M()
+enum E: UInt[16] {
+// REPEAT i {N}
+    V{i}(UInt[8], Bool) = {i},
+// END
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+// REPEAT i 8
+    let t{i} = @typeInfo(E);
+// END
+    o := x;
+}

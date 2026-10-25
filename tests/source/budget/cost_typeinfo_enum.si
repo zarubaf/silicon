@@ -1,0 +1,9 @@
+// `@typeInfo` of an enum with payloads charges 1 for each variant and 1 for each payload type, then the size of the result. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 240
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    output o: Bool;
+    let t = @typeInfo(Op);
+    o := true;
+}
