@@ -132,6 +132,15 @@ impl Opnd {
     }
 }
 
+/// The record of an open argument of `@typeInfo` (section 9.4, Lean `ArgRec`). Under `Node`, a
+/// node with a hardware value is `S011`. `Place` marks the root and the steps of a place that is
+/// the whole argument: they read no value, so the check skips them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ArgRec {
+    Node,
+    Place,
+}
+
 /// An operand at a use that reads it: a hardware value, or a static result.
 enum Opnd {
     Hw(HwId),
@@ -209,6 +218,9 @@ struct Evaluator<'a> {
     /// The static mode (section 9.4), else none. A call sets it in O(1), and the name renders
     /// only in an error.
     mode: Option<Mode>,
+    /// The record of the open builtin argument, else none. Each context and each call inside the
+    /// argument keeps it, and the end of the argument restores it.
+    arg: Option<ArgRec>,
     /// The name of a function value while its signature evaluates: each depth check there
     /// reports at it. A nested level clears it, so it keeps its own positions.
     site: Option<Pos>,
@@ -444,6 +456,7 @@ impl<'a> Evaluator<'a> {
             elab,
             guard: None,
             mode: top.map(|_| Mode::Eval),
+            arg: None,
             site: None,
             records: Vec::new(),
             emitted: Vec::new(),
@@ -621,7 +634,70 @@ impl Evaluator<'_> {
     fn operand(&mut self, pos: Pos, e: &Expr) -> Res<Opnd> {
         let o = self.eval(e)?;
         let o = need(e, o)?;
-        self.data(pos, o)
+        let d = self.data(pos, o)?;
+        self.arg_hw_opnd(e.pos(), &d)?;
+        Ok(d)
+    }
+
+    /// Whether what `s` finds is a hardware value or a hardware aggregate (Lean `Val.hasHw`).
+    fn seen_has_hw(&self, s: Seen<'_>) -> bool {
+        match s {
+            Seen::Hw(_) => true,
+            Seen::Agg(a) => a.leaves(&self.tys) > 0,
+            _ => false,
+        }
+    }
+
+    /// The check of an open builtin argument at the node `pos` (section 9.4, Lean `argHw`).
+    /// Under the record `Node`, a result with a hardware leaf is `S011` "Value not static" at
+    /// `pos`. A reference to a part of a local reads the root first: a root without a hardware
+    /// leaf has no part with one, and a root with one failed at its own node, so the check never
+    /// walks the path of a long chain.
+    fn arg_hw(&self, pos: Pos, out: &Out) -> Res<()> {
+        if self.arg != Some(ArgRec::Node) {
+            return Ok(());
+        }
+        let hw = match out {
+            Out::Ref(r) if !r.path.is_empty() => match self.store.root(&r.root) {
+                Val::Static(_) => false,
+                Val::Agg(a) if a.leaves(&self.tys) == 0 => false,
+                _ => self.seen_has_hw(self.store.at(r)),
+            },
+            _ => self.seen_has_hw(self.store.seen(out)),
+        };
+        if hw {
+            return fail(Code::S011, pos, self.not_static(self.store.seen(out)));
+        }
+        Ok(())
+    }
+
+    /// `arg_hw` for an operand.
+    fn arg_hw_opnd(&self, pos: Pos, o: &Opnd) -> Res<()> {
+        match o {
+            Opnd::Hw(h) if self.arg == Some(ArgRec::Node) => {
+                fail(Code::S011, pos, self.not_static(Seen::Hw(*h)))
+            }
+            Opnd::Hw(_) => Ok(()),
+            Opnd::Static(out) => self.arg_hw(pos, out),
+        }
+    }
+
+    /// The root of a read. The root of a place that is the whole argument of a builtin reads no
+    /// value, so it has the record `Place`.
+    fn eval_root(&mut self, root: &Expr, place: bool) -> Res<Option<Out>> {
+        if place {
+            self.with_arg(ArgRec::Place, |ev| ev.eval(root))
+        } else {
+            self.eval(root)
+        }
+    }
+
+    /// Runs `act` with the record `rec` of an open builtin argument, and restores the record.
+    fn with_arg<T>(&mut self, rec: ArgRec, act: impl FnOnce(&mut Self) -> Res<T>) -> Res<T> {
+        let saved = self.arg.replace(rec);
+        let r = act(self);
+        self.arg = saved;
+        r
     }
 
     /// The operand `e` of the node at `pos`, which evaluates after the operand `a`. The
@@ -911,6 +987,22 @@ impl Evaluator<'_> {
 
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
+        if self.arg == Some(ArgRec::Place) {
+            // The root and the steps of a place that is the whole argument read no value. The
+            // record is `Place` only for the base of such a step, and each other part of the node
+            // has the record `Node` (Lean `argNode`).
+            return self.with_arg(ArgRec::Node, |ev| ev.eval_node(e, true));
+        }
+        let o = self.eval_node(e, false)?;
+        if let Some(out) = &o {
+            self.arg_hw(e.pos(), out)?;
+        }
+        Ok(o)
+    }
+
+    /// The work of the node `e`, after its charge. `place` tells that the node is the base of a
+    /// step of a place that is the whole argument of a builtin.
+    fn eval_node(&mut self, e: &Expr, place: bool) -> Res<Option<Out>> {
         match e {
             Expr::Num { pos, id, .. } => self.number(*pos, *id),
             Expr::Bool { pos, value } => self.made(*pos, Value::Bool(*value)),
@@ -956,14 +1048,14 @@ impl Evaluator<'_> {
                 name,
                 args,
             } => self.method(*pos, *id, recv, name, args),
-            Expr::Index { pos, base, args } => self.index_expr(e, *pos, base, args),
+            Expr::Index { pos, base, args } => self.index_expr(e, *pos, base, args, place),
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
             Expr::Select { .. }
             | Expr::Field { .. }
             | Expr::Builtin {
                 builtin: Builtin::Field,
                 ..
-            } => self.read(e),
+            } => self.read(e, place),
             Expr::ArrayType { pos, elem, len } => {
                 let t = self.array_type(*pos, elem, len)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
@@ -978,7 +1070,14 @@ impl Evaluator<'_> {
 
     /// The index expression `e` at `pos` with the base `base`: the specialization of a type or a
     /// struct, the selection of an entry of a family, or the read of a part.
-    fn index_expr(&mut self, e: &Expr, pos: Pos, base: &Expr, args: &[Expr]) -> Res<Option<Out>> {
+    fn index_expr(
+        &mut self,
+        e: &Expr,
+        pos: Pos,
+        base: &Expr,
+        args: &[Expr],
+        place: bool,
+    ) -> Res<Option<Out>> {
         if let Expr::Name { pos: bp, id, .. } = base
             && let Some(Target::Prelude(k)) = self.target(*id)
             && k.is_type()
@@ -997,7 +1096,7 @@ impl Evaluator<'_> {
         if let Some(out) = self.family_selection(pos, base, args)? {
             return Ok(Some(out));
         }
-        self.read(e)
+        self.read(e, place)
     }
 
     /// An `if` expression. A static condition selects an arm, and a hardware condition makes

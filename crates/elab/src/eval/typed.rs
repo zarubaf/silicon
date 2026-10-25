@@ -77,7 +77,9 @@ impl Site for Field {
             return Ok(Piece::New(Agg::Handle(ev.handle_leaf(pos, t, &out)?)));
         }
         let out = ev.settle(pos, t, out)?;
-        let out = ev.data_at(self.0, t, out)?.into_out();
+        let d = ev.data_at(self.0, t, out)?;
+        ev.arg_hw_opnd(self.0, &d)?;
+        let out = d.into_out();
         if ev.is_handle(&out) {
             return ev.handle_wrong(pos, t, ev.store.seen(&out));
         }
@@ -190,6 +192,7 @@ impl Evaluator<'_> {
         let out = self.settle(pos, t, out)?;
         let handle = self.is_handle(&out);
         let d = self.data_at(pos, t, out)?;
+        self.arg_hw_opnd(pos, &d)?;
         if copies
             && handle
             && let Opnd::Static(o) = &d

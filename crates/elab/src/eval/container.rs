@@ -429,6 +429,8 @@ impl Evaluator<'_> {
             let (o, pending) = self.element(x.pos(), o)?;
             if let Some(q) = pending {
                 waiting.get_or_insert(q);
+            } else {
+                self.arg_hw(x.pos(), &o)?;
             }
             self.store.park(o);
         }
