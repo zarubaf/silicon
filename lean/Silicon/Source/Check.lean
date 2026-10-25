@@ -42,7 +42,9 @@ at the name. These are the static positions:
 
 The operand of `@TypeOf` is no static position, also in a static position, so
 `UInt[data_bits(@TypeOf(r))]` names `r` without `S005`. Rule 1 and rule 12 still hold for its
-indices and its keys (section 9.2).
+indices and its keys (section 9.2). The argument of `@typeInfo` is no static position either
+(ADR 0031), so `@typeInfo(r)` gets the `S010` of pass 5. The keys of a query operand in it keep
+their rules.
 
 A port family names ports, so its name in a static position is `S005`, also before its first
 declaration. A family is no mutable root, so a `mut` actual with a family root is `S008`.
@@ -535,7 +537,7 @@ mutual
       let _ ← visit static false x
       for a in as do arm static a
       return none
-    | .typeOf _ x => do
+    | .typeOf _ x | .typeInfo _ x => do
       let _ ← visit false false x
       return none
     | .atField _ b k => do

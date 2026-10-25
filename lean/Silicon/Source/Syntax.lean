@@ -48,30 +48,31 @@ inductive Pattern where
   deriving Repr, BEq, Inhabited
 
 /-!
-A builtin of slice 4 (section 9.3): `@TypeOf` and `@field`. Each phase of section 14.4 adds the
-name of its builtin. `@typeInfo`, `@Struct`, and `@ports` are not yet names here.
+A builtin of slice 4 (section 9.3): `@TypeOf`, `@typeInfo`, and `@field`. Each phase of section
+14.4 adds the name of its builtin. `@Struct` and `@ports` are not yet names here.
 -/
 inductive Builtin where
-  | typeOf | field
+  | typeOf | typeInfo | field
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-! The name of a builtin after `@`. -/
 def Builtin.name : Builtin → String
-  | .typeOf => "TypeOf" | .field => "field"
+  | .typeOf => "TypeOf" | .typeInfo => "typeInfo" | .field => "field"
 
 /-! The builtin of a name after `@`, if the current phase has it. -/
 def Builtin.ofName : String → Option Builtin
   | "TypeOf" => some .typeOf
+  | "typeInfo" => some .typeInfo
   | "field" => some .field
   | _ => none
 
 /-! The number of operands of a builtin (section 5.6): 2 for `@field`, 1 for each other. -/
 def Builtin.arity : Builtin → Nat
-  | .typeOf => 1 | .field => 2
+  | .typeOf | .typeInfo => 1 | .field => 2
 
 /-! The form of a builtin in section 9.3, for the fix of "Builtin arity". -/
 def Builtin.form : Builtin → String
-  | .typeOf => "@TypeOf(x)" | .field => "@field(x, k)"
+  | .typeOf => "@TypeOf(x)" | .typeInfo => "@typeInfo(T)" | .field => "@field(x, k)"
 
 /-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
 def Builtin.arityText (b : Builtin) (m : Nat) : String :=
@@ -148,12 +149,12 @@ def Expr.place : Expr → Bool
 
 /-!
 The operands `xs` fit the builtin `b` (section 9.3): their number is the arity of `b`, and the
-operand of `@TypeOf` is a place.
+operand of `@TypeOf` is a place. The operand of `@typeInfo` is any expression.
 -/
 def Builtin.operandsOk (b : Builtin) (xs : List Expr) : Bool :=
   xs.length == b.arity && match b with
     | .typeOf => xs.all Expr.place
-    | .field => true
+    | .typeInfo | .field => true
 
 /-!
 The name form of a port (section 5.6). A `scalar` port has a name only. An `indexed` port has its

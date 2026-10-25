@@ -405,7 +405,7 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard fails "fn f() -> T::U {}" .S004 1 12
 #guard fails "fn f() -> @TypeOf(x) {}" .S004 1 11
 #guard st "@TypeOf(x);" == "(expr (builtin TypeOf ((name \"x\"))))"
-#guard stFails "@typeInfo(T);" .S004 1
+#guard st "@typeInfo(T);" == "(expr (builtin typeInfo ((name \"T\"))))"
 #guard stFails "reg r: T in d = 0;" .S004 10
 #guard stFails "wire w: T in d;" .S004 11
 #guard stFails "mem m: [T; 4] in d;" .S004 15
@@ -568,7 +568,7 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard (parseSource defaultSyntaxDepth "module M() {\nmem m: [Bool; 4];\n}").toBool
 #guard st "@field(a, 0) = 1;" == "(assign (builtin field ((name \"a\") (num 0))) (num 1))"
 #guard st "@field(a, b) = 1;" == "(assign (builtin field ((name \"a\") (name \"b\"))) (num 1))"
-#guard ex "@typeInfo(a, b)" == "error S004 1:14"
+#guard ex "@typeInfo(a, b)" == "error S001 1:15"
 #guard ex "@TypeOf(a.b, c)" == "error S001 1:15"
 #guard ex "(f(a, b))" == "(call (name \"f\") ((name \"a\") (name \"b\")))"
 #guard ex "@Struct(T)" == "error S004 1:14"
@@ -681,7 +681,7 @@ name, and with `mut` it is `S001` at `mut`, as at a module.
 #guard fails "import x $" .S004 1 1
 #guard fails "pub \"open" .S004 1 1
 #guard fails "const N: T = $; import x;" .S001 1 14
-#guard ex "@typeInfo(a, $)" == "error S004 1:14"
+#guard ex "@Struct(a, $)" == "error S004 1:14"
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
@@ -1018,16 +1018,14 @@ name has the limit of a string in a message (section 5.5).
 #guard ex "@1" == "error S001 1:15"
 
 /-!
-`@typeInfo`, `@Struct`, and `@ports` stay `S004` at the `@` (#345, #346). So does each builtin in
-a type position (#345).
+`@Struct` and `@ports` stay `S004` at the `@` (#345, #346). So does each builtin in a type
+position (#345), also `@typeInfo`.
 -/
-#guard ex "@typeInfo(T)" == "error S004 1:14"
 #guard ex "@Struct(fs)" == "error S004 1:14"
 #guard ex "@ports(u)" == "error S004 1:14"
 #guard ex "@TypeOf(@ports(u))" == "error S004 1:22"
 #guard stFails "let y: @TypeOf(x) = x;" .S004 8
 #guard stFails "let y: [@field(x, 0); 2] = x;" .S004 9
-#guard stFails "@typeInfo(T) = 1;" .S004 1
 #guard message "const X: T = @ports(u);" == "a builtin is not supported yet"
 #guard message "const X: @TypeOf(y) = 1;" == "a builtin is not supported yet"
 

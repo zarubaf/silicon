@@ -229,8 +229,9 @@ a prelude function, and its `param` is the parameter that the receiver binds to.
 refers to a prelude type, a `struct` item, a `type` item, or a local. A local holds a value of
 type `Type`, which `Elab` checks. A function type keeps its form, with the `mut` mark of each
 parameter type. A `match` holds its scrutinee and its arms. The parser checked the operands
-of a builtin, so each builtin has its own form. `typeOf` holds the place of `@TypeOf`, and
-`atField` holds the base and the key of `@field`.
+of a builtin, so each builtin has its own form. `typeOf` holds the place of `@TypeOf`,
+`typeInfo` holds the argument of `@typeInfo`, and `atField` holds the base and the key of
+`@field`.
 -/
 mutual
   inductive Expr where
@@ -256,6 +257,7 @@ mutual
         (called : Bool)
     | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
     | typeOf (pos : Pos) (place : Expr)
+    | typeInfo (pos : Pos) (arg : Expr)
     | atField (pos : Pos) (base key : Expr)
 
   inductive TypeExpr where
@@ -309,6 +311,7 @@ mutual
       if called then .call p (.path p t v) (xs.map Expr.source) else .path p t v
     | .«match» p x as => .«match» p x.source (as.map Arm.source)
     | .typeOf p x => .builtin p .typeOf [x.source]
+    | .typeInfo p x => .builtin p .typeInfo [x.source]
     | .atField p b k => .builtin p .field [b.source, k.source]
 
   def TypeExpr.source : TypeExpr → Source.TypeExpr
@@ -389,7 +392,7 @@ def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
   | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
   | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p ..
-  | .«match» p .. | .typeOf p .. | .atField p .. => p
+  | .«match» p .. | .typeOf p .. | .typeInfo p .. | .atField p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
@@ -423,7 +426,7 @@ mutual
     | .fnType _ qs r => FnParam.anyLocal ps qs || r.namesLocal ps
     | .variant _ _ _ _ _ xs _ => Expr.anyLocal ps xs
     | .«match» _ x as => x.namesLocal ps || Arm.anyLocal ps as
-    | .typeOf _ x => x.namesLocal ps
+    | .typeOf _ x | .typeInfo _ x => x.namesLocal ps
     | .atField _ b k => b.namesLocal ps || k.namesLocal ps
 
   def Expr.anyLocal (ps : Ids) : List Expr → Bool
@@ -836,6 +839,7 @@ mutual
       let x ← expr x
       return .«match» p x (← as.mapM arm)
     | .builtin p .typeOf [x] => return .typeOf p (← expr x)
+    | .builtin p .typeInfo [x] => return .typeInfo p (← expr x)
     | .builtin p .field [b, k] => return .atField p (← expr b) (← expr k)
     | .builtin p b xs => do
       -- This case only makes the match total. The parser checks the number of operands
