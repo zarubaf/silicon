@@ -339,9 +339,16 @@ impl Evaluator<'_> {
             Sel::Key(pos, base, key) => {
                 self.charge(pos, 1)?;
                 let key = self.named_key(pos, base, key, true)?;
-                self.wait(walk, key);
+                // The part is known after the step only when its name is paid: the look-up of a
+                // name reads it after its charge. A later `.f` then tells from the type that the
+                // part is no `Instance` handle, and the pass along the part does not run again.
+                let before = walk.known;
+                walk.pending.push(key);
                 *at += 1;
                 self.pay_waiting(walk)?;
+                if let Some(key) = walk.pending.last() {
+                    walk.known = before.after(self, key);
+                }
             }
             Sel::Field(pos, field) => {
                 let Some(info) = self.instance_of(walk)? else {
