@@ -1,3 +1,4 @@
 // S001: the operand of `@TypeOf` is a place, not a call.
-// expected-error S001 @+1
+// expected-error S001 @+2
+// expected-message: `@TypeOf` takes a name or a selection of a name; bind the value with `let` and pass the name
 const A: T = @TypeOf(f(x));
