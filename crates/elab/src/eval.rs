@@ -1016,7 +1016,10 @@ impl Evaluator<'_> {
     /// output is hardware.
     fn field_part(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
         let b = match self.store.seen(&b) {
-            Seen::Handle(Handle::Inst { .. }) => return self.port_of(pos, b, field),
+            Seen::Handle(Handle::Inst { id, path, inst, .. }) => {
+                let (id, path, inst) = (*id, *path, *inst);
+                return self.port_of(pos, (id, path), inst, (self.port_sym(field), &field.name));
+            }
             // A field selection is a data context (section 9.2): a child input is `S017`.
             Seen::Handle(Handle::Res { .. } | Handle::Input { .. }) => {
                 self.data(pos, b)?.into_out()
@@ -1029,22 +1032,25 @@ impl Evaluator<'_> {
         self.record_field(pos, b, field)
     }
 
-    /// A port of an instance: a child input is a target, and a child output refers to its
-    /// name. An output without a hardware leaf is a new static value. A family of the child
-    /// without a key is `S010` "Family as a value" (section 5.6).
-    fn port_of(&mut self, pos: Pos, b: Out, field: &Ident) -> Res<Out> {
-        let Seen::Handle(Handle::Inst { id, path, inst, .. }) = self.store.seen(&b) else {
-            return self.record_field(pos, b, field);
-        };
-        let (id, path, inst) = (*id, *path, *inst);
-        let sym = self.port_sym(field);
-        match sym.and_then(|s| self.elab.port(inst, (s, None))) {
+    /// The port with the symbol `y` and the name `name` of the done instantiation `inst`, the
+    /// child number `id` with the path `path`: a child input is a target, and a child output
+    /// refers to its name. An output without a hardware leaf is a new static value. A family of
+    /// the child without a key is `S010` "Family as a value" (section 5.6). No symbol is no
+    /// port.
+    fn port_of(
+        &mut self,
+        pos: Pos,
+        (id, path): (usize, PathId),
+        inst: usize,
+        (y, name): (Option<Sym>, &str),
+    ) -> Res<Out> {
+        match y.and_then(|s| self.elab.port(inst, (s, None))) {
             Some(q) => self.port_out(pos, (id, path), q),
-            None if sym.is_some_and(|s| self.has_family(inst, s)) => family_value(pos, &field.name),
+            None if y.is_some_and(|s| self.has_family(inst, s)) => family_value(pos, name),
             None => fail(
                 Code::S010,
                 pos,
-                format!("the instance has no port `{}`", field.name),
+                format!("the instance has no port `{name}`"),
             ),
         }
     }
