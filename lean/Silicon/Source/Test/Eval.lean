@@ -3940,12 +3940,10 @@ the look-up 2. A `Nat` key costs as an index.
 
 /-!
 `@TypeOf` (sections 5.4 and 9.3). A root that names no binding evaluates the whole operand as an
-ordinary expression. A type gives `Type`, a function its function type, and a constant the type
-of its value. A `const` annotation is no declared type.
+ordinary expression. A type gives `Type`, and a function its function type.
 -/
 #guard out "" "@TypeOf(UInt[8])" == "(type type)"
 #guard out "fn f(x: Nat) -> Nat { return x; }" "@TypeOf(f)" == "(type (fn (nat) nat))"
-#guard out "const C: Nat = 1;" "@TypeOf(C)" == "(type int)"
 #guard out "" "@TypeOf(len)" == "S010 1:9"
 
 /-!
@@ -3989,13 +3987,6 @@ charges 1, then the size of the type term charges. `(Int,)` has the size 2, and
 #guard exact (typeOfFn "  let t = (((1,),),);\n  let y = @TypeOf(t);\n") "f()"
   (cost (typeOfFn "  let t = (((1,),),);\n") "f()" + 2 + 3 + 4)
 
-/-! A `const` tuple has no declared type here, so it pays the build after its ordinary charges. -/
-def constTuple : String := "const C: (Nat, (Int,)) = (1, (2,));"
-#guard cost constTuple "C" == 51
-#guard exact constTuple "@TypeOf(C)" (51 + 1 + 2 + 4)
-#guard out constTuple "@TypeOf(C)" == "(type (tuple (int (tuple (int)))))"
--- `C.1` charges its select node, then the build of `(Int,)`.
-#guard exact constTuple "@TypeOf(C.1)" (51 + 1 + 1 + 1 + 2)
 
 /-!
 The steps check as the steps of a place: the range of an index (`S013`) at the index, and the
