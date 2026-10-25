@@ -3666,6 +3666,16 @@ def tyRegP : String := "(type (reg (struct root P ())))"
     "(type (instance root C ()))", "(type (input (struct root P ())))", tyB, tyP, "(type bool)",
     "(type (input (uint 2)))", "(type (uint 3))", tyP, tyB, "(type (uint 8))", tyP,
     "(type (uint 8))", tyP, tyB, "ok"]
+-- A register gives `Reg[P]` and a wire `Wire[P]` for each form of its binding: its name, a `let`
+-- of the handle with and without a type, and a parameter of a helper.
+def tyWire : String := "(type (wire (struct root P ())))"
+#guard tyRecords ("  let h = rg;\n  let g: Wire[P] = w;\n" ++
+    String.join (["rg", "w", "h", "g"].map tyOf) ++
+    "  diagnostic(\"t\", fr(rg));\n  diagnostic(\"t\", fw(w));\n")
+    ("fn fr(r: Reg[P]) -> Type { return @TypeOf(r); }\n" ++
+      "fn fw(x: Wire[P]) -> Type { return @TypeOf(x); }\n") ==
+  [tyRegP, tyWire, tyRegP, tyWire, tyRegP, tyWire, "ok"]
+#guard elabUnits (tyMod "  let t = @TypeOf(w);\n") "M" == 260 + 2
 -- A hardware local, a container of handles, and a tuple of a handle and a static value.
 #guard tyRecords ("  let h = s +% 1;\n  let rs = [rg, rg];\n  let x = (rg, 1);\n" ++
     String.join (["h", "rs", "rs[1]", "rs[1].a", "x", "x.0", "x.0.b.1", "x.1"].map tyOf)) ==
