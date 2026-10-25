@@ -695,8 +695,11 @@ theorem typeInfoArg_f (p : Pos) (v : Val) :
     Follows cap (typeInfoArg p v) (typeInfoArg p v) := by
   unfold typeInfoArg; follows
 
+theorem counts_f (p : Pos) (t : Ty) : Follows cap (counts p t) (counts p t) := by
+  unfold counts; follows
+
 theorem typeInfo_f (p : Pos) (ti t : Ty) : Follows cap (typeInfo p ti t) (typeInfo p ti t) := by
-  unfold typeInfo; follows [infoOf_f, bounded_f]
+  unfold typeInfo; follows [counts_f, infoOf_f, bounded_f]
 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
