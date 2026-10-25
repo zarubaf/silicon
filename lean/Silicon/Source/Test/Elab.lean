@@ -3745,6 +3745,13 @@ core name.
 #guard elabUnits (tyMod "  let t = @TypeOf(req[3]);\n") "M" == 260 + 2 + 2 + 2
 #guard elabUnits (tyMod "  let t = @TypeOf(req[3].b);\n") "M" == 260 + 2 + 2 + 2 + 1
 #guard elabUnits (tyMod "  let t = @TypeOf(u.e[1]);\n") "M" == 260 + 2 + 2 + 2
+-- `u.e[k]` charges the index node, then the field node, in a query as in a value (section 6.2,
+-- **Selection order**). The statement `let` is unit 225 and the node of `@TypeOf` unit 226. So
+-- with 227 units, the index node charges, and its two arguments are `S010` before the field node.
+#guard (failure (tyMod "  let t = @TypeOf(u.e[1, 2]);\n") 227).startsWith "S010 21:19"
+#guard (failure (tyMod "  let t = @TypeOf(u.e[1, 2]);\n") 226).startsWith "S015 21:19"
+#guard (failure (tyMod "  let t = u.e[1, 2];\n") 226).startsWith "S010 21:11"
+#guard (failure (tyMod "  let t = u.e[1, 2];\n") 225).startsWith "S015 21:11"
 #guard exact (tyMod "  let t = @TypeOf(req[3].b);\n") "M"
   (total (tyMod "  let t = @TypeOf(req[3].b);\n") "M")
 #guard names (tyMod "  let t = @TypeOf(rg.b);\n  let v = @TypeOf(u.q.b);\n") "M" "M" ==
