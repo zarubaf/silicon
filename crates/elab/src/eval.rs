@@ -78,7 +78,7 @@ use crate::scan::{CallArgs, Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
 use crate::{Budget, Code, Error};
-use parse::ast::{BinOp, Builtin, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
+use parse::ast::{BinOp, Builtin, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr, UnOp};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
@@ -850,20 +850,57 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(v))))
     }
 
-    // TODO(#380): the arm of `@typeInfo` goes into `reflect.rs` with its evaluation.
-    #[allow(clippy::too_many_lines)]
+    /// A string literal. Its size counts the characters, and the charge comes before the copy.
+    fn string_lit(&mut self, pos: Pos, value: &str) -> Res<Option<Out>> {
+        limit::string(value.len() as u128).map_err(at(pos))?;
+        let size = 1 + value.chars().count() as u128;
+        self.charge(pos, size)?;
+        Ok(Some(Out::Made(Val::Static(Value::Str(value.to_owned())))))
+    }
+
+    /// A unary operator at `pos` on the operand `arg`.
+    fn unary_expr(&mut self, pos: Pos, op: UnOp, arg: &Expr) -> Res<Option<Out>> {
+        match self.operand(pos, arg)? {
+            Opnd::Static(a) if self.is_agg(&a) => fail(
+                Code::S010,
+                pos,
+                format!(
+                    "`{}` does not accept {}",
+                    ops::unop_text(op),
+                    self.text(self.store.seen(&a))
+                ),
+            ),
+            Opnd::Static(a) => {
+                let v = ops::unary(op, self.store.value(&a), &mut self.fuel, &self.tys)
+                    .map_err(at(pos))?;
+                Ok(Some(Out::Made(Val::Static(v))))
+            }
+            Opnd::Hw(a) => Ok(Some(Out::Made(self.hw_unary(pos, op, a)?))),
+        }
+    }
+
+    /// A binary operator, other than `&&` and `||`, at `pos` on the operands `lhs` and `rhs`.
+    fn binary_expr(&mut self, pos: Pos, op: BinOp, lhs: &Expr, rhs: &Expr) -> Res<Option<Out>> {
+        let a = self.operand(pos, lhs)?;
+        let (a, b) = self.operand_after(pos, a, rhs)?;
+        self.comparable(pos, op, &a, &b)?;
+        if matches!(op, BinOp::Eq | BinOp::Ne) && (self.opnd_is_agg(&a) || self.opnd_is_agg(&b)) {
+            return Ok(Some(Out::Made(self.agg_eq(pos, op, &a, &b)?)));
+        }
+        match (a, b) {
+            (Opnd::Static(a), Opnd::Static(b)) if !self.is_agg(&a) && !self.is_agg(&b) => {
+                Ok(Some(Out::Made(Val::Static(self.binary(pos, op, &a, &b)?))))
+            }
+            (a, b) => Ok(Some(Out::Made(self.hw_binary(pos, op, a, b)?))),
+        }
+    }
+
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
         match e {
             Expr::Num { pos, id, .. } => self.number(*pos, *id),
             Expr::Bool { pos, value } => self.made(*pos, Value::Bool(*value)),
-            Expr::Str { pos, value } => {
-                limit::string(value.len() as u128).map_err(at(*pos))?;
-                // The size counts the characters, and the charge comes before the copy.
-                let size = 1 + value.chars().count() as u128;
-                self.charge(*pos, size)?;
-                Ok(Some(Out::Made(Val::Static(Value::Str(value.clone())))))
-            }
+            Expr::Str { pos, value } => self.string_lit(*pos, value),
             Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
             Expr::Match { pos, scrut, arms } => self.match_expr(*pos, scrut, arms),
             Expr::Builtin {
@@ -885,47 +922,14 @@ impl Evaluator<'_> {
                 *pos,
                 "a builtin is not supported yet".to_owned(),
             ),
-            Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
-                Opnd::Static(a) if self.is_agg(&a) => fail(
-                    Code::S010,
-                    *pos,
-                    format!(
-                        "`{}` does not accept {}",
-                        ops::unop_text(*op),
-                        self.text(self.store.seen(&a))
-                    ),
-                ),
-                Opnd::Static(a) => {
-                    let v = ops::unary(*op, self.store.value(&a), &mut self.fuel, &self.tys)
-                        .map_err(at(*pos))?;
-                    Ok(Some(Out::Made(Val::Static(v))))
-                }
-                Opnd::Hw(a) => Ok(Some(Out::Made(self.hw_unary(*pos, *op, a)?))),
-            },
+            Expr::Unary { pos, op, arg } => self.unary_expr(*pos, *op, arg),
             Expr::Binary {
                 pos,
                 op: op @ (BinOp::Land | BinOp::Lor),
                 lhs,
                 rhs,
             } => self.select(*pos, *op, lhs, rhs),
-            Expr::Binary { pos, op, lhs, rhs } => {
-                let a = self.operand(*pos, lhs)?;
-                let (a, b) = self.operand_after(*pos, a, rhs)?;
-                self.comparable(*pos, *op, &a, &b)?;
-                if matches!(op, BinOp::Eq | BinOp::Ne)
-                    && (self.opnd_is_agg(&a) || self.opnd_is_agg(&b))
-                {
-                    return Ok(Some(Out::Made(self.agg_eq(*pos, *op, &a, &b)?)));
-                }
-                match (a, b) {
-                    (Opnd::Static(a), Opnd::Static(b)) if !self.is_agg(&a) && !self.is_agg(&b) => {
-                        Ok(Some(Out::Made(Val::Static(
-                            self.binary(*pos, *op, &a, &b)?,
-                        ))))
-                    }
-                    (a, b) => Ok(Some(Out::Made(self.hw_binary(*pos, *op, a, b)?))),
-                }
-            }
+            Expr::Binary { pos, op, lhs, rhs } => self.binary_expr(*pos, *op, lhs, rhs),
             Expr::Cond { pos, cond, yes, no } => self.cond(*pos, cond, yes, no),
             Expr::Call {
                 pos,
