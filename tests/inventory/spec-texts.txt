@@ -27,7 +27,6 @@ rust | S007 Arity of `read` | 314
 rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
 lean | S001 Query operand | 377
-rust | S010 `@typeInfo` of a value | 345
 fix | S010 `@typeInfo` of a value | 377
 rust | S016 Mutation in a builtin argument | 345
 rust | S016 Graph effect in a builtin argument | 345
@@ -71,7 +70,6 @@ unlisted | S002 the field `{}` is already declared | 354
 unlisted | S002 the variant `{}` is already declared in this enu | 354
 unlisted | S003 `{}` is not {} | 354
 unlisted | S003 unscannable crates/resolve/src/walk.rs | 354
-unlisted | S004 a builtin is not supported yet | 380
 unlisted | S004 {} is not supported yet | 354
 unlisted | S005 `{}` is {}; a static position needs a static val | 354
 unlisted | S006 a `comptime fn` has no memory port call | 354
