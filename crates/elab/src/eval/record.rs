@@ -262,6 +262,12 @@ impl Evaluator<'_> {
             },
             _ => return Ok(()),
         };
+        self.enum_field_error(pos, f, t)
+    }
+
+    /// The `S010` of a field or a selector `f` of the enum type `t`, with the bits of the enum
+    /// as the fix.
+    pub(super) fn enum_field_error<T>(&self, pos: Pos, f: &str, t: TyId) -> Res<T> {
         fail(
             Code::S010,
             pos,
