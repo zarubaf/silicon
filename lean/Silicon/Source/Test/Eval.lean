@@ -463,8 +463,8 @@ def skipped (locals : Nat) : String :=
 #guard intText (2 ^ 256 - 1) == toString ((2 : Int) ^ 256 - 1)
 #guard intText (2 ^ 256) == "an integer of 257 bits"
 #guard intText (-(2 ^ 6400000)) == "a negative integer of 6400001 bits"
-#guard Eval.strText "abc" == "abc"
-#guard Eval.strText (String.ofList (List.replicate 100 'a')) ==
+#guard strText "abc" == "abc"
+#guard strText (String.ofList (List.replicate 100 'a')) ==
   String.ofList (List.replicate 64 'a') ++ "... (100 characters)"
 #guard out "" "UInt[1 << 6400000]" 100008 == "S012 1:1"
 #guard out "" "Nat(-(1 << 6400000))" 400000 == "S012 1:1"
