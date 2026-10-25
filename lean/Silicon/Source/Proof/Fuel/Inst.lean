@@ -195,8 +195,8 @@ theorem typeOfPart_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : Resolve.Expr) :
     Follows m (typeOfPart k p x) (typeOfPart m p x) := by
   rw [typeOfPart.eq_def k, typeOfPart.eq_def m]
-  follows [he, name_f he ht, queryWalk_f he, queryTy_f, need_f, guardedBy_f, selectionKey_f,
-    entryVal_f]
+  follows [he, name_f he ht, constItem_f he ht, queryWalk_f he, queryTy_f, need_f, guardedBy_f,
+    selectionKey_f, entryVal_f]
 
 theorem entryDecl_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (input : Bool) (x : Binder)
