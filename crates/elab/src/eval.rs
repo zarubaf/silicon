@@ -639,49 +639,6 @@ impl Evaluator<'_> {
         Ok(d)
     }
 
-    /// Whether what `s` finds is a hardware value or a hardware aggregate (Lean `Val.hasHw`).
-    fn seen_has_hw(&self, s: Seen<'_>) -> bool {
-        match s {
-            Seen::Hw(_) => true,
-            Seen::Agg(a) => a.leaves(&self.tys) > 0,
-            _ => false,
-        }
-    }
-
-    /// The check of an open builtin argument at the node `pos` (section 9.4, Lean `argHw`).
-    /// Under the record `Node`, a result with a hardware leaf is `S011` "Value not static" at
-    /// `pos`. A reference to a part of a local reads the root first: a root without a hardware
-    /// leaf has no part with one, and a root with one failed at its own node, so the check never
-    /// walks the path of a long chain.
-    fn arg_hw(&self, pos: Pos, out: &Out) -> Res<()> {
-        if self.arg != Some(ArgRec::Node) {
-            return Ok(());
-        }
-        let hw = match out {
-            Out::Ref(r) if !r.path.is_empty() => match self.store.root(&r.root) {
-                Val::Static(_) => false,
-                Val::Agg(a) if a.leaves(&self.tys) == 0 => false,
-                _ => self.seen_has_hw(self.store.at(r)),
-            },
-            _ => self.seen_has_hw(self.store.seen(out)),
-        };
-        if hw {
-            return fail(Code::S011, pos, self.not_static(self.store.seen(out)));
-        }
-        Ok(())
-    }
-
-    /// `arg_hw` for an operand.
-    fn arg_hw_opnd(&self, pos: Pos, o: &Opnd) -> Res<()> {
-        match o {
-            Opnd::Hw(h) if self.arg == Some(ArgRec::Node) => {
-                fail(Code::S011, pos, self.not_static(Seen::Hw(*h)))
-            }
-            Opnd::Hw(_) => Ok(()),
-            Opnd::Static(out) => self.arg_hw(pos, out),
-        }
-    }
-
     /// The root of a read. The root of a place that is the whole argument of a builtin reads no
     /// value, so it has the record `Place`.
     fn eval_root(&mut self, root: &Expr, place: bool) -> Res<Option<Out>> {

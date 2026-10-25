@@ -6,7 +6,7 @@
 
 use super::container::Piece;
 use super::list::Typed;
-use super::{Evaluator, Opnd, Out, Res, at, fail, no_type};
+use super::{ArgRec, Evaluator, Opnd, Out, Res, at, fail, no_type};
 use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Seen, Val};
@@ -126,6 +126,49 @@ impl Evaluator<'_> {
             Seen::Static(_) => Ok(()),
             Seen::Pending(q, _) => no_type(q),
             s => fail(Code::S011, pos, self.not_static(s)),
+        }
+    }
+
+    /// Whether what `s` finds is a hardware value or a hardware aggregate (Lean `Val.hasHw`).
+    fn seen_has_hw(&self, s: Seen<'_>) -> bool {
+        match s {
+            Seen::Hw(_) => true,
+            Seen::Agg(a) => a.leaves(&self.tys) > 0,
+            _ => false,
+        }
+    }
+
+    /// The check of an open builtin argument at the node `pos` (section 9.4, Lean `argHw`).
+    /// Under the record `Node`, a result with a hardware leaf is `S011` "Value not static" at
+    /// `pos`. A reference to a part of a local reads the root first: a root without a hardware
+    /// leaf has no part with one, and a root with one failed at its own node, so the check never
+    /// walks the path of a long chain.
+    pub(super) fn arg_hw(&self, pos: Pos, out: &Out) -> Res<()> {
+        if self.arg != Some(ArgRec::Node) {
+            return Ok(());
+        }
+        let hw = match out {
+            Out::Ref(r) if !r.path.is_empty() => match self.store.root(&r.root) {
+                Val::Static(_) => false,
+                Val::Agg(a) if a.leaves(&self.tys) == 0 => false,
+                _ => self.seen_has_hw(self.store.at(r)),
+            },
+            _ => self.seen_has_hw(self.store.seen(out)),
+        };
+        if hw {
+            return fail(Code::S011, pos, self.not_static(self.store.seen(out)));
+        }
+        Ok(())
+    }
+
+    /// `arg_hw` for an operand.
+    pub(super) fn arg_hw_opnd(&self, pos: Pos, o: &Opnd) -> Res<()> {
+        match o {
+            Opnd::Hw(h) if self.arg == Some(ArgRec::Node) => {
+                fail(Code::S011, pos, self.not_static(Seen::Hw(*h)))
+            }
+            Opnd::Hw(_) => Ok(()),
+            Opnd::Static(out) => self.arg_hw(pos, out),
         }
     }
 
