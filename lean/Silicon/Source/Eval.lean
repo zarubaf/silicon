@@ -2,6 +2,7 @@
 import Silicon.Source.Check
 import Silicon.Source.Eval.Inst
 import Silicon.Source.Eval.Reflect
+import Silicon.Source.Eval.Field
 
 /-!
 The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the front-end
@@ -2250,24 +2251,37 @@ def portPart (p : Pos) (id : Nat) (path : Path) (q : Port) : M Out := do
   return ⟨r, !(r matches .static _), none⟩
 
 /-!
-The scalar port with the symbol `y` and the name `name` at `p` of a child with the interface
-`iface`. A family of the child without a key is `S010` "Family as a value" (section 5.6). No
-symbol is no port.
+The family `{x}` of the text "Family as a value" for the name `name` of a family of a child. A
+field `u.f` gives the name. A key of `@field` gives its base `b` as the source writes it, then `.`
+and the name (section 6.2). Each part has the limit of a string in a message (section 5.5). Thus
+the fix names the full selection `u.req[k]`.
 -/
-def portFind (p : Pos) (iface : Iface) (y : Option Nat) (name : String) : M Port := do
+def familyName (b : Option Resolve.Expr) (name : String) : String :=
+  match b with
+  | none => name
+  | some b => s!"{strText (b.source.print Print.postfixLevel)}.{strText name}"
+
+/-!
+The scalar port with the symbol `y` and the name `name` at `p` of a child with the interface
+`iface` and the instance type `ty`. A family of the child without a key is `S010` "Family as a
+value" (section 5.6), with the base `b` of an `@field` in its text (`familyName`). No symbol is
+no port: `S010` "No public port".
+-/
+def portFind (p : Pos) (iface : Iface) (ty : Ty) (y : Option Nat) (name : String)
+    (b : Option Resolve.Expr := none) : M Port := do
   match y >>= fun y => iface.ports[((y, none) : PortId)]? with
   | some q => pure q
   | none =>
-    if y.any iface.families.contains then fail .S010 p (Elab.familyValueText name)
-    fail .S010 p s!"the instance has no port `{name}`"
+    if y.any iface.families.contains then fail .S010 p (Elab.familyValueText (familyName b name))
+    fail .S010 p (Elab.noPortText ty.text name)
 
 /-!
 The port with the symbol `y` and the name `name` at `p` of the child number `id` with the path
-`path` and the interface `iface` (`portFind`, then `portPart`).
+`path`, the interface `iface`, and the type `ty` (`portFind`, then `portPart`).
 -/
-def portOf (p : Pos) (id : Nat) (path : Path) (iface : Iface) (y : Option Nat) (name : String) :
-    M Out := do
-  portPart p id path (← portFind p iface y name)
+def portOf (p : Pos) (id : Nat) (path : Path) (iface : Iface) (ty : Ty) (y : Option Nat)
+    (name : String) : M Out := do
+  portPart p id path (← portFind p iface ty y name)
 
 /-!
 The part that the field `f` at `p` selects from the base `o`. On an `Instance` handle it is the
@@ -2275,7 +2289,8 @@ child port (`portOf`). Another base gives its data field.
 -/
 def fieldPart (p : Pos) (o : Out) (f : Ident) : M Out := do
   match o.value with
-  | .handle (.inst id path iface _) => portOf p id path iface ((← read).field f.pos) f.name
+  | .handle (.inst id path iface ty) =>
+    portOf p id path iface ty ((← read).field f.pos) f.name
   | v => do
     -- A data field selection is a data context (section 9.2), so an input handle is S017.
     let w ← if v matches .handle (.res ..) | .handle (.input ..) then baseData p v
@@ -2353,6 +2368,63 @@ def childSel (ev : Resolve.Expr → M (Option Out)) (p q : Pos) (o : Out) (f : I
   return some (← childEntry p k.pos id path iface ty y f.name key)
 
 /-!
+The port that the key of `@field` at `kp` with the base `b` selects (section 9.3, step 8 of the
+**`@field` order**). The child has the interface `iface` and the type `ty`. The key has the
+symbol `y` and the name `name`. A scalar key selects as `u.name` does (`portFind`). There a
+family is "Family as a value", with the base in its text, and no port is "No public port". An
+indexed key `name[k]` selects as `u.name[k]` does (`childPort`). There a family without the key
+`k` is `S013` "Child family key". A child without the family `name` is "No public port", with
+the public name `name[k]`.
+-/
+def keyPort (kp : Pos) (iface : Iface) (ty : Ty) (b : Resolve.Expr) (y : Option Nat)
+    (name : String) : Option Nat → M Port
+  | none => portFind kp iface ty y name (some b)
+  | some k => do
+    if let some y := y then
+      if iface.families.contains y then return ← childPort kp iface ty y name k
+    fail .S010 kp (Elab.noPortText ty.text (entryText name (some k)))
+
+/-!
+Steps 5 to 9 of `@field` at `p` in an expression, with the base `b` of the value `o` and the
+static key `key` at `kp` (section 6.2, **`@field` order**). A register, a wire, and an own output
+read as the base of an ordinary selection does (`baseData`), and so does a child input
+(`S017`). A container of handles reads nothing, so its part keeps its handle. Another base than a
+record, an enum, an array, a list, a tuple, or an `Instance` handle is "Base of `@field`" at the
+base. Then the key gets its kind checks (`fieldKeyOf`). The selection is the ordinary one: a
+field (`fieldKeyBy`), an index (`pick`), or a child port (`keyPort`, `portPart`). The errors of
+the look-up and of the range are at the key. The part refers to its base, so it charges no size.
+-/
+def fieldOut (p : Pos) (b : Resolve.Expr) (kp : Pos) (o : Out) (key : Value) : M Out := do
+  let v ← match o.value with
+    | v@(.handle (.res ..)) | v@(.handle (.input ..)) | v@(.pending ..) => baseData p v
+    | v => pure v
+  let some base := v.fieldBase? | fail .S010 b.pos (fieldBaseText v.about)
+  match ← fieldKeyOf kp base (fun _ => v.about) key with
+  | .field y name => return part o v (← fieldKeyBy p kp y name (strText name) v).2.1
+  | .index k => return part o v (← pick p kp v k)
+  | .port id path iface ty y name k => portPart p id path (← keyPort kp iface ty b y name k)
+
+/-!
+Steps 5 to 9 of an `@field` step at `p` of a query operand (section 6.2, **`@TypeOf` order**). The
+step is on the part `q`, with the base `b` and the static key `key` at `kp`. It reads no register
+and no wire: a part that keeps only its type selects in the type. The base kind and the key kind
+check as in an expression (`fieldKeyOf`). Then the step selects as a field, an index, or a child
+port of a query (`queryStep`, `keyPort`, `portQuery`).
+-/
+def queryField (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) : M Query := do
+  let (base, a) : Option FieldBase × (Unit → String) := match q with
+    | .type t => (Ty.fieldBase? t, fun _ => Ty.about t)
+    | .value v _ =>
+      match v.typeOnly? with
+      | some t => (Ty.fieldBase? t, fun _ => Ty.about t)
+      | none => (v.fieldBase?, fun _ => v.about)
+  let some base := base | fail .S010 b.pos (fieldBaseText (a ()))
+  match ← fieldKeyOf kp base a key with
+  | .field y name => queryStep q (.field kp y name (strText name))
+  | .index k => queryStep q (.index p kp k)
+  | .port id path iface ty y name k => return portQuery id path (← keyPort kp iface ty b y name k)
+
+/-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
 charges 1, then its index evaluates by `ev` in a structural context (section 9.4) and is static
 (`S011`). Another step has no index here.
@@ -2369,6 +2441,8 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
     | .index q _ =>
       charge q 1
       fail .S010 q "an index of a value has one argument"
+    -- TODO(#344): the key of an `@field` step of a `:=` target (section 9.3).
+    | .key q .. => fail .S004 q "a builtin is not supported yet"
     | _ => keys := keys.push (sel, none)
   return keys.toList
 
@@ -2405,7 +2479,7 @@ def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M 
       let y := ((← read).field f.pos).getD 0
       queryWalk ev (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
     | _, rest => do
-      let port ← portFind fp iface ((← read).field f.pos) f.name
+      let port ← portFind fp iface ty ((← read).field f.pos) f.name
       queryWalk ev (portQuery id path port) rest
   | q, .index p [i] :: rest => do
     charge p 1
@@ -2419,12 +2493,18 @@ def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M 
   | q, .field p f :: rest => do
     charge p 1
     queryWalk ev (← queryStep q (.field p ((← read).field f.pos) f.name f.name)) rest
+  | q, .key p b k :: rest => do
+    charge p 1
+    queryWalk ev (← queryField p b k.pos q (← queryKey ev k)) rest
 termination_by _ sels => sels.length
 
 /-!
 A step `sel` of a place from the part `cur` with the type `ty` (section 5.2). The step charges 1
 at its node before it applies. Then the index of an index step evaluates by `ev` and checks
-against `cur`. The result is the number of the part, the part, and its type.
+against `cur`. The key of an `@field` step evaluates by `ev` with no guard of its own, after the
+window of the root opened (section 9.1). It is static (`S011`), then it gets the checks of
+`@field` (`fieldKeyOf`) and selects as an index or a field of a place. The result is the number
+of the part, the part, and its type.
 -/
 def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty) (sel : Sel) :
     M (Nat × Val × Option Ty) := do
@@ -2440,6 +2520,18 @@ def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty
     | .field q f => do
       let (k, w, ft) ← fieldKey q f cur
       pure (k, w, some ft)
+    | .key q b i => do
+      let o ← need i (← ev i)
+      staticValue i.pos "a key of `@field`" o.value
+      let key ← static i.pos o.value
+      let some base := cur.fieldBase? | fail .S010 b.pos (fieldBaseText cur.about)
+      match ← fieldKeyOf i.pos base (fun _ => cur.about) key with
+      | .index k => do
+        let (j, w) ← pickKey q i.pos cur k
+        pure (j, w, none)
+      | .field y name | .port _ _ _ _ y name _ => do
+        let (j, w, ft) ← fieldKeyBy q i.pos y name (strText name) cur
+        pure (j, w, some ft)
   let ty := match ft, ty with
     | some t, _ => some t
     | none, some t => partTy t k
@@ -2694,8 +2786,20 @@ mutual
         let vs ← operands n xs fun _ o => pure o.value
         return some ⟨← variantOf p t j vs, false, none⟩
       | .builtin p .typeOf [x] => return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
-      -- TODO(#344): evaluate `@field` (section 9.3).
-      | .builtin p .. => fail .S004 p "a builtin is not supported yet"
+      | .builtin p .field [b, k] => do
+        let o ← need b (← eval n b)
+        let c ← changesOf o
+        hold o
+        let key ← need k (← eval n k)
+        release o
+        staticValue k.pos "a key of `@field`" key.value
+        let r ← fieldOut p b k.pos o (← static k.pos key.value)
+        -- A key that changed the root reads an old part: it pays the copy, and the result is a
+        -- new value, as for an index (section 5.4).
+        if (← changesOf o) == c then return some r
+        charge p r.value.size
+        return some ⟨r.value, false, none⟩
+      | .builtin p b xs => fail .S001 p (b.arityText xs.length)
       | .«match» p x as => do
         let v ← data x.pos (← need x (← eval n x)).value
         let t ← scrutTy x.pos v

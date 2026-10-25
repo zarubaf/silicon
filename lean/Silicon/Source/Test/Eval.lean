@@ -3858,9 +3858,85 @@ def readText (a : String) : String :=
 #guard out "fn f() -> Int { let read = 3; return read; }" "f()" == "(int 3)"
 #guard out "fn f(read: Int) -> Int { return read; }" "f(4)" == "(int 4)"
 
-/-! `@field` evaluates in a later step of #344. Until then, it is `S004` at its `@`. -/
-#guard out "const C: (Nat,) = (1,);" "1 + @field(C, 0)" == "S004 1:5"
-#guard out "fn f() -> Type { let t = (1,); return @TypeOf(@field(t, 0)); }" "f()" == "S004 1:47"
+/-!
+`@field` (section 9.3). After its base and its key, it is the ordinary selection. A `String`
+selects a field of a record, and a `Nat` an element of an array, a list, or a tuple. The key can
+be any static expression, also a call.
+-/
+def fieldDefs : String :=
+  "struct P { a: UInt[8], b: Bool }\nenum E: UInt[2] { X = 0, Y = 1 }\n" ++
+  "const R: P = P(3, true);\nconst A: [Nat; 3] = [5, 6, 7];\n" ++
+  "const T: (Nat, Bool) = (1, false);\n" ++
+  "const S: String = \"s\";\nfn one() -> Nat { return 1; }\n"
+def fieldFnOf (b : String) : String := fieldDefs ++ "fn f() -> Nat {\n" ++ b ++ "  return 0;\n}\n"
+#guard out "const C: (Nat,) = (1,);" "1 + @field(C, 0)" == "(int 2)"
+#guard out fieldDefs "@field(R, \"a\")" == "(uint 8 3)"
+#guard out fieldDefs "@field(R, \"b\")" == "(bool true)"
+#guard out fieldDefs "@field(A, 2)" == "(int 7)"
+#guard out fieldDefs "@field(T, 1)" == "(bool false)"
+#guard out fieldDefs "@field(A, one())" == "(int 6)"
+#guard out fieldDefs "@field(R, \"a\" + \"\")" == "(uint 8 3)"
+#guard out "fn f() -> Nat { let mut l = list(Nat); push(l, 9); return @field(l, 0); }" "f()" ==
+  "(int 9)"
+#guard out "fn f() -> Type { let t = (1,); return @TypeOf(@field(t, 0)); }" "f()" == "(type int)"
+#guard out (fieldDefs ++ "fn f() -> Type {\n  let p = P(1, false);\n" ++
+    "  return @TypeOf(@field(p, \"b\"));\n}\n") "f()" == "(type bool)"
+#guard out "fn f() -> Type { let t: (Nat,) = (1,); return @TypeOf(@field(t, 0)); }" "f()" ==
+  "(type nat)"
+
+/-!
+An `@field` selection of a place is a place (section 9.3): an assignment target and the base of
+a longer place.
+-/
+#guard out (fieldDefs ++ "fn f() -> P { let mut p = P(1, false); @field(p, \"a\") = 7; return p; }")
+    "f()" == "(record (struct root P ()) ((uint 8 7) (bool false)))"
+#guard out "fn f() -> [Nat; 2] { let mut x = [1, 2]; @field(x, 1) = 5; return x; }" "f()" ==
+  "(array nat ((int 1) (int 5)))"
+#guard out (fieldDefs ++ "fn f() -> UInt[8] {\n  let mut xs = [P(1, false), P(2, true)];\n" ++
+    "  @field(xs, 1).a = 9;\n  return @field(@field(xs, 1), \"a\");\n}\n") "f()" == "(uint 8 9)"
+
+/-!
+The checks of `@field` (section 6.2, **`@field` order**). Another base is "Base of `@field`" at
+the base. A key of another kind is "Key of `@field`", also a static `UInt` for an array. A
+negative `Nat` key is `S012`, and a key out of range is `S013` with the texts of an index. A
+`String` key on an enum is "Field of an enum". A record without the field is "No field", and its
+key has the limit of a string. Each error of the key is at the key.
+-/
+#guard out fieldDefs "@field(S, 0)" == "S010 1:8"
+#guard msg fieldDefs "@field(S, 0)" == "`@field` selects in a record, an array, a list, a " ++
+  "tuple, or an instance, not a value of `String`; select from such a value"
+#guard out fieldDefs "@field(A, \"a\")" == "S010 1:11"
+#guard msg fieldDefs "@field(A, \"a\")" ==
+  "`@field` on a value of `[Nat; 3]` takes `Nat`, not a value of `String`; give a static `Nat`"
+#guard out fieldDefs "@field(A, UInt[4](1))" == "S010 1:11"
+#guard out fieldDefs "@field(R, 0)" == "S010 1:11"
+#guard out fieldDefs "@field(A, -1)" == "S012 1:11"
+#guard out fieldDefs "@field(A, 3)" == "S013 1:11"
+#guard msg fieldDefs "@field(A, 3)" == "the index 3 is out of range for 3 element(s)"
+#guard out fieldDefs "@field(E::X, \"a\")" == "S010 1:14"
+#guard msg fieldDefs "@field(E::X, \"a\")" == "`E` is an enum and has no field `a`; read a " ++
+  "payload with `match`, or the bits with `reinterpret(UInt[2], e)`"
+#guard msg fieldDefs "@field(E::X, 0)" ==
+  "`@field` on a value of `E` takes `String`, not a value of `Int`; give a static `String`"
+#guard out fieldDefs "@field(R, \"zz\")" == "S010 1:11"
+#guard msg fieldDefs "@field(R, \"zz\")" ==
+  "`P` has no field `zz`; select a field that `P` declares"
+#guard msg fieldDefs ("@field(R, \"" ++ String.ofList (List.replicate 70 'z') ++ "\")") ==
+  s!"`P` has no field `{String.ofList (List.replicate 64 'z')}... (70 characters)`; select a " ++
+    "field that `P` declares"
+-- A field selection `x.f` on a record has the same text.
+#guard msg fieldDefs "R.zz" == "`P` has no field `zz`; select a field that `P` declares"
+
+/-!
+The charges (section 5.4): the node 1, then the base and the key. A `String` key charges its size
+again for the look-up, before the look-up reads it. The selection refers to the part, so it
+charges no size. Thus `@field(p, "a")` costs 5 more than `p.a`: the key node 1, its size 2, and
+the look-up 2. A `Nat` key costs as an index.
+-/
+#guard cost (fieldFnOf "  let p = P(1, false);\n  let y = p.a;\n") "f()" == 46
+#guard exact (fieldFnOf "  let p = P(1, false);\n  let y = @field(p, \"a\");\n") "f()" (46 + 5)
+#guard cost (fieldFnOf "  let t = (1, 2);\n  let y = t[1];\n") "f()" == 23
+#guard exact (fieldFnOf "  let t = (1, 2);\n  let y = @field(t, 1);\n") "f()" 23
 
 /-!
 `@TypeOf` (sections 5.4 and 9.3). A root that names no binding evaluates the whole operand as an

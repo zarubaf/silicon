@@ -3265,7 +3265,8 @@ def kidBinds : String := "  u.req[0] := a;\n  u.req[1] := a;\n"
 #guard par (kidBinds ++ "  o := u.idle[0];\n") == s!"S013 17:15 {childKey "idle" "0"}"
 #guard par (kidBinds ++ "  o := u.gnt;\n") == s!"S010 17:8 {famValue "gnt"}"
 #guard par (kidBinds ++ "  let x = u.gnt;\n  o := a;\n") == s!"S010 17:11 {famValue "gnt"}"
-#guard par (kidBinds ++ "  o := u.nope[0];\n") == "S010 17:8 the instance has no port `nope`"
+#guard par (kidBinds ++ "  o := u.nope[0];\n") ==
+  s!"S010 17:8 {Elab.noPortText "Instance[C]" "nope"}"
 
 /-! The order of a child selection: the index arity, then the key checks, then `S013`. -/
 #guard par (kidBinds ++ "  o := u.gnt[3, diagnostic(\"k\", 3)];\n") ==
@@ -3602,8 +3603,8 @@ def keyBinds : String := "  u.k_in := a;\n  u.l[0] := a;\n  u.l[1] := a;\n"
 #guard keyPar (keyBinds ++ "  u.k_out := a;\n  o := a;\n") ==
   s!"S017 26:3 {Elab.outputText "k_out"}"
 #guard keyPar (keyBinds ++ "  u.x := a;\n  o := a;\n") ==
-  "S010 26:3 the instance has no port `x`"
-#guard keyPar (keyBinds ++ "  o := u.h[0];\n") == "S010 26:8 the instance has no port `h`"
+  "S010 26:3 `Instance[C]` has no public port `x`; select a port that `Instance[C]` declares"
+#guard keyPar (keyBinds ++ "  o := u.h[0];\n") == s!"S010 26:8 {Elab.noPortText "Instance[C]" "h"}"
 #guard keyPar (keyBinds ++ "  u.l[2] := a;\n  o := a;\n") ==
   "S013 26:7 the child `Instance[C]` has no entry `l[2]`; select a key that `Instance[C]` " ++
     "declares"
@@ -3738,5 +3739,135 @@ core name.
   (total (tyMod "  let t = @TypeOf(req[3].b);\n") "M")
 #guard names (tyMod "  let t = @TypeOf(rg.b);\n  let v = @TypeOf(u.q.b);\n") "M" "M" ==
   names (tyMod "") "M" "M"
+
+/-!
+`@field` in a module (section 9.3). On an `Instance` handle, a `String` key and a scalar `PortKey`
+select a public port. This includes a port that a helper of the child declares with a computed name:
+its symbol is in the run-time table. An indexed `PortKey` selects an entry of a family. A register
+base reads as the base of `rp.a` does, in a `data` and in a `raw` position. A temporary record of
+handles and a temporary array of instances give their part, and the context then applies to it.
+-/
+def fdKid : String :=
+  "struct P { a: UInt[4], b: Bool }\nstruct RH { r: Reg[UInt[4]] }\n" ++
+  "fn lane(comptime k: Nat) -> UInt[4] {\n  input req[k]: UInt[4];\n" ++
+  "  output gnt: UInt[4] as PortKey(\"gnt\", true, k);\n" ++
+  "  output tap: UInt[4] as \"tap\" + str(k);\n  gnt := req[k] +% 1;\n  tap := req[k];\n" ++
+  "  return req[k];\n}\nmodule C() domains() {\n  input a: UInt[4];\n  output sum: UInt[4];\n" ++
+  "  let x = lane(0);\n  let y = lane(2);\n  sum := x +% y +% a;\n}\n"
+def fdMod (body : String) (fs : String := "") : String :=
+  fdKid ++ fs ++ "module M() domains(clk) {\n  input x: UInt[4];\n  output o: UInt[4];\n" ++
+  "  reg r: UInt[4] = 0;\n  reg rp: P = P(0, false);\n  instance u = C();\n" ++
+  "  instance v = C();\n  u.req[0] := x;\n  u.req[2] := x;\n  u.a := x;\n  v.req[0] := x;\n" ++
+  "  v.req[2] := x;\n  v.a := x;\n  r := x;\n  rp := P(x, true);\n" ++ body ++ "}\n"
+def fdRun (body : String) (fs : String := "") : String := failure (fdMod body fs) 100000000
+def fdCore (body : String) (xs : List String) : Bool :=
+  match Cli.elabText {} (fdMod body) "M()" with
+  | .ok t => xs.all (t.contains ·)
+  | _ => false
+
+#guard fdCore ("  o := @field(u, PortKey(\"gnt\", true, 2));\n  let y = @field(rp, \"a\");\n" ++
+    "  let s = @field(u, \"tap\" + \"2\");\n  let w = @field(u, PortKey(\"sum\", false, 0));\n")
+  ["(assign o u.gnt$2f)", "(let y (bits 4) rp$a)", "(let s (bits 4) u.tap2)",
+    "(let w (bits 4) u.sum)"]
+#guard fdRun "  o := @field(u, \"sum\");\n" == "ok"
+#guard fdRun "  o := @field(rp, \"a\");\n" == "ok"
+#guard fdRun "  let h = @field(RH(r), \"r\");\n  o := h;\n" == "ok"
+#guard fdRun "  o := @field([u, v], 1).sum;\n" == "ok"
+#guard fdRun "  o := @field([1, 2, 3], one());\n" "fn one() -> Nat { return 1; }\n" == "ok"
+
+/-!
+The checks of a key on an `Instance` handle (sections 6.2 and 9.3). A `String` or a scalar
+`PortKey` that names a family is "Family as a value". Its text holds the base and the name, so
+the fix names `u.req[k]`. A name of no public port is "No public port", also for an indexed
+`PortKey`, with the limit of a string. A family without the key is "Child family key". An index
+of 2^32 is "Family key range", and a scalar index other than 0 is "Scalar key index". Another
+key is "Key of `@field`". Each is at the key.
+-/
+#guard fdRun "  o := @field(u, \"req\");\n" == s!"S010 33:18 {Elab.familyValueText "u.req"}"
+#guard fdRun "  o := @field(u, \"req\");\n" == "S010 33:18 `u.req` is a port family, not a " ++
+  "value; select one port with `u.req[k]`"
+#guard fdRun "  o := @field(u, PortKey(\"req\", false, 0));\n" ==
+  s!"S010 33:18 {Elab.familyValueText "u.req"}"
+#guard fdRun "  o := @field(u, \"zz\");\n" ==
+  "S010 33:18 `Instance[C]` has no public port `zz`; select a port that `Instance[C]` declares"
+#guard fdRun "  o := @field(u, PortKey(\"zz\", true, 1));\n" ==
+  s!"S010 33:18 {Elab.noPortText "Instance[C]" "zz[1]"}"
+#guard fdRun "  o := @field(u, PortKey(\"sum\", true, 1));\n" ==
+  s!"S010 33:18 {Elab.noPortText "Instance[C]" "sum[1]"}"
+#guard fdRun ("  o := @field(u, \"" ++ String.ofList (List.replicate 70 'z') ++ "\");\n") ==
+  s!"S010 33:18 `Instance[C]` has no public port `{String.ofList (List.replicate 64 'z')}... " ++
+    "(70 characters)`; select a port that `Instance[C]` declares"
+#guard fdRun "  o := @field(u, PortKey(\"req\", true, 5));\n" ==
+  s!"S013 33:18 {Elab.childKeyText "Instance[C]" "req" 5}"
+#guard fdRun "  o := @field(u, PortKey(\"req\", true, 4294967296));\n" ==
+  s!"S012 33:18 {Elab.keyRangeText 4294967296}"
+#guard fdRun "  o := @field(u, PortKey(\"sum\", false, 1));\n" ==
+  s!"S022 33:18 {Elab.scalarIndexText 1}"
+#guard fdRun "  o := @field(u, 3);\n" == "S010 33:18 `@field` on a handle of `Instance[C]` " ++
+  "takes `String` or `PortKey`, not a value of `Int`; give a static `String` or `PortKey`"
+#guard (fdRun "  o := @field(u, UInt[4](1));\n").startsWith "S010 33:18 `@field` on a handle"
+-- A user struct named `PortKey` is another type.
+def fdUserKey (body : String) : String :=
+  failure ("struct PortKey { name: String, indexed: Bool, index: Nat }\n" ++
+    "module C() domains() {\n  output q: UInt[4];\n  q := 1;\n}\n" ++
+    "module M() domains() {\n  output o: UInt[4];\n  instance u = C();\n" ++ body ++ "}\n")
+    100000000
+#guard fdUserKey "  o := @field(u, \"q\");\n" == "ok"
+#guard (fdUserKey "  o := @field(u, PortKey(\"q\", false, 0));\n").startsWith
+  "S010 9:18 `@field` on a handle of `Instance[C]` takes `String` or `PortKey`"
+
+/-!
+The key is static (`S011`): a handle gives "Handle at a static position", and another hardware
+value "Value not static". Pass 4 finds such a key in a module body (`S005`), so a function
+parameter carries it here. The part then takes the context of the position: a child input in a
+`data` context is `S017`, and an instance is "Instance as data".
+-/
+def fdKeys : String :=
+  "fn hk(r: Reg[UInt[4]]) -> UInt[4] { let a = [1, 2]; return @field(a, r); }\n" ++
+  "fn vk(x: UInt[4]) -> UInt[4] { let a = [1, 2]; return @field(a, x); }\n"
+#guard fdRun "  o := hk(r);\n" fdKeys == "S011 18:70 a key of `@field` holds the register " ++
+  "`r`, but it takes only static values; pass the data through a port, or use it in the " ++
+  "module that declares it"
+#guard (fdRun "  o := vk(x);\n" fdKeys).startsWith "S011 19:65 a static position needs"
+#guard match Cli.load 4096 (fdMod "  o := @field([1, 2], r);\n") with
+  | .error e => (e.code, e.pos.line, e.pos.col) == (.S005, 33, 23)
+  | .ok _ => false
+#guard fdRun "  o := @field(u, \"a\");\n" == "S017 33:3 the input `a` of `u` is a target only; " ++
+  "read the value that you bind to it"
+#guard fdRun "  o := @field([u, v], 0);\n" ==
+  "S010 33:3 `u` is an instance, not data; read its outputs as `u.q`"
+
+/-!
+The charges (section 5.4). `@field(u, "sum")` costs 9 more than `u.sum`: the key node 1, its size
+4, and the look-up 4. An indexed `PortKey` in a local costs the node 1, the name `k` 1, and the
+look-up of `gnt` 4. That is 2 more than `u.gnt[2]`, whose index and key cost 5.
+-/
+#guard total (fdMod "  o := u.sum;\n") "M()" == 750
+#guard exact (fdMod "  o := @field(u, \"sum\");\n") "M()" (750 + 9)
+#guard total (fdMod "  o := u.gnt[2];\n") "M()" == 754
+#guard total (fdMod "  let k = PortKey(\"gnt\", true, 2);\n  o := x;\n") "M()" == 771
+#guard total (fdMod "  o := x;\n") "M()" == 746
+#guard exact (fdMod "  let k = PortKey(\"gnt\", true, 2);\n  o := @field(u, k);\n") "M()"
+  (771 + (754 - 746) + 2)
+#guard exact (fdMod "  o := @field(u, PortKey(\"gnt\", true, 2));\n") "M()" 779
+
+/-!
+`@field` in a `@TypeOf` operand (section 9.3) reads no register: it selects in the data type.
+It charges as a step, then its key, and a `String` key its size for the look-up. Its errors are
+at the key, and its base kind at the base. A key evaluates under the guard `query`.
+-/
+#guard tyRecords ("  let rs = [rg, rg];\n" ++ String.join (["@field(rg, \"b\")", "@field(rg.b, 1)",
+    "@field(u, \"a\")", "@field(u, PortKey(\"r\", true, 2))", "@field(u, \"q\").a",
+    "@field(@field(rs, 1), \"a\")"].map tyOf)) ==
+  [tyB, "(type (uint 4))", "(type (input (struct root P ())))", "(type (uint 3))",
+    "(type (uint 8))", "(type (uint 8))", "ok"]
+#guard tyRecords (tyOf "@field(u, \"e\")") == ["S010 21:37"]
+#guard said (tyMod (tyOf "@field(u, \"e\")")) == Elab.familyValueText "u.e"
+#guard tyRecords (tyOf "@field(mm, 0)") == ["S010 21:34"]
+#guard tyRecords (tyOf "@field(rg, 0)") == ["S010 21:38"]
+#guard tyRecords (tyOf "@field(rg, \"zz\")") == ["S010 21:38"]
+#guard tyRecords (tyOf "@field(u, \"e\" + diagnostic(\"k\", \"\"))") == ["S016 21:43"]
+#guard elabUnits (tyMod "  let t = @TypeOf(rg.b);\n") "M" == 260 + 3
+#guard elabUnits (tyMod "  let t = @TypeOf(@field(rg, \"b\"));\n") "M" == 260 + 3 + 1 + 2 + 2
 
 end Silicon.Source.Test.Elab

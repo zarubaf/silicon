@@ -527,16 +527,18 @@ def partTy : Ty → Nat → Option Ty
 
 /-!
 A step of a place after its root: an index at `pos`, a selector `.i` with its literal at `q`, or
-a field `.f`.
+a field `.f`. An `@field` selection at `pos` holds its base, for the base position and a message,
+and its key (section 9.3).
 -/
 inductive Sel where
   | index (pos : Pos) (args : List Resolve.Expr)
   | select (pos q : Pos) (i : Nat)
   | field (pos : Pos) (f : Ident)
+  | key (pos : Pos) (base key : Resolve.Expr)
 
 /-! The position of the node of a step, where the step charges. -/
 def Sel.pos : Sel → Pos
-  | .index p _ | .select p _ _ | .field p _ => p
+  | .index p _ | .select p _ _ | .field p _ | .key p .. => p
 
 /-! The root of a place and its steps from the root outward. Another target has no place. -/
 def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × List Sel) :=
@@ -544,6 +546,7 @@ def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × Li
   | .index p b xs => chain b (.index p xs :: acc)
   | .select p b q i => chain b (.select p q i :: acc)
   | .field p b f => chain b (.field p f :: acc)
+  | .builtin p .field [b, k] => chain b (.key p b k :: acc)
   | .name .. => some (e, acc)
   | _ => none
 
@@ -710,6 +713,13 @@ def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → O
     | _, _ => none
 
 /-!
+The `S010` text "No field" of section 6.2, for the struct type `t` and the field name `f`. The
+caller gives `f` the limit of a string when it comes from a key (section 5.5).
+-/
+def noFieldText (t f : String) : String :=
+  s!"`{t}` has no field `{f}`; select a field that `{t}` declares"
+
+/-!
 The number and the type of the field with the symbol `y` of the struct type `t` at `pos`. `name`
 is the name in a message, and `text` names the value. The record type holds the number of its
 specialization, and the symbol finds the number of the field, so the selection compares no name.
@@ -728,7 +738,7 @@ def fieldBy (pos : Pos) (y : Option Nat) (name : String) (t : Ty) (text : String
     return (k, ← fs[k]?.map (·.2))
   match found with
   | some r => return r
-  | none => fail .S010 pos s!"{text} has no field `{name}`"
+  | none => fail .S010 pos (noFieldText t.text name)
 
 /-!
 The field with the symbol `y` of a record at `pos`, with the name `name` in a message (`fieldBy`).

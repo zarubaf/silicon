@@ -57,9 +57,6 @@ theorem entry_f (p : Pos) (input : Bool) (x : String) (y k : Nat) (t : Ty) (b : 
     Follows cap (Elab.entry p input x y k t b) (Elab.entry p input x y k t b) := by
   unfold Elab.entry; follows [publicOf_f, publish_f, resource_f, modifyBody_f, normalize_f]
 
-theorem symbolFind_f (x : String) : Follows cap (symbolFind x) (symbolFind x) := by
-  unfold symbolFind; follows
-
 theorem symbolOf_f (x : String) : Follows cap (symbolOf x) (symbolOf x) := by
   unfold symbolOf; follows [symbolFind_f]
 
@@ -164,7 +161,7 @@ theorem queryWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
     rw [queryWalk.eq_def, queryWalk.eq_def]
     dsimp only
     follows [he, need_f, guardedBy_f, selectionKey_f, childPort_f, portFind_f, childFamily_f,
-      queryKey_f he, queryStep_f, queryWalk_f he]
+      queryKey_f he, queryStep_f, queryField_f, queryWalk_f he]
 termination_by _ sels => sels.length
 decreasing_by all_goals simp_all <;> omega
 
@@ -255,7 +252,7 @@ theorem follows_all : ∀ n,
           enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
-          familySel_f (he k), typeOfPart_f (he k) (ht k)]
+          familySel_f (he k), typeOfPart_f (he k) (ht k), staticValue_f, fieldOut_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -267,7 +264,7 @@ theorem follows_all : ∀ n,
           enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
-          familySel_f (he m), typeOfPart_f (he m) (ht m)]
+          familySel_f (he m), typeOfPart_f (he m) (ht m), staticValue_f, fieldOut_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
