@@ -3855,6 +3855,33 @@ def fdKeys : String :=
   "S010 33:3 `u` is an instance, not data; read its outputs as `u.q`"
 
 /-!
+A place cannot hold a port (section 9.3). A step of a place that selects a port of an `Instance`
+handle is "Port in a place", after the look-up. `.f` and `.f[k]` report at the start of the
+selection, and `@field` at the key. The text names the full public name. A missing port, a
+family without a key, and a missing key keep their own errors.
+-/
+def plMod (body : String) : String :=
+  failure ("module C() domains() {\n  input a[3]: Bool;\n  input b: Bool;\n}\n" ++
+    "module M() domains() {\n  instance u = C();\n  u.a[3] := true;\n  u.b := true;\n" ++
+    "  let mut us = [u];\n" ++ body ++ "}\n") 100000000
+#guard plMod "  us[0].b = true;\n" == s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "b"}"
+#guard plMod "  us[0].b = true;\n" == "S010 10:3 a place cannot select the port `b` of " ++
+  "`Instance[C]`; bind the input with a `:=` target, for example `u.b := e`"
+#guard plMod "  us[0].a[3] = true;\n" ==
+  s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "a[3]"}"
+#guard plMod "  @field(us[0], PortKey(\"a\", true, 3)) = true;\n" ==
+  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "a[3]"}"
+#guard plMod "  @field(us[0], \"b\") = true;\n" ==
+  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "b"}"
+#guard plMod "  let mut x = u;\n  x.b = true;\n" ==
+  s!"S010 11:3 {Elab.portPlaceText "Instance[C]" "b"}"
+#guard plMod "  us[0].zz = true;\n" == s!"S010 10:3 {Elab.noPortText "Instance[C]" "zz"}"
+#guard plMod "  @field(us[0], \"zz\") = true;\n" ==
+  s!"S010 10:17 {Elab.noPortText "Instance[C]" "zz"}"
+#guard plMod "  us[0].a = true;\n" == s!"S010 10:3 {Elab.familyValueText "a"}"
+#guard plMod "  us[0].a[2] = true;\n" == s!"S013 10:11 {Elab.childKeyText "Instance[C]" "a" 2}"
+
+/-!
 The charges (section 5.4). `@field(u, "sum")` costs 9 more than `u.sum`: the key node 1, its size
 4, and the look-up 4. An indexed `PortKey` in a local costs the node 1, the name `k` 1, and the
 look-up of `gnt` 4. That is 2 more than `u.gnt[2]`, whose index and key cost 5.

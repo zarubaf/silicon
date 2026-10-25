@@ -1096,12 +1096,31 @@ theorem portCall_f {u u' : Ty → M Ty} (h : ∀ t, Follows cap (u t) (u' t)) (p
     (f : PrimFn) (vs : List Val) : Follows cap (portCall p g f vs u) (portCall p g f vs u') := by
   unfold portCall; follows [h, requestPart_f, bounded_f, again_f, breach_f]
 
+theorem familyKey_f (p : Pos) (v : Value) :
+    Follows cap (Elab.familyKey p v) (Elab.familyKey p v) := by
+  unfold Elab.familyKey; follows
+
+theorem selectionKey_f (np p : Pos) (x : String) (v : Val) :
+    Follows cap (selectionKey np p x v) (selectionKey np p x v) := by
+  unfold selectionKey; follows [static_f, familyKey_f]
+
+theorem childFamily_f (v : Val) (f : Ident) :
+    Follows cap (Elab.childFamily v f) (Elab.childFamily v f) := by
+  unfold Elab.childFamily; follows
+
 theorem placeStep_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (v : Val) (t : Option Ty) (s : Sel) :
     Follows cap (placeStep ev v t s) (placeStep ev' v t s) := by
   unfold placeStep
   follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f, staticValue_f, fieldKeyOf_f,
-    fieldKeyBy_f]
+    fieldKeyBy_f, keyPort_f]
+
+theorem placePort_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (v : Val) (i : Iface) (t : Ty) (fp : Pos) (f : Ident)
+    (rest : List Sel) :
+    Follows cap (placePort (α := α) ev v i t fp f rest) (placePort ev' v i t fp f rest) := by
+  unfold placePort
+  follows [he, need_f, guardedBy_f, selectionKey_f, childPort_f, portFind_f, childFamily_f]
 
 theorem placeWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) :
@@ -1110,7 +1129,7 @@ theorem placeWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
   | v, t, ks, l, [] => by rw [placeWalk, placeWalk]; follows
   | v, t, ks, l, sel :: rest => by
     rw [placeWalk, placeWalk]
-    follows [placeStep_f he, placeWalk_f he]
+    follows [placePort_f he, placeStep_f he, placeWalk_f he]
 
 end helpers
 
