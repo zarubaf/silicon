@@ -901,4 +901,13 @@ family with the name of the binder is the ordinary `S002`.
     | _ => false
   | .error _ => false
 
+/-! The argument of `@typeInfo` resolves as an expression. -/
+#guard ok (fnBody "let t = @typeInfo(UInt[8]);\nreturn p;")
+#guard fails (fnBody "let t = @typeInfo(Q);\nreturn p;") .S003 2 19
+#guard match run "fn f(x: Nat) -> Nat { return @typeInfo(Nat); }" with
+  | .ok items => match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ _ [.ret _ (some (.typeInfo _ (.name _ "Nat" _)))]) => true
+    | _ => false
+  | .error _ => false
+
 end Silicon.Source.Test.Resolve

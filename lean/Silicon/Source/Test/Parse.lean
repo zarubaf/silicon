@@ -995,12 +995,16 @@ A builtin has the number of operands of its name, else `S001` "Builtin arity" at
 #guard ex "@field(x, 0, 1)" == "error S001 1:15"
 #guard ex "@ field()" == "error S001 1:16"
 #guard ex "@TypeOf(a, $)" == "error S001 1:25"
+#guard ex "@typeInfo(a, $)" == "error S001 1:27"
+#guard ex "@typeInfo()" == "error S001 1:15"
 #guard message "const X: T = @field(x);" ==
   "`@field` takes 2 argument(s), but it has 1; write `@field(x, k)`"
 #guard message "const X: T = @TypeOf(a, b);" ==
   "`@TypeOf` takes 1 argument(s), but it has 2; write `@TypeOf(x)`"
 #guard message "const X: T = @TypeOf();" ==
   "`@TypeOf` takes 1 argument(s), but it has 0; write `@TypeOf(x)`"
+#guard message "const X: T = @typeInfo(A, B);" ==
+  "`@typeInfo` takes 1 argument(s), but it has 2; write `@typeInfo(T)`"
 
 /-!
 Another name after `@` is `S001` "Not a builtin" at the name, in an expression and in a type. The
@@ -1044,6 +1048,7 @@ Another builtin is no target.
   "(expr (binary eq (builtin TypeOf ((name \"x\"))) (name \"T\")))"
 #guard stFails "@field(f(x), 0) = 1;" .S001 17
 #guard stFails "@TypeOf(x) = 1;" .S001 12
+#guard stFails "@typeInfo(T) = 1;" .S001 14
 #guard stFails "@field(x, 0).m() = 1;" .S001 18
 
 /-! The parser reads the printed text of each form back to the same AST. -/
@@ -1055,7 +1060,11 @@ def bi (b : Builtin) (xs : List Expr) : Expr := .builtin p b xs
     .field p (bi .field [v "x", n 0]) (nm "a"), bin .add (bi .typeOf [v "x"]) (n 1),
     .call p (bi .field [v "x", n 0]) [n 1], .method p (bi .field [v "x", n 0]) (nm "m") [],
     .unary p .neg (bi .typeOf [v "x"]),
-    .index p (v "x") [bi .typeOf [bi .field [v "y", bi .typeOf [v "z"]]]]].all constRoundtrip
+    .index p (v "x") [bi .typeOf [bi .field [v "y", bi .typeOf [v "z"]]]],
+    bi .typeInfo [v "T"], bi .typeInfo [.index p (v "UInt") [n 8]],
+    bi .typeInfo [bi .typeOf [.index p (v "xs") [n 0]]], bi .typeInfo [.call p (v "f") [n 1]],
+    .field p (bi .typeInfo [v "T"]) (nm "fields"),
+    bi .field [bi .typeInfo [v "T"], .str p "element"]].all constRoundtrip
 #guard fnRoundtrip [.assign p (bi .field [v "x", n 0]) (n 1),
   .connect p (.field p (bi .field [.field p (v "u") (nm "a"), n 0]) (nm "b")) (n 1),
   .expr p (bi .typeOf [v "x"]), .expr p (bin .eq (bi .field [v "x", n 0]) (n 1))]

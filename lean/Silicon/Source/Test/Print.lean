@@ -420,4 +420,9 @@ def bi (b : Builtin) (xs : List Expr) : Expr := .builtin p b xs
 #guard stmtDump (.assign p (bi .field [v "x", n 0]) (n 1)) ==
   "(assign (builtin field ((name \"x\") (num 0))) (num 1))"
 
+/-! `@typeInfo` dumps and prints as the other builtins. -/
+#guard exprDump (bi .typeInfo [v "T"]) == "(builtin typeInfo ((name \"T\")))"
+#guard exprText (bi .typeInfo [.index p (v "UInt") [n 8]]) == "@typeInfo(UInt[8])"
+#guard exprText (.field p (bi .typeInfo [v "T"]) (nm "fields")) == "@typeInfo(T).fields"
+
 end Silicon.Source.Test.Print
