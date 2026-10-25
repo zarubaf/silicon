@@ -1,0 +1,18 @@
+// `@field` as a target binds the same ports as `.` and `[]`, so the core names equal the plain ones.
+// TOP M()
+// CHECK: (inst u C (a x) (req$1f x))
+// CHECK-NEXT: (assign o u.sum)
+module C() domains() {
+    input a: UInt[4];
+    input req[1]: UInt[4];
+    output sum: UInt[4];
+    sum := a +% req[1];
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    @field(u, "a") := x;
+    @field(u, PortKey("req", true, 1)) := x;
+    o := @field(u, "sum");
+}

@@ -1,0 +1,9 @@
+// `@TypeOf` of a static tuple has no stored type. It charges each tuple node, then the size of the type that it builds. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 97
+// TOP M()
+module M() {
+    output o: UInt[4];
+    let t = (1, (true, "a"));
+    let u = @TypeOf(t);
+    o := 0;
+}

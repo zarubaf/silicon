@@ -1,0 +1,15 @@
+// `@field(u, "a") := x` costs more than `u.a := x`: the node of `@field`, the literal key, and its size. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 215
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output sum: UInt[4];
+    sum := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    @field(u, "a") := x;
+    o := u.sum;
+}

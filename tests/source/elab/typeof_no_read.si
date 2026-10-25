@@ -1,0 +1,22 @@
+// `@TypeOf` of a place makes no core node and reads no register. A step below a register selects in its type.
+// TOP M()
+// CHECK: (reg rg$a (bits 4) clock$0clk (reset sync clock$0rst (const 4 0)))
+// CHECK-NEXT: (reg rg$b (bits 1) clock$0clk (reset sync clock$0rst (const 1 0)))
+// CHECK-NEXT: (let w (bits 4) x)
+// CHECK-NEXT: (next rg$a w)
+// CHECK-NEXT: (next rg$b (const 1 1))
+// CHECK-NEXT: (assign o rg$a)
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    reg rg: P = P(0, false);
+    let t = @TypeOf(rg);
+    let u = @TypeOf(rg.a);
+    let w: UInt[data_bits(@TypeOf(rg.a))] = x;
+    rg := P(w, true);
+    o := read(rg).a;
+}
