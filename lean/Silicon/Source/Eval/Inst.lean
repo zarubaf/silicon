@@ -351,7 +351,7 @@ def keyed (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : Value) 
   let w ← match key with
     | none => port p input x y t binder
     | some k => entry p input x y k t binder
-  bindLocal b.id ⟨some t, false, w⟩
+  bindLocal b.id ⟨some t, false, w, true⟩
 
 /-! The target of a `:=` binding: an own resource, or the input `port` of the child `inst`. -/
 inductive Target where

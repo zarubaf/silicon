@@ -609,12 +609,14 @@ def Val.about : Val → String
 /-!
 A local. A string, a type, an own output, and a domain without an annotation have no `Ty`, so
 their `ty` is `none`. A local of a handle, also without an annotation, holds its handle type
-(section 5.4).
+(section 5.4). `declared` is false only for a `let` without an annotation: its `ty` comes from
+its value, so `@TypeOf` does not give it as a declared type (section 9.3).
 -/
 structure Slot where
   ty : Option Ty
   mutable : Bool
   value : Val
+  declared : Bool
 
 /-! A frame of section 7.3: its path, and its number in the table of frames. The root is 0. -/
 structure Frame where
@@ -641,9 +643,9 @@ structure Syms where
   families : Array (Std.HashMap Nat (Bool × Pos))
 
 /-!
-The kind of a guard (section 9.4): a hardware arm or a structural context. A family key (`key`),
-an index of a `:=` target (`index`), and an `as` key (`name`) are structural contexts with their
-own texts.
+The kind of a guard (section 9.4): a hardware arm or a structural context. Some structural
+contexts have their own texts: a family key (`key`), an index of a `:=` target (`index`), and an
+`as` key (`name`). A key of the operand of the builtin `q` (`query`) has its own texts too.
 -/
 inductive GuardKind where
   | arm
@@ -651,6 +653,7 @@ inductive GuardKind where
   | key
   | index
   | name
+  | query (q : Builtin)
   deriving DecidableEq, BEq
 
 /-!
@@ -678,6 +681,8 @@ def Guard.change (g : Guard) (x : String) : String :=
     "the result in a `let`, and use that name in the index"
   | .name => s!"an `as` key cannot change `{x}`; change `{x}` before this statement, keep the " ++
     "result in a `let`, and use that name in the key"
+  | .query q => s!"a key of `@{q.name}` cannot change `{x}`; change `{x}` before `@{q.name}`, " ++
+    "keep the result in a `let`, and use that name in the key"
 
 def Guard.effect (g : Guard) (f : String) : String :=
   match g.kind with
@@ -691,6 +696,8 @@ def Guard.effect (g : Guard) (f : String) : String :=
     "`:=`, keep the result in a `let`, and use that name in the index"
   | .name => s!"an `as` key has no graph effect such as `{f}`; call `{f}` before this " ++
     "statement, keep the result in a `let`, and use that name in the key"
+  | .query q => s!"a key of `@{q.name}` has no graph effect such as `{f}`; call `{f}` before " ++
+    s!"`@{q.name}`, keep the result in a `let`, and use that name in the key"
 
 /-!
 The static mode (section 9.4): the `eval` command, or the item of the outermost `comptime fn`

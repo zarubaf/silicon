@@ -655,6 +655,35 @@ theorem field_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (field p f v) (field p f v) := by
   unfold field; follows [fieldKey_f]
 
+theorem tyStep_f (t : Ty) (s : QueryStep) : Follows cap (tyStep t s) (tyStep t s) := by
+  unfold tyStep; follows [noEnumField_f, fieldOf_f, within_f]
+
+theorem valueStep_f (v : Val) (s : QueryStep) :
+    Follows cap (valueStep v s) (valueStep v s) := by
+  unfold valueStep; follows [noEnumField_f, fieldOf_f, within_f, pickKey_f, selectKey_f, fieldKey_f]
+
+theorem queryStep_f (q : Query) (s : QueryStep) :
+    Follows cap (queryStep q s) (queryStep q s) := by
+  unfold queryStep; follows [tyStep_f, valueStep_f]
+
+mutual
+  theorem tupleNodes_f (p : Pos) : ∀ v : Value, Follows cap (tupleNodes p v) (tupleNodes p v)
+    | .tuple ⟨xs⟩ => by rw [tupleNodes]; follows [tupleNodesAll_f p xs]
+    | .int _ | .bool _ | .str _ | .uint .. | .sint .. | .type _ | .unit | .array .. | .record ..
+    | .list .. | .function .. | .enum .. => by rw [tupleNodes.eq_def]; dsimp only; follows
+
+  theorem tupleNodesAll_f (p : Pos) :
+      ∀ xs : List Value, Follows cap (tupleNodesAll p xs) (tupleNodesAll p xs)
+    | [] => by rw [tupleNodesAll]; follows
+    | x :: xs => by rw [tupleNodesAll]; follows [tupleNodes_f p x, tupleNodesAll_f p xs]
+end
+
+theorem builtTy_f (p : Pos) (v : Value) : Follows cap (builtTy p v) (builtTy p v) := by
+  unfold builtTy; follows [tupleNodes_f]
+
+theorem queryTy_f (p : Pos) (q : Query) : Follows cap (queryTy p q) (queryTy p q) := by
+  unfold queryTy; follows [builtTy_f]
+
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
 

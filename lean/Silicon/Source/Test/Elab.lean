@@ -3629,4 +3629,114 @@ def keyCostLong : String :=
 #guard exact keyCost "M" (total keyCost "M")
 #guard exact keyNames "M" (total keyNames "M")
 
+/-!
+`@TypeOf` of a hardware place (section 9.3). The operand is `raw`: it reads no register and no
+wire, and it makes no core node. A register, a wire, a memory, an instance, and a child input
+give their handle types. A port, a family entry, and a child output give their data types. A
+reference and a hardware value keep only their type. So does the handle of a register, a wire,
+an own output, or a child input. A step on them selects in the data type. A handle in a
+container gives its handle type.
+-/
+def tyChild : String :=
+  "struct P { a: UInt[8], b: (Bool, UInt[4]) }\nmodule C() {\n  input a: P;\n" ++
+  "  input e[1]: UInt[2];\n  output q: P;\n  output r[2]: UInt[3];\n  q := a;\n  r[2] := 0;\n}\n"
+def tyMod (body : String) (fs : String := "") : String :=
+  tyChild ++ fs ++ "module M() domains(clk) {\n  input i: P;\n  input s: UInt[8];\n" ++
+  "  input req[3]: P;\n  output o: P;\n  reg rg: P = P();\n  wire w: P;\n" ++
+  "  mem mm: [UInt[8]; 4];\n  instance u = C();\n  let rd = mm.read_port(0, true);\n" ++
+  "  write_port(mm, 0, 0, false);\n" ++ body ++
+  "  o := i;\n  rg := i;\n  w := i;\n  u.a := i;\n  u.e[1] := 0;\n}\n"
+/-! The type of each `diagnostic` record of `body`, then `ok` or the first error. -/
+def tyRecords (body : String) (fs : String := "") : List String :=
+  (observed (tyMod body fs)).map fun r =>
+    if r.startsWith "(record" then
+      String.ofList (r.splitOn "(string \"t\") ").getLast!.toList.dropLast
+    else r
+def tyOf (x : String) : String := s!"  diagnostic(\"t\", @TypeOf({x}));\n"
+def tyP : String := "(type (struct root P ()))"
+def tyB : String := "(type (tuple (bool (uint 4))))"
+def tyRegP : String := "(type (reg (struct root P ())))"
+
+-- The roots: a register, a wire, a memory, an instance, a child input and output, an own input,
+-- an own output, and a family entry. Then the steps below them.
+#guard tyRecords (String.join (["rg", "rg.b", "rg.b.1", "w.a", "mm", "u", "u.a", "u.a.b", "u.q",
+    "u.q.b.0", "u.e[1]", "u.r[2]", "i", "i.b", "s", "o", "o.a", "req[3]", "req[3].b"].map tyOf)) ==
+  [tyP, tyB, "(type (uint 4))", "(type (uint 8))", "(type (mem (uint 8) 4))",
+    "(type (instance root C ()))", "(type (input (struct root P ())))", tyB, tyP, "(type bool)",
+    "(type (input (uint 2)))", "(type (uint 3))", tyP, tyB, "(type (uint 8))", tyP,
+    "(type (uint 8))", tyP, tyB, "ok"]
+-- A hardware local, a container of handles, and a tuple of a handle and a static value.
+#guard tyRecords ("  let h = s +% 1;\n  let rs = [rg, rg];\n  let x = (rg, 1);\n" ++
+    String.join (["h", "rs", "rs[1]", "rs[1].a", "x", "x.0", "x.0.b.1", "x.1"].map tyOf)) ==
+  ["(type (uint 8))", "(type (array (reg (struct root P ())) 2))", tyRegP, "(type (uint 8))",
+    "(type (tuple ((reg (struct root P ())) int)))", tyRegP, "(type (uint 4))", "(type int)",
+    "ok"]
+-- A list node checks an index against its own length.
+#guard tyRecords ("  let mut l = list(Reg[P]);\n  push(l, rg);\n" ++ tyOf "l[0]" ++ tyOf "l[1]") ==
+  [tyRegP, "S013 24:29"]
+-- A parameter of a handle type: a step selects in the data type.
+def keyFns : String :=
+  "fn hk(r: Reg[P]) -> Type { let a = [1, 2]; return @TypeOf(a[r]); }\n" ++
+  "fn vk(x: UInt[8]) -> Type { let a = [1, 2]; return @TypeOf(a[x]); }\n" ++
+  "fn fk(r: Reg[P]) -> Type { return @TypeOf(r.b.0); }\n"
+#guard tyRecords "  diagnostic(\"t\", fk(rg));\n" keyFns == ["(type bool)", "ok"]
+-- The operand of `@TypeOf` is no static position, so a register in it passes pass 4.
+#guard tyRecords "  let x: UInt[data_bits(@TypeOf(rg.a))] = 0;\n  diagnostic(\"t\", x);\n" ==
+  ["(uint 8 0)", "ok"]
+
+/-!
+The errors of a step are at the positions of the step in a place. These are a step on a memory
+(`S010`) and the range of an index on an array type (`S013`). They are also a field that the
+struct does not declare and a bare family. The last are a family of a child without its key and
+a key that the child did not declare. A domain has no type.
+-/
+#guard tyRecords (tyOf "mm[0]") == ["S010 21:27"]
+#guard tyRecords (tyOf "mm.a") == ["S010 21:27"]
+#guard tyRecords (tyOf "rg.b[2]") == ["S013 21:32"]
+#guard tyRecords (tyOf "rg.c") == ["S010 21:27"]
+#guard tyRecords (tyOf "req") == ["S010 21:27"]
+#guard tyRecords (tyOf "u.e") == ["S010 21:27"]
+#guard tyRecords (tyOf "u.e[5]") == ["S013 21:31"]
+#guard tyRecords (tyOf "clk") == ["S010 21:19"]
+
+/-!
+A key is static (`S011`): a handle gives "Handle at a static position", and another hardware
+value "Value not static". Pass 4 finds such a key in a module body (`S005`), so a function
+parameter carries it here. A key of a query operand, also the key of a family selection,
+evaluates under the guard `query`: a graph effect there is `S016` with its text.
+-/
+#guard tyRecords "  diagnostic(\"t\", hk(rg));\n" keyFns == ["S011 10:61"]
+#guard said (tyMod "  diagnostic(\"t\", hk(rg));\n" keyFns) ==
+  "a key of `@TypeOf` holds the register `rg`, but it takes only static values; pass the data " ++
+    "through a port, or use it in the module that declares it"
+#guard tyRecords "  diagnostic(\"t\", vk(s));\n" keyFns == ["S011 11:62"]
+#guard said (tyMod "  diagnostic(\"t\", vk(s));\n" keyFns) ==
+  "a static position needs a static value, not a value of `UInt[8]`; compute the value from " ++
+    "static values, for example from constants and `comptime` parameters"
+#guard tyRecords (tyOf "rg.b[diagnostic(\"k\", 0)]") == ["S016 21:32"]
+#guard tyRecords (tyOf "req[diagnostic(\"k\", 0)]") == ["S016 21:31"]
+#guard tyRecords (tyOf "u.e[diagnostic(\"k\", 0)]") == ["S016 21:31"]
+#guard said (tyMod (tyOf "u.e[diagnostic(\"k\", 0)]")) ==
+  "a key of `@TypeOf` has no graph effect such as `diagnostic`; call `diagnostic` before " ++
+    "`@TypeOf`, keep the result in a `let`, and use that name in the key"
+
+/-!
+The charges (section 5.4): the statement `let t` 1, the node 1, and each step 1. The root charges
+nothing, so a step on a register reads nothing and charges no zero size. A family root charges
+its index node and its name node, and the key `3` its node and its size. The operand makes no
+core name.
+-/
+#guard elabUnits (tyMod "") "M" == 260
+#guard elabUnits (tyMod "  let t = @TypeOf(rg);\n") "M" == 260 + 2
+#guard elabUnits (tyMod "  let t = @TypeOf(rg.b);\n") "M" == 260 + 3
+#guard elabUnits (tyMod "  let t = @TypeOf(rg.b.1);\n") "M" == 260 + 4
+#guard elabUnits (tyMod "  let t = @TypeOf(u.a.b);\n") "M" == 260 + 4
+#guard elabUnits (tyMod "  let t = @TypeOf(req[3]);\n") "M" == 260 + 2 + 2 + 2
+#guard elabUnits (tyMod "  let t = @TypeOf(req[3].b);\n") "M" == 260 + 2 + 2 + 2 + 1
+#guard elabUnits (tyMod "  let t = @TypeOf(u.e[1]);\n") "M" == 260 + 2 + 2 + 2
+#guard exact (tyMod "  let t = @TypeOf(req[3].b);\n") "M"
+  (total (tyMod "  let t = @TypeOf(req[3].b);\n") "M")
+#guard names (tyMod "  let t = @TypeOf(rg.b);\n  let v = @TypeOf(u.q.b);\n") "M" "M" ==
+  names (tyMod "") "M" "M"
+
 end Silicon.Source.Test.Elab

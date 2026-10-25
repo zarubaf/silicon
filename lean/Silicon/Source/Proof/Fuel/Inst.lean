@@ -148,6 +148,23 @@ theorem target_f {ev ev' : Resolve.Expr → M (Option Out)}
     Follows cap (target ev e) (target ev' e) := by
   unfold target; follows [targetPart_f he]
 
+theorem queryKey_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (i : Resolve.Expr) :
+    Follows cap (queryKey ev i) (queryKey ev' i) := by
+  unfold queryKey; follows [he, need_f, guardedBy_f, staticValue_f, static_f]
+
+theorem queryWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) :
+    ∀ (q : Query) (sels : List Sel), Follows cap (queryWalk ev q sels) (queryWalk ev' q sels)
+  | q, [] => by rw [queryWalk.eq_def, queryWalk.eq_def]; follows
+  | q, sel :: rest => by
+    rw [queryWalk.eq_def, queryWalk.eq_def]
+    dsimp only
+    follows [he, need_f, guardedBy_f, selectionKey_f, childPort_f, portFind_f, childFamily_f,
+      queryKey_f he, queryStep_f, queryWalk_f he]
+termination_by _ sels => sels.length
+decreasing_by all_goals simp_all <;> omega
+
 end helpers
 
 /-! `hwStmt` and `instantiate` get the bound of their caller after the charge. -/
@@ -176,6 +193,13 @@ theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (
     Follows m (familySel k p np x id e) (familySel m p np x id e) := by
   rw [familySel.eq_def k, familySel.eq_def m]
   follows [he, need_f, guardedBy_f, selectionKey_f, entryAt_f]
+
+theorem typeOfPart_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : Resolve.Expr) :
+    Follows m (typeOfPart k p x) (typeOfPart m p x) := by
+  rw [typeOfPart.eq_def k, typeOfPart.eq_def m]
+  follows [he, name_f he ht, queryWalk_f he, queryTy_f, need_f, guardedBy_f, selectionKey_f,
+    entryVal_f]
 
 theorem entryDecl_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (input : Bool) (x : Binder)
@@ -228,7 +252,7 @@ theorem follows_all : ∀ n,
           enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
-          familySel_f (he k)]
+          familySel_f (he k), typeOfPart_f (he k) (ht k)]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -240,7 +264,7 @@ theorem follows_all : ∀ n,
           enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
-          familySel_f (he m)]
+          familySel_f (he m), typeOfPart_f (he m) (ht m)]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
