@@ -482,9 +482,9 @@ impl Evaluator<'_> {
             return Ok((b, 0));
         };
         if let Some(Sel::Index(p, [key])) = steps.get(1)
-            && self.child_family(&b, f)
+            && let Some(sym) = self.child_family(&b, f)
         {
-            return Ok((self.child_sel((*p, *q), &b, f, key)?, 2));
+            return Ok((self.child_sel((*p, *q), &b, (sym, &f.name), key)?, 2));
         }
         Ok((self.field_part(*q, b, f)?, 1))
     }
