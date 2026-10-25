@@ -3870,4 +3870,126 @@ at the key, and its base kind at the base. A key evaluates under the guard `quer
 #guard elabUnits (tyMod "  let t = @TypeOf(rg.b);\n") "M" == 260 + 3
 #guard elabUnits (tyMod "  let t = @TypeOf(@field(rg, \"b\"));\n") "M" == 260 + 3 + 1 + 2 + 2
 
+/-!
+`@field` in a `:=` target (sections 5.2 and 9.3). A module `M` with the child `C`, whose bindings
+`ftAll` start at line 18; `ftBody k b` puts `b` in the place of the binding `k`. A target through
+`@field` binds what the ordinary selection binds. Thus the core output equals the plain one. The
+forms are a child input by a `String` and by a scalar `PortKey`, and an entry by an indexed
+`PortKey`. They are also a register in an array and in a record of handles, and nested steps. A
+local container of instances is a root too.
+-/
+def ftKid : String :=
+  "struct RH { r: Reg[UInt[4]], s: Reg[UInt[4]] }\nmodule C() domains() {\n" ++
+  "  input a: UInt[4];\n  input req[0]: UInt[4];\n  input req[1]: UInt[4];\n" ++
+  "  output q: UInt[4];\n  output gnt[0]: UInt[4];\n  q := a +% req[0] +% req[1];\n" ++
+  "  gnt[0] := a;\n}\n"
+def ftMod (body : String) : String :=
+  ftKid ++ "module M() domains(clk) {\n  input x: UInt[4];\n  output o: UInt[4];\n" ++
+  "  reg r: UInt[4] = 0;\n  reg s: UInt[4] = 0;\n  instance u = C();\n  instance v = C();\n" ++
+  body ++ "  o := x;\n}\n"
+def ftAll : List String :=
+  ["  u.a := x;\n", "  u.req[0] := x;\n", "  u.req[1] := x;\n", "  v.a := x;\n",
+    "  v.req[0] := x;\n", "  v.req[1] := x;\n", "  r := x;\n", "  s := x;\n"]
+def ftBody (k : Nat) (b : String) : String := String.join (ftAll.set k b)
+def ftRun (body : String) : String := failure (ftMod body) 100000000
+def ftCore (body : String) : Option String :=
+  match Cli.elabText {} (ftMod body) "M()" with
+  | .ok t => some t
+  | _ => none
+
+#guard (ftCore (String.join ftAll)).isSome
+#guard ftCore (ftBody 0 "  @field(u, \"a\") := x;\n") == ftCore (String.join ftAll)
+#guard ftCore (ftBody 0 "  @field(u, PortKey(\"a\", false, 0)) := x;\n") ==
+  ftCore (String.join ftAll)
+#guard ftCore (ftBody 2 "  @field(u, PortKey(\"req\", true, 1)) := x;\n") ==
+  ftCore (String.join ftAll)
+#guard ftCore ((ftBody 6 "  let rs = [r, s];\n  @field(rs, 0) := x;\n").replace "  s := x;\n"
+    "  @field(rs, 1) := x;\n") == ftCore (String.join ftAll)
+#guard ftCore ((ftBody 6 "  let h = RH(r, s);\n  @field(h, \"r\") := x;\n").replace
+    "  s := x;\n" "  @field(h, \"s\") := x;\n") == ftCore (String.join ftAll)
+#guard ftCore ((ftBody 6 "  let rs = [[r, s]];\n  @field(@field(rs, 0), 0) := x;\n").replace
+    "  s := x;\n" "  @field(rs[0], 1) := x;\n") == ftCore (String.join ftAll)
+#guard ftCore (ftBody 0 "  let t = (u, v);\n  @field(t.0, \"a\") := x;\n") ==
+  ftCore (String.join ftAll)
+-- A temporary is no place, so the parser rejects it as a root, as it rejects `[u, v][1].a`.
+#guard ftRun (ftBody 3 "  @field([u, v], 1).a := x;\n") == "load"
+
+/-!
+The order of an `@field` step in a target (section 6.2, **`@field` order**). Its key is an index
+of the target: it evaluates in a structural context of the kind `index` (`S016`), and it is
+static (`S011`). All keys evaluate first, so an `S016` of a later key wins over the kind of an
+earlier key. Then the walk runs check 1 on the base before the checks of the key. A base that
+is no container of handles and no `Instance` handle is `S017` at the start of the target. This
+holds also for a key that the base does not take. A part of a selected register is `S017` too.
+Then the key kinds, the look-up, and the range are at the key. Of two bad keys, the first in the
+walk wins.
+-/
+#guard ftRun (ftBody 6 "  let rs = [r, s];\n  @field(rs, diagnostic(\"k\", 0)) := x;\n") ==
+  s!"S016 25:14 {indexEffect}"
+#guard ftRun (ftBody 6 ("  let mut l = list(Nat);\n  push(l, 0);\n  let rs = [r, s];\n" ++
+    "  @field(rs, pop(l)) := x;\n")) ==
+  "S016 27:14 a `:=` target index cannot change `l`; change `l` before the `:=`, keep the " ++
+    "result in a `let`, and use that name in the index"
+#guard ftRun (ftBody 6 ("  let rs = [[r, s]];\n" ++
+    "  @field(@field(rs, \"a\"), diagnostic(\"k\", 0)) := x;\n")) == s!"S016 25:27 {indexEffect}"
+#guard ftRun (ftBody 6 "  let rs = [r, s];\n  @field(@field(rs, \"a\"), \"b\") := x;\n") ==
+  "S010 25:21 `@field` on a value of `[Reg[UInt[4]]; 2]` takes `Nat`, not a value of " ++
+    "`String`; give a static `Nat`"
+#guard ftRun (ftBody 6 "  let y = 1;\n  @field(y, \"a\") := 0;\n") == s!"S017 25:3 {Elab.partText}"
+#guard ftRun (ftBody 6 "  @field(r, \"a\") := x;\n") == s!"S017 24:3 {Elab.partText}"
+#guard ftRun (ftBody 6 "  @field(o, 0) := x;\n") == s!"S017 24:3 {Elab.partText}"
+#guard ftRun (ftBody 6 "  let rs = [r, s];\n  @field(rs, 0).0 := x;\n") ==
+  s!"S017 25:3 {Elab.partText}"
+#guard ftRun (ftBody 6 "  @field(u, \"q\") := x;\n") == s!"S017 24:3 {Elab.outputText "q"}"
+#guard ftRun (ftBody 6 "  @field(u, PortKey(\"gnt\", true, 0)) := x;\n") ==
+  s!"S017 24:3 {Elab.outputText "gnt[0]"}"
+#guard ftRun (ftBody 6 "  @field(u, \"req\") := x;\n") ==
+  s!"S010 24:13 {Elab.familyValueText "u.req"}"
+#guard ftRun (ftBody 6 "  @field(u, \"zz\") := x;\n") ==
+  s!"S010 24:13 {Elab.noPortText "Instance[C]" "zz"}"
+#guard ftRun (ftBody 6 "  @field(u, PortKey(\"req\", true, 5)) := x;\n") ==
+  s!"S013 24:13 {Elab.childKeyText "Instance[C]" "req" 5}"
+#guard ftRun (ftBody 6 "  @field(u.req, 0) := x;\n") == s!"S010 24:3 {famValue "req"}"
+#guard ftRun (ftBody 6 "  let rs = [r, s];\n  @field(rs, 2) := x;\n") ==
+  "S013 25:14 the index 2 is out of range for 2 element(s)"
+#guard ftRun (ftBody 6 "  let rs = [r, s];\n  @field(rs, 0 - 1) := x;\n") ==
+  "S012 25:14 -1 is not a Nat"
+-- Pass 4 finds a register key in a module body (`S005`), so a function parameter carries it.
+#guard match Cli.load 4096 (ftMod (ftBody 7 "  let rs = [s];\n  @field(rs, r) := x;\n")) with
+  | .error e => (e.code, e.pos.line, e.pos.col) == (.S005, 26, 14)
+  | .ok _ => false
+#guard failure ("fn hk(r: Reg[UInt[4]], rs: [Reg[UInt[4]]; 1], x: UInt[4]) -> Nat {\n" ++
+    "  @field(rs, r) := x;\n  return 0;\n}\nmodule M() domains(clk) {\n  input x: UInt[4];\n" ++
+    "  reg r: UInt[4] = 0;\n  let n = hk(r, [r], x);\n}\n") 100000000 ==
+  "S011 2:14 a key of `@field` holds the register `r`, but it takes only static values; pass " ++
+    "the data through a port, or use it in the module that declares it"
+
+/-!
+The charges of an `@field` step in a target (section 5.4). `u.a := x` selects the child port with
+no charge. `@field(u, "a") := x` charges the node 1, the literal `"a"` 3 (its node and its size),
+and the size of the key 2 before the look-up.
+-/
+#guard total (ftMod (String.join ftAll)) "M()" == 381
+#guard exact (ftMod (ftBody 0 "  @field(u, \"a\") := x;\n")) "M()" (381 + 1 + 3 + 2)
+
+/-!
+A `mut` actual and an assignment through `@field` (section 9.3) write the part of the root, as
+the plain place does. A root that is not `let mut` is `S008`, also through `@field`.
+-/
+def ftMut (body : String) : String :=
+  "fn bump(mut a: UInt[8]) -> UInt[8] {\n  a = a +% 1;\n  return a;\n}\n" ++
+  "module M() domains() {\n  input x: UInt[8];\n  output p: UInt[8];\n" ++ body ++ "}\n"
+def ftMutCore (body : String) : Option String :=
+  match Cli.elabText {} (ftMut body) "M()" with
+  | .ok t => some t
+  | _ => none
+def ftPlain : String :=
+  "  let mut t = (x, [x, x]);\n  let n = bump(t.1[0]);\n  t.0 = n;\n  p := t.0 +% t.1[0];\n"
+#guard (ftMutCore ftPlain).isSome
+#guard ftMutCore ("  let mut t = (x, [x, x]);\n  let n = bump(@field(@field(t, 1), 0));\n" ++
+    "  @field(t, 0) = n;\n  p := t.0 +% t.1[0];\n") == ftMutCore ftPlain
+#guard match Cli.load 4096 (ftMut "  let t = (x, x);\n  p := bump(@field(t, 0));\n") with
+  | .error e => (e.code, e.pos.line, e.pos.col) == (.S008, 9, 13)
+  | .ok _ => false
+
 end Silicon.Source.Test.Elab

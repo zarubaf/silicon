@@ -2434,21 +2434,42 @@ def targetPort (s : Pos) (id : Nat) (path : Path) (q : Port) : M Val := do
   fail .S017 s (Elab.outputText q.text)
 
 /-!
+An `@field` step at `q` of a `:=` target that starts at `s` (sections 5.2 and 6.2). The step is
+on the part `v`, with the base `b` and the static key `k` at `kp`. The node charged 1, and the
+key evaluated, in `targetKeys`. Check 1 of the walk comes first: a base that is no
+`Instance` handle and no container of a type with the handle flag is `S017` at `s`. Then the
+key gets its kind checks (`fieldKeyOf`), and the step selects as an index (`pickKey`), a field
+(`fieldKeyBy`), or a child port (`keyPort`, `targetPort`). The errors of the key are at `kp`.
+-/
+def fieldTarget (s q : Pos) (v : Val) (b : Resolve.Expr) (kp : Pos) (k : Value) : M Val := do
+  let target : Bool := match v with
+    | .handle (.inst ..) => true
+    | .agg a => a.ty?.any (·.info.handles)
+    | _ => false
+  unless target do fail .S017 s Elab.partText
+  let some base := v.fieldBase? | fail .S010 b.pos (fieldBaseText v.about)
+  match ← fieldKeyOf kp base (fun _ => v.about) k with
+  | .index j => return (← pickKey q kp v j).2
+  | .field y name => return (← fieldKeyBy q kp y name (strText name) v).2.1
+  | .port id path iface ty y name key => targetPort s id path (← keyPort kp iface ty b y name key)
+
+/-!
 The step `sel` of a `:=` target that starts at `s`, on the base `v`, with the index `k` of
 `targetKeys` (sections 5.2 and 9.4). The static type of the base decides. A field of an
-`Instance` handle selects the child port with no charge (`targetPort`). On a container of a type
-with the handle flag, a field and a selector charge 1, and an index step charged with its index.
-Then the step selects the part with its checks (`S010` and `S013`). Each other base, also
-another handle, is `S017` at `s`.
+`Instance` handle selects the child port with no charge (`targetPort`). An `@field` step selects
+in `fieldTarget`. On a container of a type with the handle flag, a field and a selector charge
+1, and an index step charged with its index. Then the step selects the part with its checks
+(`S010` and `S013`). Each other base, also another handle, is `S017` at `s`.
 -/
 def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : M Val := do
   let (sel, key) := step
-  match v, sel with
-  | .handle (.inst k path iface ty), .field q f =>
+  match v, sel, key with
+  | .handle (.inst k path iface ty), .field q f, _ =>
     match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
     | some port => targetPort s k path port
     | none => fail .S010 q (Elab.noPortText ty.text f.name)
-  | .agg a, sel =>
+  | v, .key q b i, some k => fieldTarget s q v b i.pos k
+  | .agg a, sel, key =>
     unless a.ty?.any (·.info.handles) do fail .S017 s Elab.partText
     match sel, key with
     | .index q [i], some k => return (← pickKey q i.pos v k).2
@@ -2459,16 +2480,15 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : M Val := do
     | .field q f, _ =>
       charge q 1
       return (← fieldKey q f v).2.1
-    -- TODO(#344): an `@field` step of a `:=` target (section 9.3).
-    | .key q .., _ => fail .S004 q "a builtin is not supported yet"
-  | _, _ => fail .S017 s Elab.partText
+    -- `targetKeys` gives each `@field` step its key, so the case before selects it.
+    | .key .., _ => fail .S017 s Elab.partText
+  | _, _, _ => fail .S017 s Elab.partText
 
 /-!
 The entry of the family `f` of the child behind the `Instance` handle `v`, with the static key
 `k` at `kp`, in a `:=` target that starts at `s` (section 5.2). The key gets the type and range
 checks of a family selection (`familyKey`). A key that the child did not declare is `S013`
-"Child family key" (`childPort`). An input entry gives its handle, and an output entry is `S017`
-(`targetPort`).
+"Child family key" (`childPort`). Then `targetPort` gives the target of the entry.
 -/
 def childTarget (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) : M Val := do
   let key ← Elab.familyKey kp k
@@ -2508,7 +2528,9 @@ def targetWalk (s : Pos) (v : Val) (fam : Option Ident) : List (Sel × Option Va
 /-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
 charges 1, then its index evaluates by `ev` in a structural context (section 9.4) and is static
-(`S011`). Another step has no index here.
+(`S011`). The key of an `@field` step is an index of the target too. A handle key gives the text
+"Handle at a static position" of `S011`. The walk runs the kind checks of the key in
+`fieldTarget`, after all keys evaluate (section 6.2). Another step has no index here.
 -/
 def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
     M (List (Sel × Option Value)) := do
@@ -2522,8 +2544,11 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
     | .index q _ =>
       charge q 1
       fail .S010 q "an index of a value has one argument"
-    -- TODO(#344): the key of an `@field` step of a `:=` target (section 9.3).
-    | .key q .. => fail .S004 q "a builtin is not supported yet"
+    | .key q _ i =>
+      charge q 1
+      let o ← guardedBy .index do need i (← ev i)
+      staticValue i.pos "a key of `@field`" o.value
+      keys := keys.push (sel, some (← static i.pos o.value))
     | _ => keys := keys.push (sel, none)
   return keys.toList
 
