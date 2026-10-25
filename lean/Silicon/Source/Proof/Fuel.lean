@@ -890,9 +890,9 @@ theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M (Value × Ty)}
     Follows cap (constant p x i b) (constant p x i b') := by
   unfold constant; follows [h, setConst_f, nested_f, inFrame_f, structural_f]
 
-theorem specialize_f (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
+theorem specialize_f (p : Pos) (x : String) (i : Nat) (o : Origin) (args : List Value)
     {f g : M (List (String × Ty))} (h : Follows cap f g) :
-    Follows cap (specialize p x i pre args f) (specialize p x i pre args g) := by
+    Follows cap (specialize p x i o args f) (specialize p x i o args g) := by
   unfold specialize; follows [h, bounded_f, sums_f]
 
 /-! A moved error keeps its code, so a run without the fuel still gives `S015`. -/
