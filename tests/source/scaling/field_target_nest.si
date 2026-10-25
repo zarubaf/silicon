@@ -1,0 +1,23 @@
+// T5 of the work-counter tests of `@field` (issue #344). N targets `@field(...@field(a, 0)..., i) := x` select N registers
+// of an array of N registers through N nested arrays, and each step is an `@field` with the key 0. N such targets share one
+// array. A walk along the path gives work in `O(N)` for a target; a walk from the root at each step gives `O(N^2)` for a
+// target. The build of the nested array pays its own fuel once, so only N targets show the walk.
+// SCALE field_target_nest 16 32 64 128 256
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: Bool;
+// REPEAT i {N}
+    reg r{i}: UInt[8] = 0;
+// END
+    let rs = [
+// REPEAT i {N}
+        r{i},
+// END
+    ];
+    let a = NEST{[|rs|]};
+// REPEAT i {N}
+    @field(NEST{@field(|a|, 0)}, {i}) := x;
+// END
+    o := true;
+}

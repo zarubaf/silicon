@@ -401,3 +401,225 @@ fn w9_an_alternating_query_walks_its_place_once() {
     let ((a, _), (b, _)) = (extra(&small, &small_base), extra(&large, &large_base));
     assert!(a < b && b <= 2 * a + 16, "the work {a} at d and {b} at 2d");
 }
+
+/// The chain of `d` steps with the key `0` over `root`, and then the step with the key `k`: each
+/// step is `@field(..., key)` if `named`, else an index.
+fn key_chain(root: &str, d: usize, k: usize, named: bool) -> String {
+    let step = |inner: String, key: usize| {
+        if named {
+            format!("@field({inner}, {key})")
+        } else {
+            format!("{inner}[{key}]")
+        }
+    };
+    step((0..d).fold(root.to_owned(), |inner, _| step(inner, 0)), k)
+}
+
+/// The run of `n` targets `@field(...@field(h, 0)..., i) := x` of depth `d` over the nest `h` of
+/// arrays that end in an array of `n` registers, or the same chain of indices. A run without
+/// targets binds the registers one by one.
+fn target_run(d: usize, n: usize, (targets, named): (bool, bool), run_key: u64) -> Run {
+    let mut src = "module M() {\n    input x: UInt[8];\n".to_owned();
+    for i in 0..n {
+        writeln!(src, "    reg r{i}: UInt[8] = 0;").unwrap();
+    }
+    let regs = (0..n)
+        .map(|i| format!("r{i}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    writeln!(
+        src,
+        "    let h = {}[{regs}]{};",
+        "[".repeat(d),
+        "]".repeat(d)
+    )
+    .unwrap();
+    for i in 0..n {
+        if targets {
+            writeln!(src, "    {} := x;", key_chain("h", d, i, named)).unwrap();
+        } else {
+            writeln!(src, "    r{i} := x;").unwrap();
+        }
+    }
+    src.push_str("}\n");
+    passing(KEY + run_key, 100_000, &src)
+}
+
+/// W6. `n` targets of depth `d` through `@field(..., 0)` steps. The targets select the registers of
+/// an array through `d` nested arrays. The run of the targets walks the path once, so the work of
+/// the targets at `2d` is at most twice the work at `d`, and it equals the work of the same targets
+/// with indices, except for the size of the key. A walk from the root at each step gives `d * d`.
+#[test]
+fn w6_a_target_through_field_steps_walks_its_path_once() {
+    let n = 4;
+    let at = |d: usize, key: u64| {
+        let named = target_run(d, n, (true, true), key);
+        let base = target_run(d, n, (false, true), key + 1);
+        (extra(&named, &base), named)
+    };
+    let (((a, units_a), small), ((b, units_b), large)) = (at(32, 90), at(64, 92));
+    assert!(
+        a < b && b <= 2 * a + 8 * n as u64,
+        "the work {a} at d and {b} at 2d"
+    );
+    assert!(
+        a <= 8 * units_a && b <= 8 * units_b,
+        "{a}/{units_a} {b}/{units_b}"
+    );
+    let (index_small, index_large) = (
+        target_run(32, n, (true, false), 94),
+        target_run(64, n, (true, false), 95),
+    );
+    assert_eq!(small.counts.stepped, index_small.counts.stepped);
+    assert_eq!(large.counts.stepped, index_large.counts.stepped);
+    assert_eq!(large.counts.selected, index_large.counts.selected);
+}
+
+#[test]
+fn probe_w6() {
+    for (d, n) in [(32, 4), (64, 4)] {
+        let (a, b) = (
+            target_run(d, n, (true, true), 80),
+            target_run(d, n, (true, false), 81),
+        );
+        let c = target_run(d, n, (false, true), 82);
+        eprintln!(
+            "d={d} n={n} named: total {} stepped {} selected {} copies {} used {}; index: total {} stepped {} used {}; base {} {}",
+            a.counts.total(),
+            a.counts.stepped,
+            a.counts.selected,
+            a.counts.copies,
+            a.used,
+            b.counts.total(),
+            b.counts.stepped,
+            b.used,
+            c.counts.total(),
+            c.used
+        );
+    }
+}
+
+/// How the run of W7 changes the part: an assignment of a static or a hardware leaf, or a `mut`
+/// actual of a hardware leaf.
+#[derive(Clone, Copy)]
+enum Change {
+    Static,
+    Hardware,
+    Actual,
+}
+
+/// The run of `n` changes of the leaf of a `let mut` nest of depth `d`, each through `d` steps with
+/// the key `0`: `@field(..., 0)` if `named`, else an index.
+fn place_run(d: usize, n: usize, (change, named): (Change, bool), run_key: u64) -> Run {
+    let leaf = if matches!(change, Change::Static) {
+        "1"
+    } else {
+        "x"
+    };
+    let mut src = "fn bump(mut v: UInt[8]) -> UInt[8] {\n    v = v +% 1;\n    return v;\n}\n\
+                   module M() {\n    input x: UInt[8];\n    output o: UInt[8];\n"
+        .to_owned();
+    writeln!(
+        src,
+        "    let mut a = {}{leaf}{};",
+        "[".repeat(d),
+        "]".repeat(d)
+    )
+    .unwrap();
+    for k in 0..n {
+        let place = key_chain("a", d - 1, 0, named);
+        match change {
+            Change::Actual => writeln!(src, "    let n{k} = bump({place});").unwrap(),
+            _ => writeln!(src, "    {place} = {leaf};").unwrap(),
+        }
+    }
+    src.push_str("    o := x;\n}\n");
+    passing(KEY + run_key, 100_000, &src)
+}
+
+/// W7. `n` changes of the leaf of a nest of depth `d` through `@field(..., 0)` steps: an assignment
+/// of a static leaf or a hardware leaf, and a `mut` actual. The change walks the path once and
+/// copies no root, so the copies and the steps equal those of the same changes with indices, the
+/// steps grow with `d` and not with `d * d`, and the copies stay within `n * d`.
+#[test]
+fn w7_a_change_through_field_steps_copies_no_root_and_walks_once() {
+    let n = 4;
+    for (change, key) in [
+        (Change::Static, 100),
+        (Change::Hardware, 110),
+        (Change::Actual, 120),
+    ] {
+        let (small, large) = (
+            place_run(32, n, (change, true), key),
+            place_run(64, n, (change, true), key + 1),
+        );
+        let (index_small, index_large) = (
+            place_run(32, n, (change, false), key + 2),
+            place_run(64, n, (change, false), key + 3),
+        );
+        let (a, b) = (small.counts.stepped, large.counts.stepped);
+        assert!(a > 0 && b <= 2 * a + 16, "the steps {a} at d and {b} at 2d");
+        assert_eq!(a, index_small.counts.stepped);
+        assert_eq!(b, index_large.counts.stepped);
+        assert_eq!(large.counts.copies, index_large.counts.copies);
+        assert!(
+            large.counts.copies <= (n * 64) as u64,
+            "{} copies",
+            large.counts.copies
+        );
+        assert_eq!(large.used, index_large.used);
+    }
+}
+
+/// The run of one target `h.f.f...f := x` of depth `d` over a record that nests `d + 1` structs
+/// of one register, with each step as `.f` or as `@field(..., "f")`. A run without the target
+/// binds the register.
+fn name_target_run(d: usize, named: bool, with: bool, run_key: u64) -> Run {
+    let mut src = "struct S0 {\n    f: Reg[UInt[8]],\n}\n".to_owned();
+    for i in 1..=d {
+        writeln!(src, "struct S{i} {{\n    f: S{},\n}}", i - 1).unwrap();
+    }
+    src.push_str("module M() {\n    input x: UInt[8];\n    reg r: UInt[8] = 0;\n");
+    let value = (0..=d).fold("r".to_owned(), |inner, i| format!("S{i}({inner})"));
+    writeln!(src, "    let h = {value};").unwrap();
+    let target = (0..=d).fold("h".to_owned(), |inner, _| {
+        if named {
+            format!("@field({inner}, \"f\")")
+        } else {
+            format!("{inner}.f")
+        }
+    });
+    if with {
+        writeln!(src, "    {target} := x;").unwrap();
+    } else {
+        src.push_str("    r := x;\n");
+    }
+    src.push_str("}\n");
+    passing(KEY + run_key, 100_000, &src)
+}
+
+/// W6b. A target through `d` steps `@field(..., "f")` over records. A key with a name pays its size
+/// between its kind checks and its look-up, so the run along the path pays it and keeps its cursor.
+/// A step that leaves the run walks the path from the root again, and the steps grow with `d * d`.
+/// The steps equal those of the target `.f...f`.
+#[test]
+fn w6b_a_target_through_named_field_steps_walks_its_path_once() {
+    let at = |d: usize, named: bool, key: u64| {
+        let (with, base) = (
+            name_target_run(d, named, true, key),
+            name_target_run(d, named, false, key + 1),
+        );
+        (
+            with.counts.stepped - base.counts.stepped,
+            extra(&with, &base).0,
+        )
+    };
+    let ((a, work_a), (b, work_b)) = (at(32, true, 130), at(64, true, 132));
+    assert!(a > 0 && b <= 2 * a + 16, "the steps {a} at d and {b} at 2d");
+    assert!(
+        work_b <= 2 * work_a + 16,
+        "the work {work_a} at d and {work_b} at 2d"
+    );
+    let ((c, _), (e, _)) = (at(32, false, 134), at(64, false, 136));
+    assert_eq!((a, b), (c, e));
+}
