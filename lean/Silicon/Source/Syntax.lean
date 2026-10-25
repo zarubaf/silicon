@@ -73,6 +73,10 @@ def Builtin.arity : Builtin → Nat
 def Builtin.form : Builtin → String
   | .typeOf => "@TypeOf(x)" | .field => "@field(x, k)"
 
+/-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
+def Builtin.arityText (b : Builtin) (m : Nat) : String :=
+  s!"`@{b.name}` takes {b.arity} argument(s), but it has {m}; write `{b.form}`"
+
 /-!
 An expression and a type expression. The two are mutually recursive, because an array type
 `[T; N]` is also an expression (`arrayType`). Its element `T` is a type expression, and its

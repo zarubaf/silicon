@@ -411,6 +411,11 @@ def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
     | none => fail .S013 q s!"the selector {i} is out of range for {v.text}"
   | v => fail .S010 pos s!"the selector `.{i}` needs a tuple, not {v.text}"
 
+/-! The `S010` text "Field of an enum" of section 6.2, for the enum type `t` and the field `f`. -/
+def enumFieldText (t : Ty) (f : String) : String :=
+  s!"`{t.text}` is an enum and has no field `{f}`; read a payload with `match`, or the bits " ++
+    s!"with `reinterpret(UInt[{t.info.width}], e)`"
+
 /-!
 A field `.f` or a selector `.N` at `pos` of a part of the type `t` is `S010` when `t` is an enum.
 Section 6.2 gives the text. An enum has the leaves `tag` and `payload`, but no field (section
@@ -418,9 +423,7 @@ Section 6.2 gives the text. An enum has the leaves `tag` and `payload`, but no f
 enum, the width of its metadata. Another type passes.
 -/
 def noEnumField (pos : Pos) (f : String) (t : Option Ty) : M Unit := do
-  if let some t@(.enum ..) := t then
-    fail .S010 pos (s!"`{t.text}` is an enum and has no field `{f}`; read a payload with " ++
-      s!"`match`, or the bits with `reinterpret(UInt[{t.info.width}], e)`")
+  if let some t@(.enum ..) := t then fail .S010 pos (enumFieldText t f)
 
 /-!
 The selector `.i` refers to an element. A selector of a reference to a tuple gives a reference
@@ -707,10 +710,10 @@ def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → O
     | _, _ => none
 
 /-!
-The number and the type of the field with the symbol `y` and the name `name` of the struct type
-`t` at `pos`. `text` names the value. The record type holds the number of its specialization,
-and the symbol finds the number of the field, so the selection compares no name. No symbol is
-no field.
+The number and the type of the field with the symbol `y` of the struct type `t` at `pos`. `name`
+is the name in a message, and `text` names the value. The record type holds the number of its
+specialization, and the symbol finds the number of the field, so the selection compares no name.
+No symbol is no field.
 -/
 def fieldBy (pos : Pos) (y : Option Nat) (name : String) (t : Ty) (text : String) :
     M (Nat × Ty) := do
@@ -727,41 +730,45 @@ def fieldBy (pos : Pos) (y : Option Nat) (name : String) (t : Ty) (text : String
   | some r => return r
   | none => fail .S010 pos s!"{text} has no field `{name}`"
 
-/-! The field `f` of the struct type `t` at `pos` (`fieldBy`), by the symbol of its name. -/
-def fieldOf (pos : Pos) (f : Ident) (t : Ty) (text : String) : M (Nat × Ty) := do
-  fieldBy pos ((← read).field f.pos) f.name t text
-
 /-!
-The field `f` of a record at `pos`. The result is the number of the field, its value, and its
-type. A field selection refers to the field, so it charges no size.
+The field with the symbol `y` of a record at `pos`, with the name `name` in a message (`fieldBy`).
+The result is the number of the field, its value, and its type. A field selection refers to the
+field, so it charges no size.
 -/
-def fieldAt (pos : Pos) (f : Ident) : Val → M (Nat × Value × Ty)
+def fieldAtBy (pos : Pos) (y : Option Nat) (name : String) : Val → M (Nat × Value × Ty)
   | .static v@(.record t xs) => do
-    let (k, ft) ← fieldOf pos f t v.text
+    let (k, ft) ← fieldBy pos y name t v.text
     match xs[k]? with
     | some x => return (k, x, ft)
-    | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
-  | v => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+    | none => fail .S010 pos s!"{v.text} has no field `{name}`"
+  | v => fail .S010 pos s!"{v.text} has no field `{name}`"
 
 /-!
-The field `f` of a record or of a hardware aggregate at `pos`. A field of a reference to a record
-gives a reference to the part with the leaf field `f`. The result is the number of the field,
-its value, and its type. An enum has no field (`noEnumField`).
+The field with the symbol `y` and the name `name` of a record or of a hardware aggregate. The
+look-up and its errors are at `kp`, with the name `shown` in a message (`fieldBy`), and the
+selection reads at `pos`. A field of a reference to a record gives a reference to the part with
+the leaf field `name`. The result is the number of the field, its value, and its type. An enum
+has no field (`noEnumField`).
 -/
-def fieldKey (pos : Pos) (f : Ident) (v : Val) : M (Nat × Val × Ty) := do
-  noEnumField pos f.name v.ty?
+def fieldKeyBy (pos kp : Pos) (y : Option Nat) (name shown : String) (v : Val) :
+    M (Nat × Val × Ty) := do
+  noEnumField kp shown v.ty?
   match v with
   | v@(.agg (.record n xs)) => do
-    let (k, ft) ← fieldOf pos f n.ty v.text
+    let (k, ft) ← fieldBy kp y shown n.ty v.text
     match xs[k]? with
     | some x => return (k, ← normalize pos x, ft)
-    | none => fail .S010 pos s!"{v.text} has no field `{f.name}`"
+    | none => fail .S010 kp s!"{v.text} has no field `{shown}`"
   | v@(.agg (.ref b t@(.struct ..))) => do
-    let (k, ft) ← fieldOf pos f t v.text
-    return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) t k (.user f.name)) ft), ft)
+    let (k, ft) ← fieldBy kp y shown t v.text
+    return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) t k (.user name)) ft), ft)
   | v => do
-    let (k, w, ft) ← fieldAt pos f v
+    let (k, w, ft) ← fieldAtBy kp y shown v
     return (k, .static w, ft)
+
+/-! The field `f` of a record or of a hardware aggregate at `pos` (`fieldKeyBy`). -/
+def fieldKey (pos : Pos) (f : Ident) (v : Val) : M (Nat × Val × Ty) := do
+  fieldKeyBy pos pos ((← read).field f.pos) f.name f.name v
 
 def field (pos : Pos) (f : Ident) (v : Val) : M Val := do return (← fieldKey pos f v).2.1
 

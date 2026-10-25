@@ -639,28 +639,29 @@ theorem fieldBy_f (p : Pos) (y : Option Nat) (n : String) (t : Ty) (x : String) 
     Follows cap (fieldBy p y n t x) (fieldBy p y n t x) := by
   unfold fieldBy; follows
 
-theorem fieldOf_f (p : Pos) (f : Ident) (t : Ty) (x : String) :
-    Follows cap (fieldOf p f t x) (fieldOf p f t x) := by
-  unfold fieldOf; follows [fieldBy_f]
+theorem fieldAtBy_f (p : Pos) (y : Option Nat) (n : String) (v : Val) :
+    Follows cap (fieldAtBy p y n v) (fieldAtBy p y n v) := by
+  unfold fieldAtBy; follows [fieldBy_f]
 
-theorem fieldAt_f (p : Pos) (f : Ident) (v : Val) :
-    Follows cap (fieldAt p f v) (fieldAt p f v) := by
-  unfold fieldAt; follows [fieldOf_f]
+theorem fieldKeyBy_f (p q : Pos) (y : Option Nat) (n m : String) (v : Val) :
+    Follows cap (fieldKeyBy p q y n m v) (fieldKeyBy p q y n m v) := by
+  unfold fieldKeyBy; follows [noEnumField_f, fieldBy_f, fieldAtBy_f, normalize_f]
 
 theorem fieldKey_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (fieldKey p f v) (fieldKey p f v) := by
-  unfold fieldKey; follows [noEnumField_f, fieldOf_f, fieldAt_f, normalize_f]
+  unfold fieldKey; follows [fieldKeyBy_f]
 
 theorem field_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (field p f v) (field p f v) := by
   unfold field; follows [fieldKey_f]
 
 theorem tyStep_f (t : Ty) (s : QueryStep) : Follows cap (tyStep t s) (tyStep t s) := by
-  unfold tyStep; follows [noEnumField_f, fieldOf_f, within_f]
+  unfold tyStep; follows [noEnumField_f, fieldBy_f, within_f]
 
 theorem valueStep_f (v : Val) (s : QueryStep) :
     Follows cap (valueStep v s) (valueStep v s) := by
-  unfold valueStep; follows [noEnumField_f, fieldOf_f, within_f, pickKey_f, selectKey_f, fieldKey_f]
+  unfold valueStep
+  follows [noEnumField_f, fieldBy_f, within_f, pickKey_f, selectKey_f, fieldKeyBy_f]
 
 theorem queryStep_f (q : Query) (s : QueryStep) :
     Follows cap (queryStep q s) (queryStep q s) := by

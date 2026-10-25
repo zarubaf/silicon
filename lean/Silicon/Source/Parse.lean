@@ -237,10 +237,6 @@ def notBuiltinText (x : String) : String :=
   s!"`@{strText x}` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or " ++
     "`@ports`"
 
-/-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
-def builtinArityText (b : Builtin) (m : Nat) : String :=
-  s!"`@{b.name}` takes {b.arity} argument(s), but it has {m}; write `{b.form}`"
-
 /-! The `S001` text "Query operand" of section 6.2 for the builtin `b`. -/
 def queryOperandText (b : Builtin) : String :=
   s!"`@{b.name}` takes a name or a selection of a name; bind the value with `let` and pass " ++
@@ -265,7 +261,7 @@ The checks of the builtin `b` after its operands `xs` (section 9.3). First the n
 operands, at the name `u`. Then the form of the operand of `@TypeOf`, at its first token `o`.
 -/
 def builtinCheck (u : Token) (b : Builtin) (o : Pos) (xs : List Expr) : P Unit := do
-  if xs.length != b.arity then throw ⟨.S001, u.pos, builtinArityText b xs.length⟩
+  if xs.length != b.arity then throw ⟨.S001, u.pos, b.arityText xs.length⟩
   unless b.operandsOk xs do throw ⟨.S001, o, queryOperandText b⟩
 
 def noDomain : P Unit := do

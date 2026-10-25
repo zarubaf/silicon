@@ -31,12 +31,13 @@ inductive Query where
 
 /-!
 A step of a query operand after its key evaluated. It is an index at `pos` with the static key
-`k` at `q`, a selector `.i` with its literal at `q`, or a field `.f`.
+`k` at `q`, or a selector `.i` with its literal at `q`. It can also be a field at `pos` with the
+symbol `y` and the name `name`. `shown` is the name in a message.
 -/
 inductive QueryStep where
   | index (pos q : Pos) (k : Value)
   | select (pos q : Pos) (i : Nat)
-  | field (pos : Pos) (f : Ident)
+  | field (pos : Pos) (y : Option Nat) (name shown : String)
 
 /-!
 The data type of the value `v` when a step on it selects in the type only (section 9.3). These
@@ -67,13 +68,13 @@ def partText (t : Ty) : String := if t.info.leaves = 0 then t.text else s!"hardw
 The step `s` on a part of the data type `t` (section 9.3). A field selects the field type of a
 struct, and a selector the element type of a tuple. An index selects the element type of an
 array or a tuple. The checks and their texts are those of a step on a reference of `t`
-(`fieldKey`, `selectKey`, `pickKey`). An index checks its range against the length of the type.
+(`fieldBy`, `selectKey`, `pickKey`). An index checks its range against the length of the type.
 -/
 def tyStep (t : Ty) : QueryStep → M Ty
-  | .field q f => do
-    noEnumField q f.name (some t)
-    if t matches .struct .. then return (← fieldOf q f t (partText t)).2
-    fail .S010 q s!"{partText t} has no field `{f.name}`"
+  | .field q y _ shown => do
+    noEnumField q shown (some t)
+    if t matches .struct .. then return (← fieldBy q y shown t (partText t)).2
+    fail .S010 q s!"{partText t} has no field `{shown}`"
   | .select q r i => do
     noEnumField q (toString i) (some t)
     match t with
@@ -97,7 +98,7 @@ def tyStep (t : Ty) : QueryStep → M Ty
 The step `s` on the value `v` that holds its parts (section 9.3). A container node gives its
 element as it is, so a reference in it charges no zero size. A list node checks the index
 against its own length. Each other value takes the step of a place (`pickKey`, `selectKey`,
-`fieldKey`). A static value selects there with no charge, and another value fails there, for
+`fieldKeyBy`). A static value selects there with no charge, and another value fails there, for
 example a memory with `S010`. The result is the number of the part, the part, and the field
 type of a field.
 -/
@@ -113,20 +114,20 @@ def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
     match xs[i]? with
     | some x => return (i, x.val, none)
     | none => fail .S013 r s!"the selector {i} is out of range for {v.text}"
-  | .field q f, v@(.agg (.record n xs)) => do
-    noEnumField q f.name (some n.ty)
-    let (k, ft) ← fieldOf q f n.ty v.text
+  | .field q y _ shown, v@(.agg (.record n xs)) => do
+    noEnumField q shown (some n.ty)
+    let (k, ft) ← fieldBy q y shown n.ty v.text
     match xs[k]? with
     | some x => return (k, x.val, some ft)
-    | none => fail .S010 q s!"{v.text} has no field `{f.name}`"
+    | none => fail .S010 q s!"{v.text} has no field `{shown}`"
   | .index p q k, v => do
     let (j, w) ← pickKey p q v k
     return (j, w, none)
   | .select p q i, v => do
     let (j, w) ← selectKey p q i v
     return (j, w, none)
-  | .field p f, v => do
-    let (k, w, ft) ← fieldKey p f v
+  | .field p y name shown, v => do
+    let (k, w, ft) ← fieldKeyBy p p y name shown v
     return (k, w, some ft)
 
 /-!
