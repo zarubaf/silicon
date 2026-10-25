@@ -230,27 +230,38 @@ fn close_placeholders(spec: &str, rows: &mut [Row]) -> Result<()> {
         if line.starts_with("### ") || line.starts_with("## ") {
             in_section = line.starts_with(SECTION);
         }
-        let Some(at) = line.find(VALUES).filter(|_| in_section) else {
+        let Some(first) = line.find(VALUES).filter(|_| in_section) else {
             continue;
         };
         let here = i + 1;
-        let tail = &line[at + VALUES.len()..];
-        let Some((name, tail)) = tail.split_once("}`:") else {
-            bail!("{SPEC}:{here}: write `Values of `{{p}}`: `a`, `b`.`");
-        };
-        let values = code_spans(tail);
-        if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphabetic()) || values.is_empty() {
-            bail!("{SPEC}:{here}: write `Values of `{{p}}`: `a`, `b`.` with one or more values");
-        }
-        let mut found = false;
-        for case in line[..at].split('"').skip(1).step_by(2) {
-            for row in rows.iter_mut().filter(|r| r.case == case) {
-                row.closed.insert(name.to_owned(), values.clone());
-                found = true;
+        // A note can close several placeholders. Each sentence applies to the cases that the note
+        // quotes before its first sentence.
+        let cases = &line[..first];
+        for (at, _) in line.match_indices(VALUES) {
+            let tail = &line[at + VALUES.len()..];
+            let tail = tail.find(VALUES).map_or(tail, |end| &tail[..end]);
+            let Some((name, tail)) = tail.split_once("}`:") else {
+                bail!("{SPEC}:{here}: write `Values of `{{p}}`: `a`, `b`.`");
+            };
+            let values = code_spans(tail);
+            if name.is_empty()
+                || !name.chars().all(|c| c.is_ascii_alphabetic())
+                || values.is_empty()
+            {
+                bail!(
+                    "{SPEC}:{here}: write `Values of `{{p}}`: `a`, `b`.` with one or more values"
+                );
             }
-        }
-        if !found {
-            bail!("{SPEC}:{here}: the values of `{{{name}}}` follow no quoted case of a row");
+            let mut found = false;
+            for case in cases.split('"').skip(1).step_by(2) {
+                for row in rows.iter_mut().filter(|r| r.case == case) {
+                    row.closed.insert(name.to_owned(), values.clone());
+                    found = true;
+                }
+            }
+            if !found {
+                bail!("{SPEC}:{here}: the values of `{{{name}}}` follow no quoted case of a row");
+            }
         }
     }
     Ok(())
@@ -1007,6 +1018,19 @@ mod tests {
     fn holds_in(row: &Row, runs: &[&str]) -> bool {
         let runs: Vec<String> = runs.iter().map(|r| (*r).to_owned()).collect();
         holds(&expansions(row).unwrap(), &runs)
+    }
+
+    #[test]
+    fn a_note_closes_each_placeholder_that_it_names() {
+        let note = "- In \"Place\", `{k}` and `{h}` are closed. Values of `{k}`: `a`, `b`. \
+                    Values of `{h}`: `read it as a value`, `` bind it with `:=` ``.";
+        let spec = CLOSED.replace(CLOSED.lines().nth(8).unwrap(), note);
+        let rows = spec_rows(&spec).unwrap();
+        assert_eq!(rows[1].closed["k"], ["a", "b"]);
+        assert_eq!(
+            rows[1].closed["h"],
+            ["read it as a value", "bind it with `:=`"]
+        );
     }
 
     #[test]
