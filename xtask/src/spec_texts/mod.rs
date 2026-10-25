@@ -1144,6 +1144,26 @@ mod tests {
     }
 
     #[test]
+    fn a_part_with_a_hole_after_an_at_belongs_to_a_closed_row() {
+        let rows = closed_rows();
+        let forms = expansions(&rows[0]).unwrap();
+        for part in [
+            "`@{}` takes a name",
+            "`{}` takes a name",
+            "`@ports` takes a name",
+        ] {
+            assert!(belongs(&rows[0], &forms, part), "{part}");
+        }
+        for part in [
+            "`@@{}` takes a name",
+            "`@{}` takes a type",
+            "`@typeInfo` takes a name",
+        ] {
+            assert!(!belongs(&rows[0], &forms, part), "{part}");
+        }
+    }
+
+    #[test]
     fn the_checked_in_tree_passes() {
         let repo = Repo::discover().unwrap();
         assert_eq!(check(&repo).unwrap(), Vec::new());
