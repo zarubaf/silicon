@@ -3432,12 +3432,12 @@ mutual
       let v ← conform p t (← static p (← settle p t o.value))
       let path ← fresh x.id x.name.name
       Elab.modifyBody fun b => { b with regs := b.regs.push ⟨path, t, v, p⟩ }
-      bindLocal x.id ⟨some t, false, ← Elab.resource .reg path t p x.name.name, true⟩
+      bindLocal x.id ⟨some (.reg t), false, ← Elab.resource .reg path t p x.name.name, true⟩
     | .wire p x ty => do
       let t ← Elab.dataType p (← typeExpr n ty)
       let path ← fresh x.id x.name.name
       Elab.modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
-      bindLocal x.id ⟨some t, false, ← Elab.resource .wire path t p x.name.name, true⟩
+      bindLocal x.id ⟨some (.wire t), false, ← Elab.resource .wire path t p x.name.name, true⟩
     | .mem p x w d => do
       if (← get).inst.work.body.domain.isNone then
         fail .S017 p ("a combinational module has no memory; remove `domains()` from the " ++
