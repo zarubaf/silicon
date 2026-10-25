@@ -12,7 +12,8 @@
 //! type and no payload type.
 
 use super::container::bounded;
-use super::{Evaluator, GuardKind, Out, Res, at, fail, need};
+use super::place::chain;
+use super::{ArgRec, Evaluator, GuardKind, Out, Res, at, fail, need};
 use crate::Code;
 use crate::hw::{Handle, Seen, Val};
 use crate::int::Int;
@@ -321,9 +322,16 @@ impl Evaluator<'_> {
     /// `@typeInfo(arg)` at `pos`, after its node charged (section 6.2, **`@typeInfo` order**,
     /// steps 2 to 8).
     pub(super) fn type_info(&mut self, pos: Pos, arg: &Expr) -> Res<Out> {
+        let rec = if chain(arg).is_some() {
+            ArgRec::Place
+        } else {
+            ArgRec::Node
+        };
         let out = self.guarded(GuardKind::Arg(Builtin::TypeInfo), |ev| {
-            let o = ev.eval(arg)?;
-            need(arg, o)
+            ev.with_arg(rec, |ev| {
+                let o = ev.eval(arg)?;
+                need(arg, o)
+            })
         })?;
         let t = self.type_info_arg(arg.pos(), &out)?;
         let ti = self.type_info_struct(pos)?;

@@ -475,7 +475,7 @@ impl Evaluator<'_> {
     /// ends before it. Only a static container has elements, so each base after
     /// the first is static data. A field of a root that is not static, for example a port of
     /// an instance, applies at once by the rule of `field`, before the walk.
-    pub(super) fn read(&mut self, e: &Expr) -> Res<Option<Out>> {
+    pub(super) fn read(&mut self, e: &Expr, place: bool) -> Res<Option<Out>> {
         let mut steps = Vec::new();
         let mut next = self.read_step(e);
         let mut root = e;
@@ -497,7 +497,7 @@ impl Evaluator<'_> {
             root = base;
         }
         steps.reverse();
-        let b = self.eval(root)?;
+        let b = self.eval_root(root, place)?;
         let b = need(root, b)?;
         // The fields at the start take no index, so a stored root runs through its nodes at once.
         let fields: Vec<Key<'_>> = steps
@@ -508,7 +508,7 @@ impl Evaluator<'_> {
             })
             .collect();
         let (through, done) = self.node_steps(Opnd::of_out(b), &fields);
-        let (b, done) = self.index_base(through.into_out(), &steps, done)?;
+        let (b, done) = self.index_base(through.into_out(), &steps, done, !place)?;
         let steps = steps.split_off(done.min(steps.len()));
         let Some(first) = steps.first().map(Sel::pos) else {
             return Ok(Some(b));
@@ -528,9 +528,15 @@ impl Evaluator<'_> {
         let mut rest: &[Sel<'_>] = &steps;
         loop {
             let (out, done, after) = self.segment(base, rest, known)?;
+            let last = done.checked_sub(1).and_then(|k| rest.get(k)).map(Sel::pos);
             rest = rest.get(done..).unwrap_or_default();
             if rest.is_empty() {
                 return Ok(Some(out));
+            }
+            // A step that gives a value checks it before the next index evaluates (Lean
+            // `argNode`). The last step of the read is the node that the caller checks.
+            if !place && let Some(q) = last {
+                self.arg_hw(q, &out)?;
             }
             // The type of a reference goes on from the segment, so the path is not walked
             // again. A new value has no known type.
@@ -551,7 +557,7 @@ impl Evaluator<'_> {
                     break;
                 }
                 if let Sel::Field(..) = next {
-                    let (out, taken) = self.field_or_entry(base.into_out(), rest)?;
+                    let (out, taken) = self.field_or_entry(base.into_out(), rest, !place)?;
                     rest = rest.get(taken..).unwrap_or_default();
                     if rest.is_empty() {
                         return Ok(Some(out));
@@ -572,11 +578,18 @@ impl Evaluator<'_> {
     /// The base that the fields of `steps` from `done` select from `b`, while the base is not a
     /// static value, and the number of steps taken (Lean `indexBase`). A field of a root that is
     /// not static, for example a port of an instance, applies at once by the rule of `field_part`.
-    fn index_base(&mut self, mut b: Out, steps: &[Sel<'_>], mut done: usize) -> Res<(Out, usize)> {
+    fn index_base(
+        &mut self,
+        mut b: Out,
+        steps: &[Sel<'_>],
+        mut done: usize,
+        check: bool,
+    ) -> Res<(Out, usize)> {
         while let Some(Sel::Field(..)) = steps.get(done)
             && !matches!(self.store.seen(&b), Seen::Static(_))
         {
-            let (out, taken) = self.field_or_entry(b, steps.get(done..).unwrap_or_default())?;
+            let rest = steps.get(done..).unwrap_or_default();
+            let (out, taken) = self.field_or_entry(b, rest, check)?;
             b = out;
             done += taken;
         }
@@ -587,16 +600,25 @@ impl Evaluator<'_> {
     /// (Lean `fieldPart` and `childSel`). A field of an `Instance` handle that names a family of
     /// the child, followed by an index, selects the entry of that key: the two steps are one
     /// selection (section 6.2). Else the field applies by the rule of `field_part`.
-    fn field_or_entry(&mut self, b: Out, steps: &[Sel<'_>]) -> Res<(Out, usize)> {
+    fn field_or_entry(&mut self, b: Out, steps: &[Sel<'_>], check: bool) -> Res<(Out, usize)> {
         let Some(Sel::Field(q, f)) = steps.first() else {
             return Ok((b, 0));
         };
         if let Some(Sel::Index(p, [key])) = steps.get(1)
             && let Some(sym) = self.child_family(&b, f)
         {
-            return Ok((self.child_sel((*p, *q), &b, (sym, &f.name), key)?, 2));
+            let out = self.child_sel((*p, *q), &b, (sym, &f.name), key)?;
+            if check {
+                self.arg_hw(*p, &out)?;
+            }
+            return Ok((out, 2));
         }
-        Ok((self.field_part(*q, b, f)?, 1))
+        let out = self.field_part(*q, b, f)?;
+        // The field node has its value here, before the key of an index (section 9.4).
+        if check {
+            self.arg_hw(*q, &out)?;
+        }
+        Ok((out, 1))
     }
 
     /// The first segment of a read from `base` along `steps`: the result, and the number of its
