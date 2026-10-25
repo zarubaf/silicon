@@ -221,6 +221,10 @@ impl Builder {
     /// Runs `f` with the hand tape as the tape, as `on_side` does with the
     /// side tape. A call inside `f` stays on the hand tape.
     pub(super) fn on_hand<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
+        debug_assert!(
+            self.swapped != Some(Lane::Temp),
+            "the hand tape is drawn inside the temp tape"
+        );
         if self.swapped.is_some() {
             return f(self);
         }
@@ -235,6 +239,10 @@ impl Builder {
     /// A number below `n` from the hand tape, also while `on_hand` has
     /// swapped the tapes.
     pub(super) fn hand_below(&mut self, n: u32) -> u32 {
+        debug_assert!(
+            self.swapped != Some(Lane::Temp),
+            "the hand tape is drawn inside the temp tape"
+        );
         if self.swapped.is_some() {
             self.tape.below(n)
         } else {

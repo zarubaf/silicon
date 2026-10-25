@@ -857,7 +857,12 @@ impl Writer<'_> {
                     || panic!("a field of the builder is missing: {e:?}"),
                     |(_, h)| h,
                 ),
-                _ => panic!("a member of the builder is on no struct: {e:?}"),
+                HVal::Res(n) => HVal::Port(n, f.clone()),
+                _ => panic!("a member of the builder is on no struct or instance: {e:?}"),
+            },
+            HExpr::ChildEntry(b, fam, k) => match self.handle(b, fr) {
+                HVal::Res(n) => HVal::Port(n, self.entry(fam, k, fr)),
+                _ => panic!("an entry of the builder is on no instance: {e:?}"),
             },
             HExpr::Call(g, args) => {
                 let Some((params, _, _, result)) = helper_of(self.items, g) else {
@@ -975,22 +980,7 @@ impl Writer<'_> {
                 mutable,
                 ty,
                 value,
-            } => {
-                let ty = ty.as_ref().map(|t| self.ty(t, fr));
-                if let HExpr::Call(f, args) = value
-                    && is_resource_helper(f)
-                {
-                    self.inline_let(name, *mutable, (f, args), fr, out);
-                    return;
-                }
-                let value = self.hexpr(value, fr);
-                out.push(Stmt::Let {
-                    name: fr.declare(name),
-                    mutable: *mutable,
-                    ty,
-                    value,
-                });
-            }
+            } => self.let_stmt((name, *mutable, ty.as_ref(), value), fr, out),
             Stmt::StaticLet(..)
             | Stmt::MutLet(..)
             | Stmt::Push(..)
@@ -1051,6 +1041,36 @@ impl Writer<'_> {
                 self.lists.entry(n.clone()).or_default().push(h);
             }
         }
+    }
+
+    /// A `let`: a literal of handles names its handles, a call of a helper
+    /// that takes resources is inlined, and any other value is data.
+    fn let_stmt(
+        &mut self,
+        (name, mutable, ty, value): (&str, bool, Option<&Ty>, &HExpr),
+        fr: &mut Frame,
+        out: &mut Vec<Stmt>,
+    ) {
+        let ty = ty.map(|t| self.ty(t, fr));
+        // The twin keeps no container of handles: it selects from them.
+        if matches!(value, HExpr::Tuple(_) | HExpr::Array(_) | HExpr::Record(..)) {
+            let h = self.handle(value, fr);
+            fr.handles.insert(name.to_owned(), h);
+            return;
+        }
+        if let HExpr::Call(f, args) = value
+            && is_resource_helper(f)
+        {
+            self.inline_let(name, mutable, (f, args), fr, out);
+            return;
+        }
+        let value = self.hexpr(value, fr);
+        out.push(Stmt::Let {
+            name: fr.declare(name),
+            mutable,
+            ty,
+            value,
+        });
     }
 
     /// A `mem` statement, or a `write_port` call.
@@ -1839,6 +1859,41 @@ mod tests {
             "module M0() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    reg r0_c1: UInt[4] = 0;\n    reg r1_c1: UInt[4] = 0;\n    reg r2_c2: UInt[4] = 0;\n    wire w0_c2: UInt[4];\n    instance u0_c3 = M1();\n    r1_c1 := i0;\n    r2_c2 := i0;\n    w0_c2 := i0;\n    u0_c3.i0 := i0;\n    o0 := ((read(r1_c1) +% r2_c2) +% u0_c3.o0);\n}\nmodule M1() domains() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    o0 := i0;\n}\n"
         );
         assert!(t.static_names().is_empty(), "{:?}", t.static_names());
+    }
+
+    /// A local container of instances: the twin keeps no container, and the
+    /// `:=` and the read through `l0.1` and `l0.0` name the instance in that
+    /// slot.
+    #[test]
+    fn the_twin_selects_an_instance_from_a_local_container() {
+        let instance = |n: &str| Stmt::Instance(n.to_owned(), "M1".to_owned(), Vec::new());
+        let slot = |k| Box::new(HExpr::Select(Box::new(hname("l0")), k));
+        let body = vec![
+            Stmt::Input("i0".to_owned(), uint(4)),
+            Stmt::Output("o0".to_owned(), uint(4)),
+            instance("u0"),
+            instance("u1"),
+            Stmt::Let {
+                name: "l0".to_owned(),
+                mutable: false,
+                ty: None,
+                value: HExpr::Tuple(vec![hname("u1"), hname("u0")]),
+            },
+            Stmt::Connect(
+                Place::Path(HExpr::Member(slot(1), "i0".to_owned())),
+                hname("i0"),
+            ),
+            Stmt::Connect(Place::Field("u1".to_owned(), "i0".to_owned()), hname("i0")),
+            connect("o0", HExpr::Member(slot(0), "o0".to_owned())),
+        ];
+        let t = twin(&program(
+            vec![module("M0", &[], true, body), m1()],
+            Vec::new(),
+        ));
+        assert_eq!(
+            t.text,
+            "module M0() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    instance u0 = M1();\n    instance u1 = M1();\n    u0.i0 := i0;\n    u1.i0 := i0;\n    o0 := u1.o0;\n}\nmodule M1() domains() {\n    input i0: UInt[4];\n    output o0: UInt[4];\n    o0 := i0;\n}\n"
+        );
     }
 
     /// A group: the loop that pushes declarations runs without blocks, so
