@@ -868,7 +868,8 @@ theorem inFrameOf_f (fr : Frame) {x y : M α} (h : Follows cap x y) :
     Follows cap (inFrameOf fr x) (inFrameOf fr y) := by
   unfold inFrameOf; follows [h]
 
-theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M Value} (h : Follows cap b b') :
+theorem constant_f (p : Pos) (x : String) (i : Nat) {b b' : M (Value × Ty)}
+    (h : Follows cap b b') :
     Follows cap (constant p x i b) (constant p x i b') := by
   unfold constant; follows [h, setConst_f, nested_f, inFrame_f, structural_f]
 
@@ -1170,13 +1171,20 @@ theorem params_f (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t))
   rw [params.eq_def k, params.eq_def m]
   follows [ht]
 
+theorem constItem_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p cp : Pos) (x : String) (i : Nat)
+    (ty : Resolve.TypeExpr) (v : Resolve.Expr) :
+    Follows m (constItem k p cp x i ty v) (constItem m p cp x i ty v) := by
+  rw [constItem.eq_def k, constItem.eq_def m]
+  follows [he, ht, need_f, copy_f, staticValue_f, staticHandle_f, conform_f, static_f, settle_f,
+    constant_f]
+
 theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
     (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : String) (r : Ref) :
     Follows m (name k p x r) (name m p x r) := by
   rw [name.eq_def k, name.eq_def m]
-  follows [he, ht, prim_f, need_f, copy_f, staticValue_f, staticHandle_f, conform_f, static_f,
-    settle_f, constant_f, spec_f he ht, enumUse_f he ht, nested_f, inFrame_f, params_f ht, fnTy_f,
-    normalize_f, readRef_f, bounded_f]
+  follows [he, ht, prim_f, need_f, constant_f, constItem_f he ht, spec_f he ht, enumUse_f he ht,
+    nested_f, inFrame_f, params_f ht, fnTy_f, normalize_f, readRef_f, bounded_f]
 
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
