@@ -1,0 +1,16 @@
+// S013: the index `[5]` of an empty list fails its range check before the later index `dbg()` evaluates. Only the value of a list gives its length, so the read checks the step before the key, and the `diagnostic` of `dbg()` makes no record.
+// TOP M()
+// OBSERVE-NOT: (record
+fn dbg() -> Nat {
+    diagnostic("dbg", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut l = list(List[Int]);
+    l.push(list(Int));
+    // expected-error S013 @+1
+    let z = l[0][5][dbg()];
+    o := x;
+}

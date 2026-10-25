@@ -1,0 +1,15 @@
+// S013: the place `a[5][dbg()]` checks the range of `[5]` before the later index `dbg()` evaluates, so the `diagnostic` of `dbg()` makes no record.
+// TOP M()
+// OBSERVE-NOT: (record
+fn dbg() -> Nat {
+    diagnostic("dbg", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut a = [[1, 2], [3, 4]];
+    // expected-error S013 @+1
+    a[5][dbg()] = 3;
+    o := x;
+}

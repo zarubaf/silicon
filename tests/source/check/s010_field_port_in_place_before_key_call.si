@@ -1,0 +1,28 @@
+// S010: the `PortKey` key `pk` selects a port of the instance in a place, which is "Port in a place". The step checks it before the later key `f(pk)` evaluates, so `f` neither records nor changes `pk` first.
+// TOP M()
+// OBSERVE-NOT: (record
+module C() domains() {
+    input req[2]: UInt[4];
+    input req[3]: UInt[4];
+    output gnt[2]: [UInt[4]; 2];
+    output gnt[3]: [UInt[4]; 2];
+    gnt[2] := [req[2] +% 1, req[2] +% 2];
+    gnt[3] := [req[3] +% 3, req[3] +% 4];
+}
+fn f(mut p: PortKey) -> Int {
+    diagnostic("f", p);
+    p = PortKey("gnt", true, 3);
+    return 1;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.req[2] := x;
+    u.req[3] := x;
+    let mut pk = PortKey("gnt", true, 2);
+    let mut vs = [u];
+    // expected-error S010 @+1
+    @field(@field(vs[0], pk), f(pk)) = [x, x];
+    o := x;
+}

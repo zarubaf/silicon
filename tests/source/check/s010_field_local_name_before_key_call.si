@@ -1,0 +1,20 @@
+// S010: the name `"zz"` of a `let mut` key names no field of `P`. The step checks it before the later key `f()` evaluates, so the `diagnostic` of `f()` makes no record.
+// TOP M()
+// OBSERVE-NOT: (record
+struct P {
+    a: [Int; 2],
+    b: Int,
+}
+fn f() -> Int {
+    diagnostic("hi", 1);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut m = (P([1, 2], 2), 0);
+    let mut s = "zz";
+    // expected-error S010 @+1
+    let z = @field(@field(m.0, s), f());
+    o := x;
+}
