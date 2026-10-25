@@ -1,0 +1,13 @@
+// S015: the result of `@typeInfo` has a depth, and it nests in the active calls. At 997 calls the result goes above the nesting depth of 1000, though a constant at the same place stays inside it.
+// TOP M()
+comptime fn down(n: Nat) -> Nat {
+    comptime if (n == 0) {
+        // expected-error S015 @+2
+        // expected-message: the nesting depth goes above 1000; raise --depth
+        return @typeInfo(Bool).width;
+    }
+    return down(n - 1);
+}
+module M() {
+    static_assert(down(997) == 1, "deep");
+}

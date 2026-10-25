@@ -1,0 +1,12 @@
+// S005: the index of a container is a static position also inside the argument of `@typeInfo`. A register there is `S005` at the index.
+// TOP M()
+module M() {
+    output o: Bool;
+    reg r: UInt[1] = 0;
+    let xs = [Bool, Bool];
+    // expected-error S005 @+2
+    // expected-message: `r` is a register; a static position needs a static value
+    let t = @typeInfo(xs[r]);
+    r := 0;
+    o := true;
+}

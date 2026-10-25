@@ -1,0 +1,9 @@
+// S010: `@typeInfo` takes a type, not a value. The text says how to bind the value and use `@TypeOf`.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@typeInfo` takes a type, not a value of `Int`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`
+    let t = @typeInfo(3);
+    o := true;
+}

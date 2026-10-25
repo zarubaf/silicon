@@ -1,0 +1,9 @@
+// S010: a tuple of types is a value, not a type. The text names the tuple type with `type T`. A nested tuple of types gets the same text.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@typeInfo` takes a type, not a value of `((Type, Type), Type)`; name the tuple type with `type T = (A, B);` and use `@typeInfo(T)`
+    let t = @typeInfo(((Bool, Bool), UInt[8]));
+    o := true;
+}

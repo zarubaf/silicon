@@ -1,0 +1,9 @@
+// S003: the name in the argument of `@typeInfo` must exist.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S003 @+2
+    // expected-message: `Q` is not declared
+    let t = @typeInfo(Q);
+    o := true;
+}

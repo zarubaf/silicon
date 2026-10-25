@@ -1,0 +1,9 @@
+// S010: an array of types is a value, not a type. The text names the array type with `type T`.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@typeInfo` takes a type, not a value of `[Type; 2]`; name the array type with `type T = [A; N];` and use `@typeInfo(T)`
+    let t = @typeInfo([Bool, Bool]);
+    o := true;
+}

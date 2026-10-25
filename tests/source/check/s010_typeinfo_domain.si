@@ -1,0 +1,9 @@
+// S010: a domain has no type, so `@typeInfo(clk)` has no answer.
+// TOP M()
+module M() domains(clk) {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@typeInfo` takes a type, not the domain `clk`; a domain has no type, so remove the `@typeInfo`
+    let t = @typeInfo(clk);
+    o := true;
+}

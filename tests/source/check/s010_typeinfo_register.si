@@ -1,0 +1,14 @@
+// S010: a register is a place that reads no value, so `@typeInfo(r)` is a kind error. The text tells the user to use `@TypeOf`.
+// TOP M()
+struct P {
+    a: UInt[8],
+}
+module M() {
+    output o: UInt[8];
+    reg r: P = P();
+    // expected-error S010 @+2
+    // expected-message: `@typeInfo` takes a type, not a handle of `Reg[P]`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`
+    let t = @typeInfo(r);
+    r := P();
+    o := 0;
+}

@@ -28,12 +28,9 @@ rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
 lean | S001 Query operand | 377
 rust | S010 `@typeInfo` of a value | 345
-pin | S010 `@typeInfo` of a value | 345
 fix | S010 `@typeInfo` of a value | 377
 rust | S016 Mutation in a builtin argument | 345
-pin | S016 Mutation in a builtin argument | 345
 rust | S016 Graph effect in a builtin argument | 345
-pin | S016 Graph effect in a builtin argument | 345
 lean | S016 Mutation in a builtin argument | 377
 rust | S016 Mutation in a builtin argument | 377
 lean | S016 Graph effect in a builtin argument | 377

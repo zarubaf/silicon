@@ -1,0 +1,9 @@
+// S001: `@typeInfo` takes one operand. `@typeInfo()` has none.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S001 @+2
+    // expected-message: `@typeInfo` takes 1 argument(s), but it has 0; write `@typeInfo(T)`
+    let t = @typeInfo();
+    o := true;
+}
