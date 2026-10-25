@@ -15,8 +15,7 @@ if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item.
   `in`, `with`, and `conforms` after their forms.
-- The opening token: `@` of `@typeInfo`, `@Struct`, and `@ports`, and `@` of each builtin in
-  a type (#345).
+- The opening token: `@` of `@Struct` and `@ports`, and `@` of each builtin in a type (#345).
 - A later token of the construct: the `::` of a package path. The `(` after a type, which is a
   type function call. The second name in a `domains` clause. The `(` after the name of an enum,
   which is an enum with parameters.
@@ -38,11 +37,12 @@ bracket. Thus each look ahead takes constant time.
 `@` followed by another name than a builtin is `S001` "Not a builtin" at that name: no slice
 has that syntax.
 
-A builtin `@TypeOf(x)` or `@field(x, k)` is a primary (section 9.3). The parser reads all its
-operands, then it checks their number: another number is `S001` "Builtin arity" at the name
-after `@`. Then the operand of `@TypeOf` must be a place (`Expr.place`), else `S001` "Query
-operand" at the first token of the operand, also if that token is a `(`. These two checks come
-after the operands, so a syntax error in an operand wins over them. An `@field` selection of a
+A builtin `@TypeOf(x)`, `@typeInfo(T)`, or `@field(x, k)` is a primary (section 9.3). The
+parser reads all its operands, then it checks their number: another number is `S001` "Builtin
+arity" at the name after `@`. Then the operand of `@TypeOf` must be a place (`Expr.place`), else
+`S001` "Query operand" at the first token of the operand, also if that token is a `(`. These two
+checks come after the operands, so a syntax error in an operand wins over them. The operand of
+`@typeInfo` can be any expression. An `@field` selection of a
 place is a place, so it can be a target, and a statement can start with `@`.
 A module parameter or a struct parameter without `comptime` is `S001` at its name. With `mut`,
 it is `S001` at `mut`. The v0.1 grammar has only `comptime` module parameters, and the front-end

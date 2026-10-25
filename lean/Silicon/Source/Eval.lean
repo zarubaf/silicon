@@ -2960,6 +2960,8 @@ mutual
         let vs ← operands n xs fun _ o => pure o.value
         return some ⟨← variantOf p t j vs, false, none⟩
       | .typeOf p x => return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
+      -- TODO(#380): evaluate `@typeInfo` (section 9.3).
+      | .typeInfo p _ => fail .S004 p "a builtin is not supported yet"
       | .atField p b k => do
         let o ← need b (← eval n b)
         let c ← changesOf o
@@ -3651,7 +3653,7 @@ mutual
     | .«match» _ x as => do
       scanExpr x
       for a in as do scanArm a
-    | .typeOf _ x => scanExpr x
+    | .typeOf _ x | .typeInfo _ x => scanExpr x
     | .atField _ b k => do scanExpr b; scanExpr k
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
