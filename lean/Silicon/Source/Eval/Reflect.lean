@@ -15,7 +15,8 @@ size, and it makes no node. A field of an `Instance` handle selects the child po
 
 The result refers to an existing type, so it charges nothing more. A static tuple without a
 declared type stores no type, so the walk builds its type at the end (`builtTy`). Each tuple
-node charges 1, then the size of the built type charges. Only then the result exists.
+node charges 1 before the walk visits its elements, then the size of the built type charges.
+Only then the result exists.
 -/
 namespace Silicon.Source.Eval
 
@@ -153,29 +154,31 @@ operand (section 9.3). An input gives its handle, and an output its type, with n
 def portQuery (id : Nat) (path : Path) (port : Port) : Query :=
   if port.input then .value (.handle (.input id path port)) none else .type port.ty
 
-/-! The walk over the tuple nodes of a static value: each charges 1 at `p` (section 5.4). -/
+/-!
+The type of the static value `v` at the node `p` of `@TypeOf` (section 5.4). A tuple stores no
+type, so the walk builds it: each tuple node charges 1 before the walk visits its elements. Each
+other value refers to its type, with no charge.
+-/
 mutual
-  def tupleNodes (p : Pos) : Value → M Unit
-    | .tuple ⟨xs⟩ => do
+  def builtWalk (p : Pos) : Value → M Ty
+    | .tuple xs => do
       charge p 1
-      tupleNodesAll p xs
-    | _ => pure ()
+      return .tuple (← builtAll p xs.toList).toArray
+    | v => pure v.ty
 
-  def tupleNodesAll (p : Pos) : List Value → M Unit
-    | [] => pure ()
+  def builtAll (p : Pos) : List Value → M (List Ty)
+    | [] => pure []
     | x :: xs => do
-      tupleNodes p x
-      tupleNodesAll p xs
+      let t ← builtWalk p x
+      return t :: (← builtAll p xs)
 end
 
 /-!
-The type of the static value `v` at the node `p` of `@TypeOf`. A tuple builds its type: each
-tuple node charges 1 (`tupleNodes`), then the size of the type term charges. Each other value
-refers to its type, with no charge.
+The type of the static value `v` at the node `p` of `@TypeOf`. A tuple builds its type
+(`builtWalk`), then the size of the type term charges. Only then the result exists.
 -/
 def builtTy (p : Pos) (v : Value) : M Ty := do
-  tupleNodes p v
-  let some t := v.ty? | fail .S010 p s!"{v.text} has no type"
+  let t ← builtWalk p v
   if v matches .tuple _ then charge p t.size
   return t
 

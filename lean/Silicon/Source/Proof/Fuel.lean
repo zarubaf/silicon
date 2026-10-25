@@ -668,19 +668,19 @@ theorem queryStep_f (q : Query) (s : QueryStep) :
   unfold queryStep; follows [tyStep_f, valueStep_f]
 
 mutual
-  theorem tupleNodes_f (p : Pos) : ∀ v : Value, Follows cap (tupleNodes p v) (tupleNodes p v)
-    | .tuple ⟨xs⟩ => by rw [tupleNodes]; follows [tupleNodesAll_f p xs]
+  theorem builtWalk_f (p : Pos) : ∀ v : Value, Follows cap (builtWalk p v) (builtWalk p v)
+    | .tuple xs => by rw [builtWalk]; follows [builtAll_f p xs.toList]
     | .int _ | .bool _ | .str _ | .uint .. | .sint .. | .type _ | .unit | .array .. | .record ..
-    | .list .. | .function .. | .enum .. => by rw [tupleNodes.eq_def]; dsimp only; follows
+    | .list .. | .function .. | .enum .. => by rw [builtWalk.eq_def]; dsimp only; follows
 
-  theorem tupleNodesAll_f (p : Pos) :
-      ∀ xs : List Value, Follows cap (tupleNodesAll p xs) (tupleNodesAll p xs)
-    | [] => by rw [tupleNodesAll]; follows
-    | x :: xs => by rw [tupleNodesAll]; follows [tupleNodes_f p x, tupleNodesAll_f p xs]
+  theorem builtAll_f (p : Pos) :
+      ∀ xs : List Value, Follows cap (builtAll p xs) (builtAll p xs)
+    | [] => by rw [builtAll]; follows
+    | x :: xs => by rw [builtAll]; follows [builtWalk_f p x, builtAll_f p xs]
 end
 
 theorem builtTy_f (p : Pos) (v : Value) : Follows cap (builtTy p v) (builtTy p v) := by
-  unfold builtTy; follows [tupleNodes_f]
+  unfold builtTy; follows [builtWalk_f]
 
 theorem queryTy_f (p : Pos) (q : Query) : Follows cap (queryTy p q) (queryTy p q) := by
   unfold queryTy; follows [builtTy_f]

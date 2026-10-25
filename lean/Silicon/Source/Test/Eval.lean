@@ -3984,6 +3984,10 @@ charges 1, then the size of the type term charges. `(Int,)` has the size 2, and
 #guard exact (typeOfFn "  let t = ((1, 2), 3);\n  let y = @TypeOf(t.0);\n") "f()" (25 + 3 + 1 + 3)
 #guard out "fn f() -> Type { let t = ((1, 2), 3); return @TypeOf(t); }" "f()" ==
   "(type (tuple ((tuple (int int)) int)))"
+-- Each of the three tuple nodes charges 1 before the walk visits its element. `(((Int,),),)` has
+-- the size 4.
+#guard exact (typeOfFn "  let t = (((1,),),);\n  let y = @TypeOf(t);\n") "f()"
+  (cost (typeOfFn "  let t = (((1,),),);\n") "f()" + 2 + 3 + 4)
 
 /-! A `const` tuple has no declared type here, so it pays the build after its ordinary charges. -/
 def constTuple : String := "const C: (Nat, (Int,)) = (1, (2,));"
