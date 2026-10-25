@@ -18,6 +18,8 @@ use super::public::{directions, scalar_family};
 use super::{PortDecl, entry_text};
 use crate::Code;
 use crate::agg::{Agg, Base};
+use crate::eval::field::InstInfo;
+use crate::eval::place::Sel;
 use crate::eval::{Evaluator, GuardKind, Names, Out, Res, fail, need};
 use crate::hw::{Handle, Port, Seen, Val};
 use crate::int::Int;
@@ -207,6 +209,96 @@ impl Evaluator<'_> {
         }
         self.check_static(kp, o)?;
         self.family_key(kp, self.store.value(o))
+    }
+
+    /// The `S010` "Port in a place" of section 6.2 at `pos`: a place cannot select the port `port`
+    /// of the child of the `Instance` handle `info`. The fix follows the direction: an input takes a
+    /// `:=` target, and the child drives an output, so the fix reads it as a value.
+    pub(in crate::eval) fn port_in_place<T>(
+        &self,
+        pos: Pos,
+        info: InstInfo,
+        port: &Port,
+    ) -> Res<T> {
+        let (child, name) = (self.tys.text(info.ty), self.port_text(port));
+        let fix = if port.input {
+            format!("bind the input with a `:=` target, for example `u.{name} := e`")
+        } else {
+            format!(
+                "the child drives the output, so read it as a value, for example `x = u.{name}`"
+            )
+        };
+        fail(
+            Code::S010,
+            pos,
+            format!("a place cannot select the port `{name}` of `{child}`; {fix}"),
+        )
+    }
+
+    /// The field `f` at `fp` on the `Instance` handle `info` in a place, with the steps `rest` after
+    /// it (Lean `placePort`). A place cannot hold a port, so the step is "Port in a place" after the
+    /// look-up of the port. A field with an index after it charges the index node, then the field
+    /// node (section 6.2, **Selection order**). A family of the child takes the index as its key
+    /// in a structural context of the kind `Key`, and another field selects its port.
+    pub(in crate::eval) fn place_port<T>(
+        &mut self,
+        info: InstInfo,
+        (fp, f): (Pos, &Ident),
+        rest: &[Sel<'_>],
+    ) -> Res<T> {
+        let port = if let Some(&Sel::Index(ip, args)) = rest.first() {
+            self.charge(ip, 1)?;
+            let [key] = args else {
+                return fail(
+                    Code::S010,
+                    ip,
+                    "an index of a value has one argument".to_owned(),
+                );
+            };
+            self.charge(fp, 1)?;
+            match self
+                .port_sym(f)
+                .filter(|sym| self.has_family(info.inst, *sym))
+            {
+                Some(sym) => {
+                    let o = self.key_out(key)?;
+                    let number = self.selection_key(fp, key.pos(), &f.name, &o)?;
+                    match self.elab.port(info.inst, (sym, Some(number))) {
+                        Some(port) => port,
+                        None => {
+                            return child_key(key.pos(), &self.tys.text(info.ty), &f.name, number);
+                        }
+                    }
+                }
+                None => self.port_find(fp, info, f)?,
+            }
+        } else {
+            self.charge(fp, 1)?;
+            self.port_find(fp, info, f)?
+        };
+        self.port_in_place(fp, info, &port)
+    }
+
+    /// The target that the port `port` of the child behind `info` gives in a `:=` target that starts
+    /// at `start` (Lean `targetPort`): an input gives its handle, and an output is `S017` "Child
+    /// output as a `:=` target" of section 6.2. An entry is named with its key, for example `req[3]`.
+    pub(in crate::eval) fn target_port(&self, start: Pos, info: InstInfo, port: Port) -> Res<Out> {
+        if port.input {
+            return Ok(Out::Made(Val::Handle(Handle::Input {
+                inst: info.id,
+                path: info.path,
+                port,
+            })));
+        }
+        fail(
+            Code::S017,
+            start,
+            format!(
+                "`{}` is an output of the child, not a target; the child drives its outputs, so \
+                 bind an input of the child",
+                self.port_text(&port)
+            ),
+        )
     }
 
     /// The key expression `k` of a family, evaluated in its structural context.
