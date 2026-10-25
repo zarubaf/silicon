@@ -118,11 +118,14 @@ pub(crate) struct Counts {
     /// The steps that a `@TypeOf` took along a part, and the nodes of a static tuple whose type
     /// it built.
     pub queried: u64,
+    /// The waiting keys of a walk that the check before a key with a call visited.
+    pub waited: u64,
 }
 
 impl Counts {
     /// The work of the run: the sum of all counters. The field list has no `..`, so a new
-    /// counter does not compile until it joins the sum.
+    /// counter does not compile until it joins the sum. It takes two lines for each counter.
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn total(&self) -> u64 {
         let Counts {
             scanned,
@@ -172,6 +175,7 @@ impl Counts {
             publics,
             named,
             queried,
+            waited,
         } = *self;
         [
             scanned,
@@ -221,6 +225,7 @@ impl Counts {
             publics,
             named,
             queried,
+            waited,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -277,6 +282,7 @@ pub(crate) enum Count {
     Publics,
     Named,
     Queried,
+    Waited,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -362,6 +368,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Publics => &mut c.publics,
             Count::Named => &mut c.named,
             Count::Queried => &mut c.queried,
+            Count::Waited => &mut c.waited,
         };
         *field += n;
     }

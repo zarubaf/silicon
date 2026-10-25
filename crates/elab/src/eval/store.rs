@@ -401,6 +401,19 @@ impl Store {
         }
     }
 
+    /// Whether the local at `root` is `let mut`, so that a call can change it. A constant never
+    /// changes.
+    pub(super) fn is_mutable(&self, root: &Root) -> bool {
+        match root {
+            Root::Local(k, id) => self
+                .frames
+                .get(*k)
+                .and_then(|f| f.get(id))
+                .is_some_and(|s| s.mutable),
+            Root::Const(_) => false,
+        }
+    }
+
     /// The type of the local or the constant at `root`, if it has one.
     pub(super) fn root_ty(&self, root: &Root) -> Option<TyId> {
         match root {

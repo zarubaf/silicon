@@ -78,27 +78,6 @@ pub(super) struct Followed {
     string_last: bool,
 }
 
-impl Named<'_> {
-    /// The key refers to a local, so it reads the value that the local holds when the walk looks
-    /// it up. An index keeps its number, but a name or a key of another kind waits in the store.
-    fn refers_to_local(&self) -> bool {
-        matches!(
-            &self.key,
-            Out::Ref(Ref {
-                root: Root::Local(..),
-                ..
-            })
-        )
-    }
-}
-
-/// Whether a step of `keyed` waits to read a key that refers to a local.
-fn waits_on_local(keyed: &[Key<'_>]) -> bool {
-    keyed
-        .iter()
-        .any(|k| matches!(k, Key::Named(n) if n.refers_to_local()))
-}
-
 impl Opnd {
     /// The local that an index of this base can change while its own index evaluates: the local
     /// of a reference, or of a copy that still holds its local.
@@ -595,6 +574,7 @@ impl Evaluator<'_> {
         let mut known = known;
         let mut after = known;
         let mut keyed = Vec::with_capacity(steps.len());
+        let mut waiting = Vec::new();
         let mut stop = None;
         let held = self.held_path(&base, known);
         let tracked = held.is_none().then(|| self.static_path(&base)).flatten();
@@ -632,6 +612,11 @@ impl Evaluator<'_> {
             {
                 break;
             }
+            // A key with a call can change a `let mut` local that a waiting key reads, so the
+            // waiting keys take their values first. A key that cannot fails at the walk.
+            if !self.own_waiting(step, &mut keyed, &mut waiting) {
+                break;
+            }
             // An index evaluates while the walk waits at the part that the earlier steps lead
             // to. At a static part the base holds the root local, as in Lean, to the end. An
             // index with no call cannot change the root, so the hold has no effect for it. For
@@ -657,19 +642,13 @@ impl Evaluator<'_> {
                     self.store.cursor_step(at, number);
                     held = next.map(|(_, ty)| ty);
                     after = known.and_then(|t| self.key_ty(t, &k));
-                    keyed.push(k);
+                    self.push_key(&mut keyed, &mut waiting, k);
                     // An index that changed the root reads an old part and pays for its result
                     // (section 5.4). Its step ends the segment, so the charge is the last step.
                     if let Sel::Index(q, _) | Sel::Key(q, ..) = step
                         && root.is_some_and(|r| Some(self.store.changes_of(r)) != before)
                     {
                         moved = Some(*q);
-                        break;
-                    }
-                    // A key that refers to a local reads at the walk. A later key with a call can
-                    // change that local, so the walk applies the step first (Lean reads the key
-                    // at its step).
-                    if self.may_change_waiting_key(steps.get(n + 1), &keyed) {
                         break;
                     }
                     // A step that pays its name later, or that reads its base, ends the segment:
@@ -713,10 +692,48 @@ impl Evaluator<'_> {
         Ok((out, keyed.len(), after))
     }
 
-    /// Whether the key of the step `next` can change a local that a key of `keyed` refers to, and
-    /// that key still waits for its look-up.
-    fn may_change_waiting_key(&self, next: Option<&Sel<'_>>, keyed: &[Key<'_>]) -> bool {
-        next.is_some_and(|step| self.has_call(step)) && waits_on_local(keyed)
+    /// Pushes the evaluated step `key` onto `keyed`. An `@field` key that refers to a `let mut`
+    /// local, or to a part of one, waits in the store for the walk, so its number joins `waiting`:
+    /// a later key with a call can change the local before the walk reads it.
+    fn push_key<'a>(&self, keyed: &mut Vec<Key<'a>>, waiting: &mut Vec<usize>, key: Key<'a>) {
+        if let Key::Named(Named {
+            key: Out::Ref(r), ..
+        }) = &key
+            && self.store.is_mutable(&r.root)
+        {
+            waiting.push(keyed.len());
+        }
+        keyed.push(key);
+    }
+
+    /// Before the key of `step` evaluates, gives each waiting key of `keyed` at the numbers
+    /// `waiting` its own value if the key of `step` has a call, as Lean reads each key at its step.
+    /// Such a key is a name that its step paid, so its copy takes work within that charge, or a
+    /// number of one word. Another key fails its check at the walk, and the run stops there: the
+    /// result is false, and the caller applies the steps first. A step with a call empties
+    /// `waiting`.
+    fn own_waiting(
+        &mut self,
+        step: &Sel<'_>,
+        keyed: &mut [Key<'_>],
+        waiting: &mut Vec<usize>,
+    ) -> bool {
+        if waiting.is_empty() || !self.has_call(step) {
+            return true;
+        }
+        for at in waiting.drain(..) {
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Waited, 1);
+            let Some(Key::Named(n)) = keyed.get_mut(at) else {
+                continue;
+            };
+            if !n.paid && n.at.is_none() {
+                return false;
+            }
+            let key = std::mem::replace(&mut n.key, Out::Made(Val::Static(Value::Unit)));
+            n.key = Out::Made(self.store.take(key));
+        }
+        true
     }
 
     /// Whether the key of the step can change a local of its frame while it evaluates: it holds a
@@ -1256,6 +1273,7 @@ impl Evaluator<'_> {
         let aggregate = matches!(self.store.root(&root), Val::Agg(_));
         let mut state = Walked::start(slot_ty);
         let mut keyed = Vec::with_capacity(steps.len());
+        let mut waiting = Vec::new();
         let mut part_ty = slot_ty;
         // The type of the part for the test of an `Instance` handle: a root without a declared
         // type has the type that its node stores.
@@ -1265,9 +1283,9 @@ impl Evaluator<'_> {
         });
         let mut stop = None;
         for (n, step) in steps.iter().enumerate() {
-            // A key that refers to a local reads at the walk. A key with a call can change that
-            // local, so the walk catches up first, as Lean applies each step before the next key.
-            if self.may_change_waiting_key(Some(step), &keyed) {
+            // A key with a call can change a `let mut` local that a waiting key reads, so the
+            // waiting keys take their values first. A key that cannot fails at the walk.
+            if !self.own_waiting(step, &mut keyed, &mut waiting) {
                 state = self.walk(root, state, &keyed, false)?;
                 keyed.clear();
             }
@@ -1280,6 +1298,7 @@ impl Evaluator<'_> {
             {
                 state = self.walk(root, state, &keyed, false)?;
                 keyed.clear();
+                waiting.clear();
             }
             // A field of an `Instance` handle is a port, which a place cannot select. The step
             // charges after the index that follows it (Lean `placePort`), so the walk catches up
@@ -1289,6 +1308,7 @@ impl Evaluator<'_> {
             {
                 state = self.walk(root, state, &keyed, false)?;
                 keyed.clear();
+                waiting.clear();
                 if let Some(info) = self.instance_at(root, &state) {
                     return self.place_port(info, (*fp, f), steps.get(n + 1..).unwrap_or_default());
                 }
@@ -1302,7 +1322,7 @@ impl Evaluator<'_> {
                     // A name that the fuel could not pay ends the walk of the steps: the checks of
                     // its step come first, and then its charge fails before a later node charges.
                     let unpaid = matches!(&k, Key::Named(n) if n.charges && !n.paid);
-                    keyed.push(k);
+                    self.push_key(&mut keyed, &mut waiting, k);
                     if unpaid {
                         break;
                     }
