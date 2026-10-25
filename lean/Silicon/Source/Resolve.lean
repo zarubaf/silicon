@@ -838,8 +838,9 @@ mutual
     | .builtin p .typeOf [x] => return .typeOf p (← expr x)
     | .builtin p .field [b, k] => return .atField p (← expr b) (← expr k)
     | .builtin p b xs => do
-      -- The parser checks the number of operands (`Parse.builtinCheck`), so only a tree that
-      -- the parser did not make reaches this case.
+      -- This case only makes the match total. The parser checks the number of operands
+      -- (`Parse.builtinCheck`) and reports first, so only a tree that the parser did not make
+      -- reaches it.
       recordUnknown ⟨.S001, p, b.arityText xs.length⟩
       return .unit p
 
