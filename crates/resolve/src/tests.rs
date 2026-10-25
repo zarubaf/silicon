@@ -2313,6 +2313,16 @@ fn the_operands_of_a_builtin_resolve_as_expressions() {
 }
 
 #[test]
+fn the_argument_of_typeinfo_resolves_as_an_expression() {
+    let r = ok("const k: Nat = 0;\nfn f(a: Nat) -> Nat {\n    return @typeInfo(a + k);\n}");
+    for at in [pos(3, 22), pos(3, 26)] {
+        assert!(target_at(&r, at).is_some(), "{at:?}");
+    }
+    let src = fn_body("return @typeInfo(Q);");
+    assert_eq!(errors(&src), [(S003, 2, 18)]);
+}
+
+#[test]
 fn a_builtin_in_a_signature_makes_the_function_generic() {
     assert!(generic(
         "fn f(n: Nat) -> UInt[@field(n, 0)] { return 0; }",

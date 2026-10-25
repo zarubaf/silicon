@@ -506,7 +506,6 @@ fn later_slice_syntax_is_s004() {
         ("module M() { wire w: T in d; }", 1, 24),
         ("module M() { instance u = A() with { }; }", 1, 31),
         ("module M() { instance u = a::A(); }", 1, 28),
-        ("const X: T = @typeInfo(T);", 1, 14),
         ("const X: T = @Struct(T);", 1, 14),
         ("const X: T = @ports(M);", 1, 14),
         ("const X: T = a::b::c;", 1, 18),
@@ -858,6 +857,10 @@ fn rules_of_the_lean_parser() {
         ("const X: T = (@TypeOf(a, b));", Code::S001, 1, 16),
         ("const X: T = @TypeOf(a, $);", Code::S001, 1, 25),
         ("const X: T = @TypeOf();", Code::S001, 1, 15),
+        ("const X: T = @typeInfo();", Code::S001, 1, 15),
+        ("const X: T = @typeInfo(a, b);", Code::S001, 1, 15),
+        ("const X: T = @typeInfo(a $);", Code::S001, 1, 26),
+        ("module M() { @typeInfo(x) = 1; }", Code::S001, 1, 27),
         ("const X: T = @field(a);", Code::S001, 1, 15),
         ("const X: T = @field(a, b, c);", Code::S001, 1, 15),
         ("module M() { @field(a, 1 +) = e; }", Code::S001, 1, 27),
@@ -874,7 +877,6 @@ fn rules_of_the_lean_parser() {
         ("const X: T = @x(y);", Code::S001, 1, 15),
         ("module M() { @x(y); }", Code::S001, 1, 15),
         // A builtin of a later phase is S004 at the `@`, whatever its arguments are.
-        ("const X: T = @typeInfo(a, b);", Code::S004, 1, 14),
         ("module M() { @ports(u).a = 1; }", Code::S004, 1, 14),
         ("module M() { f(x)[0] = e; }", Code::S001, 1, 22),
         ("module M() { f(x) = e; }", Code::S001, 1, 19),
@@ -913,6 +915,14 @@ fn rules_of_the_lean_parser() {
         "const X: T = @TypeOf((a));",
         "const X: T = @TypeOf((a).b[1].0);",
         "const X: T = @TypeOf(@field(a, k));",
+        "const X: T = @typeInfo(Nat);",
+        "const X: T = @typeInfo(a + b);",
+        "const X: T = @typeInfo(f(x));",
+        "const X: T = @typeInfo(@typeInfo(a));",
+        "const X: T = @typeInfo(@TypeOf(a));",
+        "const X: T = @typeInfo([UInt[8]; 4]);",
+        "const X: T = @typeInfo(fn (T) -> U);",
+        "module M() { @typeInfo(x); }",
         "const X: T = @field(a[1, 2], b);",
         "const X: T = @field(f(x), 1 + 2);",
         "const X: T = @field(@field(a, 0), \"f\").g[0] + 1;",
@@ -2065,6 +2075,11 @@ fn builtins_are_primaries_with_their_operands() {
         ("@field(a, 1,)", "(@field a 1)"),
         ("@field(a, k).g[0]", "(index (field (@field a k) g) 0)"),
         ("1 + @TypeOf(x)", "(add 1 (@TypeOf x))"),
+        ("@typeInfo(T)", "(@typeInfo T)"),
+        ("@typeInfo(a + b)", "(@typeInfo (add a b))"),
+        ("@typeInfo(f(x),)", "(@typeInfo (call f x))"),
+        ("@typeInfo(T).fields", "(field (@typeInfo T) fields)"),
+        ("@typeInfo(@TypeOf(x))", "(@typeInfo (@TypeOf x))"),
         ("@field(f(x), g(y))", "(@field (call f x) (call g y))"),
         ("@field(@field(a, 0), 1)", "(@field (@field a 0) 1)"),
         ("@field(a, 0)(x)", "(call (@field a 0) x)"),
@@ -2077,6 +2092,11 @@ fn builtins_are_primaries_with_their_operands() {
 fn a_builtin_dumps_as_lean_prints_it() {
     for (input, want) in [
         ("@TypeOf(x)", "(builtin TypeOf ((name \"x\")))"),
+        ("@typeInfo(T)", "(builtin typeInfo ((name \"T\")))"),
+        (
+            "@typeInfo(a + b)",
+            "(builtin typeInfo ((binary add (name \"a\") (name \"b\"))))",
+        ),
         (
             "@field(a.b, \"c\")",
             "(builtin field ((field (name \"a\") \"b\") (str \"c\")))",
@@ -2123,8 +2143,8 @@ fn the_text_of_a_builtin_error_equals_lean() {
                 .to_owned(),
         ),
         (
-            "const X: T = @typeInfo(a);".to_owned(),
-            "a builtin is not supported yet".to_owned(),
+            "const X: T = @typeInfo(a, b);".to_owned(),
+            "`@typeInfo` takes 1 argument(s), but it has 2; write `@typeInfo(T)`".to_owned(),
         ),
     ] {
         let errors = parse(&input).errors;
