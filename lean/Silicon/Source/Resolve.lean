@@ -536,6 +536,9 @@ so the read takes constant work.
 -/
 def responseIndex (size : Nat) : Nat := size - preludeCount
 
+/-! The index of `TypeInfo`, the third prelude struct, in a resolved file of `size` items. -/
+def typeInfoIndex (size : Nat) : Nat := responseIndex size + 2
+
 /-!
 A visible declaration, the number of its scope, and the position of its name. The item scope has
 the number 0.

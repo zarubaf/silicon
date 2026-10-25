@@ -432,6 +432,13 @@ def notStaticText (v : Val) : String :=
   s!"a static position needs a static value, not {v.about}; compute the value from static " ++
     "values, for example from constants and `comptime` parameters"
 
+/-!
+The check of an open builtin argument at the node `p` (section 9.4). Under the record `node`, a
+value with a hardware leaf is `S011` "Value not static" at `p`. Another value passes.
+-/
+def argHw (p : Pos) (v : Val) : M Unit := do
+  if (← read).arg == some .node && v.hasHw then fail .S011 p (notStaticText v)
+
 /-! The value of a static position at the node `pos`. Another value there is `S011`. -/
 def static (pos : Pos) : Val → M Value
   | .static v => pure v
@@ -935,10 +942,13 @@ def handleWrong (pos : Pos) (t : Ty) (v : Val) : M α := do
 /-!
 A typed use of `v` at the type `t`. It reads a handle at a type without the handle flag. A
 hardware value needs the type `t`, and a hardware aggregate converts part by part (`typedAgg`).
-A type with the flag reads nothing, so a handle there is `S010` (`handleWrong`).
+A type with the flag reads nothing, so a handle there is `S010` (`handleWrong`). In an open
+builtin argument, a read that gives a hardware value is `S011` at `pos` (`argHw`).
 -/
 def conformVal (pos : Pos) (t : Ty) (v : Val) : M Val := do
-  match ← dataAt pos t (← settle pos t v) with
+  let d ← dataAt pos t (← settle pos t v)
+  argHw pos d
+  match d with
   | .static x => return (Agg.typed t (← conform pos t x)).val
   | .hw h =>
     if h.ty.same t then return .hw h
@@ -953,6 +963,7 @@ handle gives a reference, so it charges the zero size of its type before the typ
 -/
 def readUse (pos : Pos) (t : Ty) (v : Val) : M Val := do
   let d ← dataAt pos t (← settle pos t v)
+  argHw pos d
   if v matches .handle _ && d matches .agg _ then charge pos d.size
   conformVal pos t d
 
@@ -1007,7 +1018,9 @@ def siteUse (pos : Pos) (t : Ty) (copies : Bool) (v : Val) : Site α → M α
   | .binding | .value => valueUse pos t copies v
   | .field q => do
     if handleTy? t then return .handle (← handleUse pos t v)
-    match ← dataAt q t (← settle pos t v) with
+    let d ← dataAt q t (← settle pos t v)
+    argHw q d
+    match d with
     | .handle _ => handleWrong pos t v
     | w => conformAgg pos t (← item q w)
   | .element x => do
@@ -2840,6 +2853,34 @@ def hwCheck (p : Pos) (s : Resolve.Stmt) : M Unit := do
   | some .eval => fail .S011 p (evalHardware (stmtKind s) (c.itemName c.item))
   | none => pure ()
 
+/-!
+The node at `p` of an expression with the work `act` (section 9.4). In an open builtin argument,
+the value of the node gets the check `argHw`. The root and the steps of a place that is the whole
+argument read no value, so they skip the check. `act` then gets `true`, and it passes the record
+`place` on to the base of its step (`onPlace`). Each other part of the node, for example a key,
+has the record `node`.
+-/
+def argNode (p : Pos) (act : Bool → M (Option Out)) : M (Option Out) := do
+  match (← read).arg with
+  | some .place => withReader (fun c => { c with arg := some .node }) (act true)
+  | _ => do
+    let o ← act false
+    if let some o := o then argHw p o.value
+    return o
+
+/-! Runs `act`, the base of a step of a place that is the whole argument when `place` holds. -/
+def onPlace (place : Bool) (act : M α) : M α :=
+  if place then withReader (fun c => { c with arg := some .place }) act else act
+
+/-!
+The data of the value `v` of the operand `x`, at a use of its node `p` that reads it (`data`). In
+an open builtin argument, a read that gives a hardware value is `S011` at `x` (section 9.4).
+-/
+def operand (p : Pos) (x : Resolve.Expr) (v : Val) : M Val := do
+  let w ← data p v
+  argHw x.pos w
+  return w
+
 -- The code generator needs more than the default heartbeats for the cases of this block.
 set_option maxHeartbeats 400000 in
 mutual
@@ -2848,171 +2889,180 @@ mutual
     | 0 => exhausted e.pos
     | n + 1 => do
       charge e.pos 1
+      argNode e.pos fun place => do
       match e with
-      | .num p v => let x : Value := .int v; charge p x.size; return some ⟨.static x, false, none⟩
-      | .bool p v => let x : Value := .bool v; charge p x.size; return some ⟨.static x, false, none⟩
-      | .str p v =>
-        if over v.utf8ByteSize then fail .S015 p strLimitText
-        let x : Value := .str v; charge p x.size; return some ⟨.static x, false, none⟩
-      | .name p x r => return some (← name n p x r)
-      | .unary p op a => do
-        match ← data p (← need a (← eval n a)).value with
-        | .static a => return some ⟨.static (← apply p (unary op a)), false, none⟩
-        | .hw a => return some ⟨← hwUnary p op a, false, none⟩
-        | v => fail .S010 p s!"`{op.text}` does not accept {v.text}"
-      | .binary p .land l r | .binary p .lor l r => do
-        let op : BinOp := if e matches .binary _ .lor .. then .lor else .land
-        match ← data p (← need l (← eval n l)).value with
-        | .static a => do
-          let a ← test p (.static a)
-          if a == (op == .lor) then return some ⟨.static (.bool a), false, none⟩
-          match ← data p (← need r (← eval n r)).value with
+        | .num p v => let x : Value := .int v; charge p x.size; return some ⟨.static x, false, none⟩
+        | .bool p v =>
+          let x : Value := .bool v; charge p x.size; return some ⟨.static x, false, none⟩
+        | .str p v =>
+          if over v.utf8ByteSize then fail .S015 p strLimitText
+          let x : Value := .str v; charge p x.size; return some ⟨.static x, false, none⟩
+        | .name p x r => return some (← name n p x r)
+        | .unary p op a => do
+          match ← operand p a (← need a (← eval n a)).value with
+          | .static a => return some ⟨.static (← apply p (unary op a)), false, none⟩
+          | .hw a => return some ⟨← hwUnary p op a, false, none⟩
+          | v => fail .S010 p s!"`{op.text}` does not accept {v.text}"
+        | .binary p .land l r | .binary p .lor l r => do
+          let op : BinOp := if e matches .binary _ .lor .. then .lor else .land
+          match ← operand p l (← need l (← eval n l)).value with
+          | .static a => do
+            let a ← test p (.static a)
+            if a == (op == .lor) then return some ⟨.static (.bool a), false, none⟩
+            match ← operand p r (← need r (← eval n r)).value with
+            | .hw h =>
+              if h.ty == .bool then return some ⟨.hw h, false, none⟩
+              else fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
+            | v => return some ⟨.static (.bool (← test p v)), false, none⟩
+          | a => do
+            let b ← operand p r (← need r (← eval n r)).value
+            return some ⟨← hwBinary p op a b, false, none⟩
+        | .binary p op l r => do
+          let o ← need l (← eval n l)
+          let a ← operand p l o.value
+          hold o
+          let b ← operand p r (← need r (← eval n r)).value
+          release o
+          comparable p op a b
+          match a, b with
+          | .static a, .static b =>
+            if composite a || composite b then
+              return some ⟨.static (← containerOp p op a b), false, none⟩
+            let (a, b) ← unify p op a b
+            return some ⟨.static (← apply p (binary op a b)), false, none⟩
+          | a, b =>
+            if (op == .eq || op == .ne) && (a matches .agg _ || b matches .agg _) then
+              return some ⟨← aggEq p op a b, false, none⟩
+            return some ⟨← hwBinary p op a b, false, none⟩
+        | .cond p c y no => do
+          match ← operand p c (← need c (← eval n c)).value with
           | .hw h =>
-            if h.ty == .bool then return some ⟨.hw h, false, none⟩
-            else fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
-          | v => return some ⟨.static (.bool (← test p v)), false, none⟩
-        | a => do
-          let b ← data p (← need r (← eval n r)).value
-          return some ⟨← hwBinary p op a b, false, none⟩
-      | .binary p op l r => do
-        let o ← need l (← eval n l)
-        let a ← data p o.value
-        hold o
-        let b ← data p (← need r (← eval n r)).value
-        release o
-        comparable p op a b
-        match a, b with
-        | .static a, .static b =>
-          if composite a || composite b then
-            return some ⟨.static (← containerOp p op a b), false, none⟩
-          let (a, b) ← unify p op a b
-          return some ⟨.static (← apply p (binary op a b)), false, none⟩
-        | a, b =>
-          if (op == .eq || op == .ne) && (a matches .agg _ || b matches .agg _) then
-            return some ⟨← aggEq p op a b, false, none⟩
-          return some ⟨← hwBinary p op a b, false, none⟩
-      | .cond p c y no => do
-        match ← data p (← need c (← eval n c)).value with
-        | .hw h =>
-          unless h.ty == .bool do fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
-          let (a, b) ← withReader (·.guarded .arm) do
-            let o ← need y (← eval n y)
-            let a ← data p o.value
-            hold o
-            let b ← data p (← need no (← eval n no)).value
-            release o
-            return (a, b)
-          return some ⟨← mux p h a b, false, none⟩
-        | v => if ← test p v then eval n y else eval n no
-      | .call p f xs k => call n p f xs 0 k
-      | .method p r m f b xs k => do
-        let some b := b
-          | fail .S007 p s!"`{m.name}` has no parameter without `comptime` for the receiver"
-        call n p (.name m.pos m.name f) (r :: xs) b k
-      | .index p b xs => do
-        if let .name bp _ (.type k) := b then
-          charge bp 1
-          return some ⟨.static (.type (← structural (index n p k xs))), false, none⟩
-        if let .name bp _ (.item i) := b then
-          if let some (.struct ..) := (← read).items[i]? then
-            charge bp 1
-            return some ⟨.static (.type (← spec n p i xs)), false, none⟩
-        let [x] := xs | fail .S010 p "an index of a value has one argument"
-        if let .name bp y (.family id _) := b then return some (← familySel n p bp y id x)
-        let (o, done) ← indexBase n p b x
-        if done then return some o
-        let v ← baseData p o.value
-        if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
-        let k ← changesOf o
-        hold o
-        let i ← static x.pos (← need x (← eval n x)).value
-        release o
-        if let .static (.str s) := v then
-          return some ⟨.static (← strAt p x.pos s i), false, none⟩
-        let r := part o v (← pick p x.pos v i)
-        -- An index that changed the root reads an old part: it pays the copy, and the result is
-        -- a new value (section 5.4).
-        if (← changesOf o) == k then return some r
-        charge p r.value.size
-        return some ⟨r.value, false, none⟩
-      | .field p b f => return some (← fieldPart p (← need b (← eval n b)) f)
-      | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
-      | .tuple p xs => do
-        let es ← operands n xs fun x o => element x.pos o.value
-        match waiting es with
-        | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false, none⟩
-        | none => return some ⟨(← tupleOf p (values es)).val, false, none⟩
-      | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false, none⟩
-      | .array p xs => do
-        let es ← operands n xs fun x o => element x.pos o.value
-        match waiting es with
-        | some q => return some ⟨.pending q (.array p (es.map (·.1))), false, none⟩
-        | none => return some ⟨(← arrayOf p (values es)).val, false, none⟩
-      | .select p b q i => do
-        let o ← need b (← eval n b)
-        let v ← baseData p o.value
-        return some (part o v (← select p q i v))
-      | .arrayType p t k => structural do
-        let e ← typeExpr n t
-        let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
-        return some ⟨.static (.type t), false, none⟩
-      | .fnType p ps r => structural do
-        let qs ← params n ps
-        return some ⟨.static (.type (← fnTy p qs (← typeExpr n r))), false, none⟩
-      | .variant p _ _ i j xs _ => do
-        let t ← enumUse n p i
-        let vs ← operands n xs fun _ o => pure o.value
-        return some ⟨← variantOf p t j vs, false, none⟩
-      | .typeOf p x => return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
-      -- TODO(#380): evaluate `@typeInfo` (section 9.3).
-      | .typeInfo p _ => fail .S004 p "a builtin is not supported yet"
-      | .atField p b k => do
-        let o ← need b (← eval n b)
-        let c ← changesOf o
-        hold o
-        let key ← need k (← eval n k)
-        release o
-        staticValue k.pos "a key of `@field`" key.value
-        let r ← fieldOut p b k.pos o (← static k.pos key.value)
-        -- A key that changed the root reads an old part: it pays the copy, and the result is a
-        -- new value, as for an index (section 5.4).
-        if (← changesOf o) == c then return some r
-        charge p r.value.size
-        return some ⟨r.value, false, none⟩
-      | .«match» p x as => do
-        let v ← data x.pos (← need x (← eval n x)).value
-        let t ← scrutTy x.pos v
-        let c ← matchArms p t as
-        match v with
-        | .static s =>
-          -- The coverage check passed, so the map or `_` selects an arm of `as`.
-          let some j := ((Value.key s).bind (c.keys[·]?)).map (·.1) <|> c.wild.map (·.1)
-            | fail .S021 p "the `match` has no arm for its value"
-          let some (.mk q y) := as[j]? | fail .S021 p s!"the `match` has no arm {j}"
-          if let .enum _ _ _ _ bits := s then bindArm (.static bits.toNat) (← binderTys q)
-          eval n y
-        | v => do
-          -- Steps 1 and 2 of a hardware `match` (section 5.4): the marks, then the arms.
-          let (sel, y) ← scrutParts x.pos t v
-          let keys := c.arms.toList
-          let sel ← shared p sel (keys.filterMap id).length
-          let bss ← as.mapM fun (.mk q _) => binderTys q
-          let y ← match y with
-            | .hw h => do
-              let l := (bss.map fun bs => (bs.map (·.2.1.info.leaves)).sum).sum
-              pure (.hw (← shared p h l))
-            | y => pure y
-          let os ← (as.zip bss).mapM fun (.mk _ e, bs) =>
-            withReader (·.guarded .arm) do
-              bindArm y bs
-              let o ← need e (← eval n e)
-              let o := { o with value := ← data p o.value }
+            unless h.ty == .bool do fail .S010 p s!"a condition is a Bool, not {h.ty.text}"
+            let (a, b) ← withReader (·.guarded .arm) do
+              let o ← need y (← eval n y)
+              let a ← data p o.value
               hold o
-              return o
-          for o in os do release o
-          -- One arm `_` gives its value with no node.
-          if let [o] := os then return some o
-          return some ⟨← matchHw p sel keys (os.map (·.value)), false, none⟩
+              let b ← data p (← need no (← eval n no)).value
+              release o
+              return (a, b)
+            return some ⟨← mux p h a b, false, none⟩
+          | v => if ← test p v then eval n y else eval n no
+        | .call p f xs k => call n p f xs 0 k
+        | .method p r m f b xs k => do
+          let some b := b
+            | fail .S007 p s!"`{m.name}` has no parameter without `comptime` for the receiver"
+          call n p (.name m.pos m.name f) (r :: xs) b k
+        | .index p b xs => do
+          if let .name bp _ (.type k) := b then
+            charge bp 1
+            return some ⟨.static (.type (← structural (index n p k xs))), false, none⟩
+          if let .name bp _ (.item i) := b then
+            if let some (.struct ..) := (← read).items[i]? then
+              charge bp 1
+              return some ⟨.static (.type (← spec n p i xs)), false, none⟩
+          let [x] := xs | fail .S010 p "an index of a value has one argument"
+          if let .name bp y (.family id _) := b then return some (← familySel n p bp y id x)
+          let (o, done) ← indexBase n place p b x
+          if done then return some o
+          let v ← baseData p o.value
+          if v matches .static (.type _) then fail .S007 p "a complete type takes no index"
+          let k ← changesOf o
+          hold o
+          let i ← static x.pos (← need x (← eval n x)).value
+          release o
+          if let .static (.str s) := v then
+            return some ⟨.static (← strAt p x.pos s i), false, none⟩
+          let r := part o v (← pick p x.pos v i)
+          -- An index that changed the root reads an old part: it pays the copy, and the result is
+          -- a new value (section 5.4).
+          if (← changesOf o) == k then return some r
+          charge p r.value.size
+          return some ⟨r.value, false, none⟩
+        | .field p b f => return some (← fieldPart p (← need b (← onPlace place (eval n b))) f)
+        | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
+        | .tuple p xs => do
+          let es ← operands n xs fun x o => element x.pos o.value
+          match waiting es with
+          | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false, none⟩
+          | none => return some ⟨(← tupleOf p (values es)).val, false, none⟩
+        | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false, none⟩
+        | .array p xs => do
+          let es ← operands n xs fun x o => element x.pos o.value
+          match waiting es with
+          | some q => return some ⟨.pending q (.array p (es.map (·.1))), false, none⟩
+          | none => return some ⟨(← arrayOf p (values es)).val, false, none⟩
+        | .select p b q i => do
+          let o ← need b (← onPlace place (eval n b))
+          let v ← baseData p o.value
+          return some (part o v (← select p q i v))
+        | .arrayType p t k => structural do
+          let e ← typeExpr n t
+          let t ← arrayTy p k.pos e (← static k.pos (← need k (← eval n k)).value)
+          return some ⟨.static (.type t), false, none⟩
+        | .fnType p ps r => structural do
+          let qs ← params n ps
+          return some ⟨.static (.type (← fnTy p qs (← typeExpr n r))), false, none⟩
+        | .variant p _ _ i j xs _ => do
+          let t ← enumUse n p i
+          let vs ← operands n xs fun _ o => pure o.value
+          return some ⟨← variantOf p t j vs, false, none⟩
+        | .typeOf p x => return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
+        | .typeInfo p x => do
+          -- Steps 2 to 4 of the `@typeInfo` order (section 6.2): the argument under the guard
+          -- `arg` and its record, its kind, then the use of `TypeInfo`.
+          let r : ArgRec := if (chain x).isSome then .place else .node
+          let o ← guardedBy (.arg .typeInfo) <|
+            withReader (fun c => { c with arg := some r }) do need x (← eval n x)
+          let t ← typeInfoArg x.pos o.value
+          let ti ← spec n p (Resolve.typeInfoIndex (← read).items.size) []
+          return some ⟨.static (← typeInfo p ti t), false, none⟩
+        | .atField p b k => do
+          let o ← need b (← onPlace place (eval n b))
+          let c ← changesOf o
+          hold o
+          let key ← need k (← eval n k)
+          release o
+          staticValue k.pos "a key of `@field`" key.value
+          let r ← fieldOut p b k.pos o (← static k.pos key.value)
+          -- A key that changed the root reads an old part: it pays the copy, and the result is a
+          -- new value, as for an index (section 5.4).
+          if (← changesOf o) == c then return some r
+          charge p r.value.size
+          return some ⟨r.value, false, none⟩
+        | .«match» p x as => do
+          let v ← operand x.pos x (← need x (← eval n x)).value
+          let t ← scrutTy x.pos v
+          let c ← matchArms p t as
+          match v with
+          | .static s =>
+            -- The coverage check passed, so the map or `_` selects an arm of `as`.
+            let some j := ((Value.key s).bind (c.keys[·]?)).map (·.1) <|> c.wild.map (·.1)
+              | fail .S021 p "the `match` has no arm for its value"
+            let some (.mk q y) := as[j]? | fail .S021 p s!"the `match` has no arm {j}"
+            if let .enum _ _ _ _ bits := s then bindArm (.static bits.toNat) (← binderTys q)
+            eval n y
+          | v => do
+            -- Steps 1 and 2 of a hardware `match` (section 5.4): the marks, then the arms.
+            let (sel, y) ← scrutParts x.pos t v
+            let keys := c.arms.toList
+            let sel ← shared p sel (keys.filterMap id).length
+            let bss ← as.mapM fun (.mk q _) => binderTys q
+            let y ← match y with
+              | .hw h => do
+                let l := (bss.map fun bs => (bs.map (·.2.1.info.leaves)).sum).sum
+                pure (.hw (← shared p h l))
+              | y => pure y
+            let os ← (as.zip bss).mapM fun (.mk _ e, bs) =>
+              withReader (·.guarded .arm) do
+                bindArm y bs
+                let o ← need e (← eval n e)
+                let o := { o with value := ← data p o.value }
+                hold o
+                return o
+            for o in os do release o
+            -- One arm `_` gives its value with no node.
+            if let [o] := os then return some o
+            return some ⟨← matchHw p sel keys (os.map (·.value)), false, none⟩
   termination_by (b, 3)
 
   def typeExpr (b : Nat) (t : Resolve.TypeExpr) : M Ty :=
@@ -3089,19 +3139,20 @@ mutual
 
   /--
   The base `b` of the index `x` at `p`. A field base charges its node, then its own base
-  evaluates once. A family of a child selects its entry with the key `x` (`childSel`), and the
+  evaluates once. `place` passes the record of a place that is a whole builtin argument on to
+  the base (`onPlace`). A family of a child selects its entry with the key `x` (`childSel`), and the
   flag of the result is then true: the selection is done. Else `fieldPart` selects from the base,
   as `eval` of the field does.
   -/
-  def indexBase (n : Nat) (p : Pos) (b x : Resolve.Expr) : M (Out × Bool) :=
+  def indexBase (n : Nat) (place : Bool) (p : Pos) (b x : Resolve.Expr) : M (Out × Bool) :=
     match b with
     | .field q c f => do
       charge q 1
-      let o ← need c (← eval n c)
+      let o ← need c (← onPlace place (eval n c))
       match ← childSel (eval n) p q o f x with
       | some r => return (r, true)
       | none => return (← fieldPart q o f, false)
-    | b => do return (← need b (← eval n b), false)
+    | b => do return (← need b (← onPlace place (eval n b)), false)
   termination_by (n + 1, 0)
 
   /--
@@ -3826,7 +3877,7 @@ of its top expression. The digest function is `Names.sha16`, and `Elab.observe` 
 -/
 def start (budget : Budget) (items : Array Resolve.Item) (top : Scan) : Ctx × St :=
   let syms := symbols items ((items.map scanItem).push top) (items.map scanRest)
-  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, none, "-", [], 0,
+  (⟨items, budget.depth, 0, none, 0, syms, ⟨none, 0⟩, [], none, none, none, none, "-", [], 0,
     Names.sha16⟩,
    ⟨budget.fuel, Array.replicate items.size .notStarted, {}, {}, {}, {}, {}, {}, {}, #[], {}⟩)
 

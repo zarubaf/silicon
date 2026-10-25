@@ -438,6 +438,9 @@ theorem static_f (p : Pos) (v : Val) :
     Follows cap (static p v) (static p v) := by
   unfold static; follows
 
+theorem argHw_f (p : Pos) (v : Val) : Follows cap (argHw p v) (argHw p v) := by
+  unfold argHw; follows
+
 theorem test_f (p : Pos) (v : Val) :
     Follows cap (test p v) (test p v) := by
   unfold test; follows
@@ -685,6 +688,16 @@ theorem builtTy_f (p : Pos) (v : Value) : Follows cap (builtTy p v) (builtTy p v
 theorem queryTy_f (p : Pos) (q : Query) : Follows cap (queryTy p q) (queryTy p q) := by
   unfold queryTy; follows [builtTy_f]
 
+theorem infoOf_f (p : Pos) (t : Ty) : Follows cap (infoOf p t) (infoOf p t) := by
+  unfold infoOf; follows
+
+theorem typeInfoArg_f (p : Pos) (v : Val) :
+    Follows cap (typeInfoArg p v) (typeInfoArg p v) := by
+  unfold typeInfoArg; follows
+
+theorem typeInfo_f (p : Pos) (ti t : Ty) : Follows cap (typeInfo p ti t) (typeInfo p ti t) := by
+  unfold typeInfo; follows [infoOf_f, bounded_f]
+
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
 
@@ -743,11 +756,12 @@ theorem handleWrong_f (p : Pos) (t : Ty) (v : Val) :
 
 theorem conformVal_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (conformVal p t v) (conformVal p t v) := by
-  unfold conformVal; follows [settle_f, dataAt_f, conform_f, typedAgg_f, handleWrong_f]
+  unfold conformVal
+  follows [settle_f, dataAt_f, argHw_f, conform_f, typedAgg_f, handleWrong_f]
 
 theorem readUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (readUse p t v) (readUse p t v) := by
-  unfold readUse; follows [settle_f, dataAt_f, conformVal_f]
+  unfold readUse; follows [settle_f, dataAt_f, argHw_f, conformVal_f]
 
 theorem handleUse_f (p : Pos) (t : Ty) (v : Val) :
     Follows cap (handleUse p t v) (handleUse p t v) := by
@@ -761,7 +775,7 @@ theorem siteUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
     Follows cap (siteUse p t c v k) (siteUse p t c v k) := by
   cases k <;> unfold siteUse <;>
     follows [handleUse_f, valueUse_f, conformAgg_f, typedAgg_f, item_f, dataAt_f, settle_f,
-      conform_f, handleWrong_f]
+      conform_f, handleWrong_f, argHw_f]
 
 theorem typedUse_f (p : Pos) (t : Ty) (c : Bool) (v : Val) (k : Site α) :
     Follows cap (typedUse p t c v k) (typedUse p t c v k) := by
@@ -1131,6 +1145,18 @@ theorem placeWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
   | v, t, ks, l, sel :: rest => by
     rw [placeWalk, placeWalk]
     follows [placePort_f he, placeStep_f he, placeWalk_f he]
+
+theorem argNode_f (p : Pos) {f g : Bool → M (Option Out)} (h : ∀ b, Follows cap (f b) (g b)) :
+    Follows cap (argNode p f) (argNode p g) := by
+  unfold argNode; follows [h, argHw_f]
+
+theorem onPlace_f (b : Bool) {x y : M α} (h : Follows cap x y) :
+    Follows cap (onPlace b x) (onPlace b y) := by
+  unfold onPlace; follows [h]
+
+theorem operand_f (p : Pos) (x : Resolve.Expr) (v : Val) :
+    Follows cap (operand p x v) (operand p x v) := by
+  unfold operand; follows [data_f, argHw_f]
 
 end helpers
 
