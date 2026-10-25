@@ -93,20 +93,13 @@ def tyStep (t : Ty) : QueryStep → M Ty
     | _ => fail .S010 q s!"an index needs an array, a list, or a tuple, not {partText t}"
 
 /-!
-The `S010` text "String index in a query" of section 6.2. The walk selects in types, and a
-`String` has no element type. The text names no value of the string.
--/
-def strIndexText : String :=
-  "a query cannot index a string; an index of a string has the type `String`, so write " ++
-    "`String` instead of the query"
-
-/-!
 The step `s` on the value `v` that holds its parts (section 9.3). A container node gives its
 element as it is, so a reference in it charges no zero size. A list node checks the index
 against its own length. Each other value takes the step of a place (`pickKey`, `selectKey`,
 `fieldKeyBy`). A static value selects there with no charge, and another value fails there, for
-example a memory with `S010`. An index of a string is "String index in a query". The result is
-the number of the part, the part, and the field type of a field.
+example a memory with `S010`. An index of a string is "String index in a query", because the
+walk selects in types and a `String` has no element type. The text names no value of the
+string. The result is the number of the part, the part, and the field type of a field.
 -/
 def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
   match s, v with
@@ -124,7 +117,9 @@ def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
     match xs[k]? with
     | some x => return (k, x.val, some ft)
     | none => fail .S010 q s!"{v.text} has no field `{shown}`"
-  | .index p _ _, .static (.str _) => fail .S010 p strIndexText
+  | .index p _ _, .static (.str _) =>
+    fail .S010 p ("a query cannot index a string; an index of a string has the type `String`, " ++
+      "so write `String` instead of the query")
   | .index p q k, v => do
     let (j, w) ← pickKey p q v k
     return (j, w, none)
