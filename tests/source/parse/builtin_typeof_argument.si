@@ -1,0 +1,2 @@
+// A builtin parses as an argument of a call.
+const A: T = f(@TypeOf(x));

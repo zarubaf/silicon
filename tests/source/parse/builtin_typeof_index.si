@@ -1,0 +1,2 @@
+// A builtin parses as an index.
+const A: T = x[@TypeOf(y)];

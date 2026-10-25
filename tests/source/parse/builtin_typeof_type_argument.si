@@ -1,0 +1,2 @@
+// A builtin parses as the index of a type family.
+const A: UInt[@TypeOf(x)] = f;

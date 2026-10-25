@@ -1,3 +1,0 @@
-// S004: a builtin belongs to a later slice.
-// expected-error S004 @+1
-const A: T = @TypeOf(x);

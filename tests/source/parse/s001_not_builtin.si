@@ -1,0 +1,4 @@
+// S001: only the five builtins exist after the `@`.
+// expected-error S001 @+2
+// expected-message: `@x` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or `@ports`
+const A: T = @x(y);
