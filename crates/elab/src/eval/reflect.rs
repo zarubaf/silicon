@@ -338,7 +338,8 @@ impl Evaluator<'_> {
             }
             Sel::Key(pos, base, key) => {
                 self.charge(pos, 1)?;
-                let key = self.named_key(pos, base, key, true)?;
+                let key =
+                    self.named_key(pos, base, key, Some(GuardKind::Query(Builtin::TypeOf)))?;
                 // The part is known after the step only when its name is paid: the look-up of a
                 // name reads it after its charge. A later `.f` then tells from the type that the
                 // part is no `Instance` handle, and the pass along the part does not run again.
@@ -439,7 +440,7 @@ impl Evaluator<'_> {
     /// The scalar port of the child `info` with the field `field` at `pos`. A family of the child
     /// without a key is "Family as a value", and a name that the child does not declare is "No
     /// public port".
-    fn port_find(&self, pos: Pos, info: InstInfo, field: &Ident) -> Res<Port> {
+    pub(super) fn port_find(&self, pos: Pos, info: InstInfo, field: &Ident) -> Res<Port> {
         self.port_named(
             pos,
             (info.inst, info.ty),
@@ -677,8 +678,11 @@ impl Evaluator<'_> {
         match key {
             Key::Field(pos, field) => self.field_ty(ty, *pos, field),
             Key::Select(pos, lit, number) => self.select_ty(ty, (*pos, *lit), number),
-            // The step of an `@field` has its own walk (`named_ty`).
-            Key::Named(n) => Self::named_placeholder(n.pos),
+            // The caller paid the name of the step (`named_ty`).
+            Key::Named(n) => {
+                let plan = self.named_plan(n, At::Ty(ty), self.store.value(&n.key))?;
+                self.named_ty_by(n, ty, &plan)
+            }
             Key::Index(pos, key_pos, index) => {
                 let part = match self.tys.get(ty) {
                     Ty::Array(elem, count) => {
@@ -740,7 +744,13 @@ impl Evaluator<'_> {
         {
             Self::pay_name(&mut self.fuel, n.kp, name)?;
         }
-        match plan {
+        self.named_ty_by(n, ty, &plan)
+    }
+
+    /// The part type of the `@field` step `n` on the part of the data type `ty`, after the checks
+    /// of its key (`plan`) and the charge of its name.
+    fn named_ty_by(&self, n: &Named<'_>, ty: TyId, plan: &super::field::Plan<'_>) -> Res<TyId> {
+        match *plan {
             super::field::Plan::Name(name) => {
                 let f = FieldName {
                     sym: self.syms.find(name),

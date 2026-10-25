@@ -22,7 +22,7 @@ use crate::names::{PathId, Step, Sym, entry_text};
 use crate::ops::{Fuel, fit_text, str_text};
 use crate::types::{Ty, TyId};
 use crate::value::Value;
-use parse::ast::{Builtin, Expr, Pos};
+use parse::ast::{Expr, Pos};
 
 /// An `Instance` handle: its child number, its path, its instantiation, and its type.
 #[derive(Clone, Copy)]
@@ -113,16 +113,17 @@ impl Evaluator<'_> {
     /// The key `key` of the `@field` step at `q` with the base `base`. It evaluates as the index
     /// of a read does, with no guard of its own, and it is static (`S011`). A handle gives
     /// "Handle at a static position", and another hardware value gives "Value not static". In a
-    /// query operand (`query`), the key evaluates in a structural context of the kind `Query`.
+    /// query operand the key evaluates in a structural context of the kind `Query`, and in a `:=`
+    /// target in one of the kind `Index` (`guard`).
     pub(super) fn named_key<'a>(
         &mut self,
         q: Pos,
         base: &'a Expr,
         key: &'a Expr,
-        query: bool,
+        guard: Option<GuardKind>,
     ) -> Res<Key<'a>> {
-        let o = if query {
-            self.guarded(GuardKind::Query(Builtin::TypeOf), |ev| {
+        let o = if let Some(kind) = guard {
+            self.guarded(kind, |ev| {
                 let o = ev.eval(key)?;
                 need(key, o)
             })?
@@ -131,7 +132,7 @@ impl Evaluator<'_> {
             need(key, o)?
         };
         let kp = key.pos();
-        let position = if query {
+        let position = if matches!(guard, Some(GuardKind::Query(_))) {
             "a key of `@TypeOf`"
         } else {
             "a key of `@field`"
@@ -197,16 +198,16 @@ impl Evaluator<'_> {
         self.agg_field_at_by(a, Some(y), name).map(|(k, _)| k)
     }
 
-    /// The number and the field type of the part that the step `n` selects in the static
-    /// container `seen`, after its checks and the charge of its name. A static container holds no
-    /// handle, so no step selects a port.
+    /// The number and the field type of the part that the step `n` selects in the container
+    /// `seen`, after its checks and the charge of its name. A read takes only a static container
+    /// or a node here. A place can take an `Instance` handle: a port is "Port in a place".
     pub(super) fn named_number(&self, n: &Named<'_>, seen: Seen<'_>) -> Res<(usize, Option<TyId>)> {
         let key = self.store.value(&n.key);
         let plan = self.named_plan(n, At::Seen(seen), key)?;
         match self.named_finish(n, seen, &plan)? {
             Pick::Field(k, ft, _) => Ok((k, Some(ft))),
             Pick::Index(i) => Ok((self.pick_at(n.pos, n.kp, seen, &i)?, None)),
-            Pick::Port(..) => base_error(n.base.pos(), &self.about(seen)),
+            Pick::Port(info, port) => self.port_in_place(n.kp, info, &port),
         }
     }
 
@@ -422,7 +423,7 @@ impl Evaluator<'_> {
 
     /// The selection of `pick` in the base `out` at the node `n.pos`. A part of an aggregate
     /// normalizes there, and the part of a static value is a reference.
-    fn named_apply(&mut self, n: &Named<'_>, out: Out, pick: Pick) -> Res<Out> {
+    pub(super) fn named_apply(&mut self, n: &Named<'_>, out: Out, pick: Pick) -> Res<Out> {
         let on_agg = matches!(self.store.seen(&out), Seen::Agg(_));
         match pick {
             Pick::Field(k, ft, step) if on_agg => self.agg_part(n.pos, out, k, step, Some(ft)),

@@ -4,6 +4,7 @@
 //! result is the copy. An assignment to a place updates the one element in the local, because
 //! no other binding shares the container. A read and a place each walk their path once.
 
+use super::field::{At, InstInfo};
 use super::handle::same_form;
 use super::store::Mark;
 use super::typed::Whole;
@@ -353,14 +354,9 @@ impl Evaluator<'_> {
                 let (k, ft) = self.field_at(*q, f, base)?;
                 Ok((k, Some(ft)))
             }
-            Key::Named(n) => Self::named_placeholder(n.pos),
+            // The caller paid the name of the step.
+            Key::Named(n) => self.named_number(n, base),
         }
-    }
-
-    /// The step of an `@field` in a place or a `:=` target, which a later step of #344 evaluates.
-    /// TODO(#344): remove it in step 13.
-    pub(super) fn named_placeholder<T>(pos: Pos) -> Res<T> {
-        fail(Code::S004, pos, "a builtin is not supported yet".to_owned())
     }
 
     /// The number of the element that the selector `.index` with its literal at `q` picks
@@ -1052,7 +1048,7 @@ impl Evaluator<'_> {
             Key::Index(q, xp, i) => self.agg_index(*q, *xp, b, i),
             Key::Select(q, r, index) => self.agg_select(*q, *r, index, b),
             Key::Field(q, f) => self.agg_field(*q, f, b),
-            Key::Named(n) => Self::named_placeholder(n.pos),
+            Key::Named(n) => self.named_step(b, n),
         }
     }
 
@@ -1189,10 +1185,6 @@ impl Evaluator<'_> {
         let Some((Expr::Name { id: root_id, .. }, steps)) = chain(target) else {
             return bad();
         };
-        // TODO(#344): the places of an `@field` are step 13.
-        if let Some(step) = steps.iter().find(|s| matches!(s, Sel::Key(..))) {
-            return Self::named_placeholder(step.pos());
-        }
         let found = match self.target(*root_id) {
             Some(Target::Decl(id)) => self
                 .store
@@ -1217,8 +1209,14 @@ impl Evaluator<'_> {
         let mut state = Walked::start(slot_ty);
         let mut keyed = Vec::with_capacity(steps.len());
         let mut part_ty = slot_ty;
+        // The type of the part for the test of an `Instance` handle: a root without a declared
+        // type has the type that its node stores.
+        let mut shape = slot_ty.or_else(|| match self.store.root(&root) {
+            Val::Agg(a) => a.stored_ty(),
+            _ => None,
+        });
         let mut stop = None;
-        for step in &steps {
+        for (n, step) in steps.iter().enumerate() {
             // A step into a reference normalizes an empty part, which charges its size. As in
             // Lean, that comes before the next step charges, so the walk catches up first.
             if aggregate
@@ -1229,10 +1227,31 @@ impl Evaluator<'_> {
                 state = self.walk(root, state, &keyed, false)?;
                 keyed.clear();
             }
+            // A field of an `Instance` handle is a port, which a place cannot select. The step
+            // charges after the index that follows it (Lean `placePort`), so the walk catches up
+            // to see the part.
+            if let Sel::Field(fp, f) = step
+                && self.may_be_instance(shape, aggregate)
+            {
+                state = self.walk(root, state, &keyed, false)?;
+                keyed.clear();
+                if let Some(info) = self.instance_at(root, &state) {
+                    return self.place_port(info, (*fp, f), steps.get(n + 1..).unwrap_or_default());
+                }
+            }
             match self.charge(step.pos(), 1).and_then(|()| self.key(step)) {
-                Ok(k) => {
+                Ok(mut k) => {
+                    // A place reads no base, so the name of an `@field` pays at its step.
+                    self.pay_named(&mut k, false);
                     part_ty = part_ty.and_then(|t| self.key_ty(t, &k));
+                    shape = shape.and_then(|t| self.key_ty(t, &k));
+                    // A name that the fuel could not pay ends the walk of the steps: the checks of
+                    // its step come first, and then its charge fails before a later node charges.
+                    let unpaid = matches!(&k, Key::Named(n) if n.charges && !n.paid);
                     keyed.push(k);
+                    if unpaid {
+                        break;
+                    }
                 }
                 Err(e) => {
                     stop = Some(e);
@@ -1254,6 +1273,29 @@ impl Evaluator<'_> {
             part: walked.part,
             own: walked.own,
         })
+    }
+
+    /// Whether the part of a place can be an `Instance` handle: its type says so, or a root of
+    /// nodes has no type to tell.
+    fn may_be_instance(&self, shape: Option<TyId>, aggregate: bool) -> bool {
+        shape.map_or(aggregate, |t| matches!(self.tys.get(t), Ty::Instance(_)))
+    }
+
+    /// The `Instance` handle that the part after the walk `st` is, if it is one.
+    fn instance_at(&self, root: Root, st: &Walked) -> Option<InstInfo> {
+        let seen = match &st.own {
+            Some(v) => v.seen(),
+            None => self.store.current(root, &st.keys),
+        };
+        match seen {
+            Seen::Handle(Handle::Inst { id, path, inst, ty }) => Some(InstInfo {
+                id: *id,
+                path: *path,
+                inst: *inst,
+                ty: *ty,
+            }),
+            _ => None,
+        }
     }
 
     /// A mutation at `pos` of a binding `id` of the current frame (section 9.4). The binding is older
@@ -1327,7 +1369,7 @@ impl Evaluator<'_> {
             }
             Sel::Select(q, r, index) => Ok(Key::Select(q, r, index)),
             Sel::Field(q, f) => Ok(Key::Field(q, f)),
-            Sel::Key(q, base, key) => self.named_key(q, base, key, false),
+            Sel::Key(q, base, key) => self.named_key(q, base, key, None),
         }
     }
 
@@ -1350,6 +1392,15 @@ impl Evaluator<'_> {
         let mut keys = std::mem::take(&mut st.keys);
         for key in keyed {
             let seen = cur.seen();
+            // A name that the fuel could not pay at its step fails here, after its checks.
+            if let Key::Named(n) = key
+                && !n.paid
+            {
+                let plan = self.named_plan(n, At::Seen(seen), self.store.value(&n.key))?;
+                if let Some(name) = plan.name() {
+                    Self::pay_name(&mut self.fuel, n.kp, name)?;
+                }
+            }
             let (k, field) = self.step_at(key, seen)?;
             known = match (field, known, seen) {
                 (Some(ft), _, _) => Known::Ty(ft),
@@ -1470,6 +1521,20 @@ impl Evaluator<'_> {
                         Code::S010,
                         pos,
                         format!("the field `{}` has no symbol", f.name),
+                    );
+                };
+                (field, Step::User(sym))
+            }
+            Key::Named(n) if field.is_some() => {
+                let name = match self.store.value(&n.key) {
+                    Value::Str(name) => name.as_str(),
+                    _ => "",
+                };
+                let Some(sym) = self.syms.find(name) else {
+                    return fail(
+                        Code::S010,
+                        pos,
+                        format!("the field `{}` has no symbol", str_text(name)),
                     );
                 };
                 (field, Step::User(sym))

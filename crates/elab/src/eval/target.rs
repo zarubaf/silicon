@@ -10,11 +10,12 @@
 //! type with the handle flag charge 1, then the step gets the checks of a selection. The target
 //! is an identity, so it opens no window and charges no held root.
 
-use super::inst::{child_key, family_value};
-use super::place::{Key, Sel, chain, key_pos};
+use super::field::{At, InstInfo, Pick};
+use super::inst::{child_key, family_value, no_port};
+use super::place::{Key, Named, Sel, chain, key_pos};
 use super::{Evaluator, GuardKind, Out, Res, fail, need};
 use crate::Code;
-use crate::hw::{Handle, Ref, Root, Seen, Val};
+use crate::hw::{Handle, Ref, Root, Seen};
 use crate::names::Sym;
 use crate::types::TyId;
 use parse::ast::{Expr, Ident, Pos};
@@ -29,10 +30,6 @@ impl Evaluator<'_> {
     /// root has no slot, so it evaluates, and its value names it in the text of `S017`.
     pub(super) fn target_part(&mut self, e: &Expr) -> Res<Out> {
         let (root, steps) = chain(e).unwrap_or((e, Vec::new()));
-        // TODO(#344): the targets of an `@field` are step 13.
-        if let Some(step) = steps.iter().find(|s| matches!(s, Sel::Key(..))) {
-            return Self::named_placeholder(step.pos());
-        }
         if let Expr::Name { pos, id, name } = root
             && let Some(family) = self.family_of(*id)
         {
@@ -70,8 +67,13 @@ impl Evaluator<'_> {
         let mut after_field = false;
         for step in steps {
             let named = std::mem::replace(&mut after_field, matches!(step, Sel::Field(..)));
-            if matches!(step, Sel::Index(..)) {
+            if matches!(step, Sel::Index(..) | Sel::Key(..)) {
                 self.charge(step.pos(), 1)?;
+            }
+            if let Sel::Key(q, base, key) = *step {
+                keys.push(self.named_key(q, base, key, Some(GuardKind::Index))?);
+                fams.push(None);
+                continue;
             }
             let Sel::Index(q, args) = *step else {
                 keys.push(self.key(step)?);
@@ -180,7 +182,7 @@ impl Evaluator<'_> {
             cur = next;
         }
         for key in keys.iter().take(taken.len()) {
-            if !matches!(key, Key::Index(..)) {
+            if !matches!(key, Key::Index(..) | Key::Named(_)) {
                 self.charge(key_pos(key), 1)?;
             }
         }
@@ -200,11 +202,14 @@ impl Evaluator<'_> {
     /// The step `key` of a target that starts at `start`, on the base `base`. An index step
     /// charged with its index.
     fn target_step(&mut self, start: Pos, base: Out, key: &Key<'_>) -> Res<Out> {
-        if let (Seen::Handle(Handle::Inst { id, path, inst, .. }), Key::Field(q, f)) =
+        if let (Seen::Handle(Handle::Inst { id, path, inst, ty }), Key::Field(q, f)) =
             (self.store.seen(&base), key)
         {
-            let (id, path, inst) = (*id, *path, *inst);
-            return self.child_port(start, *q, f, (id, path, inst));
+            let (id, path, inst, ty) = (*id, *path, *inst, *ty);
+            return self.child_port(start, *q, f, InstInfo { id, path, inst, ty });
+        }
+        if let Key::Named(n) = key {
+            return self.field_target(start, base, n);
         }
         let flagged = matches!(
             self.store.seen(&base),
@@ -219,42 +224,44 @@ impl Evaluator<'_> {
         self.agg_key(base, key)
     }
 
-    /// The input `f` of the child `inst` at `q`, with no charge. An output is `S017` at `start`.
-    fn child_port(
-        &self,
-        start: Pos,
-        q: Pos,
-        f: &Ident,
-        (id, path, inst): (usize, crate::names::PathId, usize),
-    ) -> Res<Out> {
+    /// The `@field` step `n` of a target that starts at `start`, on the base `base` (Lean
+    /// `fieldTarget`). The node charged and the key evaluated in `target_keys`. A base that is no
+    /// `Instance` handle and no container of a type with the handle flag is `S017` at `start`. Then
+    /// the key gets its kind checks, and the step selects an index, a field, or a child port.
+    fn field_target(&mut self, start: Pos, base: Out, n: &Named<'_>) -> Res<Out> {
+        let seen = self.store.seen(&base);
+        let target = match seen {
+            Seen::Handle(Handle::Inst { .. }) => true,
+            Seen::Agg(a) => a.stored_ty().is_some_and(TyId::holds_handles),
+            _ => false,
+        };
+        if !target {
+            return fail(Code::S017, start, PART_TEXT.to_owned());
+        }
+        let plan = self.named_plan(n, At::Seen(seen), self.store.value(&n.key))?;
+        if !n.paid
+            && let Some(name) = plan.name()
+        {
+            Self::pay_name(&mut self.fuel, n.kp, name)?;
+        }
+        match self.named_finish(n, seen, &plan)? {
+            Pick::Port(info, port) => self.target_port(start, info, port),
+            pick => self.named_apply(n, base, pick),
+        }
+    }
+
+    /// The input `f` of the child behind `info` at `q`, with no charge. An output is `S017` at
+    /// `start`, and a name that the child does not declare is "No public port" at `q`.
+    fn child_port(&self, start: Pos, q: Pos, f: &Ident, info: InstInfo) -> Res<Out> {
         let port = self
             .syms
             .fields
             .get(&f.id)
-            .and_then(|s| self.elab.port(inst, (*s, None)));
+            .and_then(|s| self.elab.port(info.inst, (*s, None)));
         match port {
-            Some(port) if port.input => Ok(Out::Made(Val::Handle(Handle::Input {
-                inst: id,
-                path,
-                port,
-            }))),
-            Some(port) => fail(Code::S017, start, self.output_text(&port)),
-            None => fail(
-                Code::S010,
-                q,
-                format!("the instance has no port `{}`", f.name),
-            ),
+            Some(port) => self.target_port(start, info, port),
+            None => no_port(q, &self.tys.text(info.ty), &f.name),
         }
-    }
-
-    /// The `S017` text "Child output as a `:=` target" of section 6.2, for the output `port`. An
-    /// entry is named with its key, for example `req[3]`.
-    fn output_text(&self, port: &crate::hw::Port) -> String {
-        format!(
-            "`{}` is an output of the child, not a target; the child drives its outputs, so bind \
-             an input of the child",
-            self.port_text(port)
-        )
     }
 
     /// The entry of the family with the symbol `sym` and the name `name` of the child behind the
@@ -273,15 +280,15 @@ impl Evaluator<'_> {
         let Seen::Handle(Handle::Inst { id, path, inst, ty }) = self.store.seen(cur) else {
             return fail(Code::S017, start, PART_TEXT.to_owned());
         };
-        let (id, path, inst, ty) = (*id, *path, *inst, *ty);
-        match self.elab.port(inst, (sym, Some(key))) {
-            Some(port) if port.input => Ok(Out::Made(Val::Handle(Handle::Input {
-                inst: id,
-                path,
-                port,
-            }))),
-            Some(port) => fail(Code::S017, start, self.output_text(&port)),
-            None => child_key(xp, &self.tys.text(ty), name, key),
+        let info = InstInfo {
+            id: *id,
+            path: *path,
+            inst: *inst,
+            ty: *ty,
+        };
+        match self.elab.port(info.inst, (sym, Some(key))) {
+            Some(port) => self.target_port(start, info, port),
+            None => child_key(xp, &self.tys.text(info.ty), name, key),
         }
     }
 }
