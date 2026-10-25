@@ -75,6 +75,7 @@ unlisted | S002 the field `{}` is already declared | 354
 unlisted | S002 the variant `{}` is already declared in this enu | 354
 unlisted | S003 `{}` is not {} | 354
 unlisted | S003 unscannable crates/resolve/src/walk.rs | 354
+unlisted | S004 a builtin is not supported yet | 381
 unlisted | S004 {} is not supported yet | 354
 unlisted | S005 `{}` is {}; a static position needs a static val | 354
 unlisted | S006 a `comptime fn` has no memory port call | 354
