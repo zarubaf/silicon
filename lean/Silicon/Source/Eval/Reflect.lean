@@ -89,10 +89,7 @@ def tyStep (t : Ty) : QueryStep → M Ty
     | .array e n => do
       let _ ← within r n k
       return e
-    | .tuple ts => do
-      match ts[← within r ts.size k]? with
-      | some u => pure u
-      | none => fail .S013 r s!"the index is out of range for {ts.size} element(s)"
+    | .tuple ts => return ts[← within r ts.size k]
     | _ => fail .S010 q s!"an index needs an array, a list, or a tuple, not {partText t}"
 
 /-!
@@ -108,9 +105,7 @@ def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
   | .index _ q k, .agg (.array _ xs) | .index _ q k, .agg (.tuple _ xs)
   | .index _ q k, .agg (.list _ _ xs) => do
     let j ← within q xs.size k
-    match xs[j]? with
-    | some x => return (j, x.val, none)
-    | none => fail .S013 q s!"the index is out of range for {xs.size} element(s)"
+    return (j, xs[j].val, none)
   | .select _ r i, v@(.agg (.tuple _ xs)) =>
     match xs[i]? with
     | some x => return (i, x.val, none)
