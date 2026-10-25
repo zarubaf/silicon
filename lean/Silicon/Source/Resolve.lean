@@ -272,6 +272,56 @@ end
 
 deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
 
+/-! The parsed form of a resolved pattern: its binders without their local numbers. -/
+def Pattern.source : Pattern → Source.Pattern
+  | .wild p => .wild p
+  | .int p neg v => .int p neg v
+  | .bool p v => .bool p v
+  | .variant p t v _ _ bs => .variant p t v (bs.map (·.map (·.name)))
+
+/-!
+The parsed form of a resolved expression: each name without its reference, and each call without
+its call site. A message prints it as the source writes it, in the form of the printer.
+-/
+mutual
+  def Expr.source : Expr → Source.Expr
+    | .num p v => .num p v
+    | .bool p v => .bool p v
+    | .str p v => .str p v
+    | .name p x _ => .name p x
+    | .unary p op a => .unary p op a.source
+    | .binary p op l r => .binary p op l.source r.source
+    | .cond p c y n => .cond p c.source y.source n.source
+    | .call p f xs _ => .call p f.source (xs.map Expr.source)
+    | .index p b xs => .index p b.source (xs.map Expr.source)
+    | .field p b f => .field p b.source f
+    | .unit p => .unit p
+    | .tuple p xs => .tuple p (xs.map Expr.source)
+    | .array p xs => .array p (xs.map Expr.source)
+    | .select p b q i => .select p b.source q i
+    | .arrayType p t n => .arrayType p t.source n.source
+    | .method p r m _ _ xs _ => .method p r.source m (xs.map Expr.source)
+    | .fnType p ps r => .fnType p (ps.map FnParam.source) r.source
+    | .variant p t v _ _ xs called =>
+      if called then .call p (.path p t v) (xs.map Expr.source) else .path p t v
+    | .«match» p x as => .«match» p x.source (as.map Arm.source)
+    | .builtin p b xs => .builtin p b (xs.map Expr.source)
+
+  def TypeExpr.source : TypeExpr → Source.TypeExpr
+    | .name p x _ => .name p x
+    | .index p b xs => .index p b.source (xs.map Expr.source)
+    | .unit p => .unit p
+    | .tuple p ts => .tuple p (ts.map TypeExpr.source)
+    | .array p t n => .array p t.source n.source
+    | .fn p ps r => .fn p (ps.map FnParam.source) r.source
+
+  def FnParam.source : FnParam → Source.FnParam
+    | .mk m t => .mk m t.source
+
+  def Arm.source : Arm → Source.Arm
+    | .mk q v => .mk q.source v.source
+end
+
 /-!
 The resolved statement. Each declaration has a `Binder`. An `inst` has its module item. An
 `alias` is a local of type `Type`.

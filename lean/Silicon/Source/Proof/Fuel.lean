@@ -1050,17 +1050,38 @@ theorem portPart_f (p : Pos) (id : Nat) (path : Names.Path) (q : Port) :
     Follows cap (portPart p id path q) (portPart p id path q) := by
   unfold portPart; follows [readRef_f]
 
-theorem portFind_f (p : Pos) (i : Iface) (y : Option Nat) (n : String) :
-    Follows cap (portFind p i y n) (portFind p i y n) := by
+theorem portFind_f (p : Pos) (i : Iface) (t : Ty) (y : Option Nat) (n : String)
+    (b : Option Resolve.Expr) : Follows cap (portFind p i t y n b) (portFind p i t y n b) := by
   unfold portFind; follows
 
-theorem portOf_f (p : Pos) (id : Nat) (path : Names.Path) (i : Iface) (y : Option Nat)
-    (n : String) : Follows cap (portOf p id path i y n) (portOf p id path i y n) := by
+theorem portOf_f (p : Pos) (id : Nat) (path : Names.Path) (i : Iface) (t : Ty) (y : Option Nat)
+    (n : String) : Follows cap (portOf p id path i t y n) (portOf p id path i t y n) := by
   unfold portOf; follows [portFind_f, portPart_f]
 
 theorem childPort_f (kp : Pos) (i : Iface) (t : Ty) (y : Nat) (n : String) (key : Nat) :
     Follows cap (childPort kp i t y n key) (childPort kp i t y n key) := by
   unfold childPort; follows
+
+theorem symbolFind_f (x : String) : Follows cap (symbolFind x) (symbolFind x) := by
+  unfold symbolFind; follows
+
+theorem fieldKeyOf_f (kp : Pos) (b : FieldBase) (a : Unit → String) (k : Value) :
+    Follows cap (fieldKeyOf kp b a k) (fieldKeyOf kp b a k) := by
+  unfold fieldKeyOf; follows [symbolFind_f]
+
+theorem keyPort_f (kp : Pos) (i : Iface) (t : Ty) (b : Resolve.Expr) (y : Option Nat)
+    (n : String) (k : Option Nat) :
+    Follows cap (keyPort kp i t b y n k) (keyPort kp i t b y n k) := by
+  cases k <;> unfold keyPort <;> follows [portFind_f, childPort_f]
+
+theorem fieldOut_f (p : Pos) (b : Resolve.Expr) (kp : Pos) (o : Out) (key : Value) :
+    Follows cap (fieldOut p b kp o key) (fieldOut p b kp o key) := by
+  unfold fieldOut
+  follows [baseData_f, fieldKeyOf_f, fieldKeyBy_f, pick_f, keyPort_f, portPart_f]
+
+theorem queryField_f (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) :
+    Follows cap (queryField p b kp q key) (queryField p b kp q key) := by
+  unfold queryField; follows [fieldKeyOf_f, queryStep_f, keyPort_f]
 
 theorem childEntry_f (p kp : Pos) (id : Nat) (path : Names.Path) (i : Iface) (t : Ty) (y : Nat)
     (n : String) (key : Nat) :
@@ -1078,7 +1099,9 @@ theorem portCall_f {u u' : Ty → M Ty} (h : ∀ t, Follows cap (u t) (u' t)) (p
 theorem placeStep_f {ev ev' : Resolve.Expr → M (Option Out)}
     (he : ∀ e, Follows cap (ev e) (ev' e)) (v : Val) (t : Option Ty) (s : Sel) :
     Follows cap (placeStep ev v t s) (placeStep ev' v t s) := by
-  unfold placeStep; follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f]
+  unfold placeStep
+  follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f, staticValue_f, fieldKeyOf_f,
+    fieldKeyBy_f]
 
 end helpers
 

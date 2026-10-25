@@ -267,6 +267,14 @@ def childKeyText (m x : String) (k : Nat) : String :=
   s!"the child `{m}` has no entry `{x}[{k}]`; select a key that `{m}` declares"
 
 /-!
+The `S010` text "No public port" of section 6.2, for the key `k` of a child of the instance type
+`m`. The key has the limit of a string in a message (section 5.5).
+-/
+def noPortText (m k : String) : String :=
+  let k := strText k
+  s!"`{m}` has no public port `{k}`; select a port that `{m}` declares"
+
+/-!
 The typed use of the static family key `v` at `Nat`, at the key `p` (section 5.6). A key below 0
 or of 2^32 or more is `S012` "Family key range", and a key of another type is `S010` "Family key
 type". A static `UInt` is such a type. The key fits 32 bits, so each later compare and name of it
@@ -395,12 +403,12 @@ Each other base, also another handle, is `S017` at `s`.
 def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := do
   let (sel, key) := step
   match v, sel with
-  | .handle (.inst k path iface _), .field q f =>
+  | .handle (.inst k path iface ty), .field q f =>
     match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
     | some port =>
       if port.input then return .handle (.input k path port)
       else fail .S017 s (outputText port.text)
-    | none => fail .S010 q s!"the instance has no port `{f.name}`"
+    | none => fail .S010 q (noPortText ty.text f.name)
   | .agg a, sel =>
     unless a.ty?.any (·.info.handles) do fail .S017 s partText
     match sel, key with
@@ -412,6 +420,8 @@ def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := 
     | .field q f, _ =>
       charge q 1
       return (← fieldKey q f v).2.1
+    -- TODO(#344): an `@field` step of a `:=` target (section 9.3).
+    | .key q .., _ => fail .S004 q "a builtin is not supported yet"
   | _, _ => fail .S017 s partText
 
 /-!
