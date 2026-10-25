@@ -1102,6 +1102,44 @@ mod tests {
     }
 
     #[test]
+    fn a_site_with_a_value_of_a_closed_placeholder_has_a_row() {
+        let rows = closed_rows();
+        let one = "`@TypeOf` takes a name; bind it with `let`";
+        let two = "`@ports` takes a name; bind it with `let`";
+        let fix = "no place for `{}`; {}";
+        let mut s = src(
+            &[one, two, fix],
+            &[one, two, fix],
+            &[("S001", "x"), ("S010", "y")],
+        );
+        for side in [&mut s.lean_sites, &mut s.rust_sites] {
+            *side = vec![
+                site("a", "S001", Some(one)),
+                site("a", "S001", Some(two)),
+                site("a", "S001", Some("`@{}` takes a name; bind it with `let`")),
+                site("a", "S001", Some("`@ports` takes a name")),
+                site("a", "S010", Some(fix)),
+            ];
+        }
+        let got = messages(&rows, &s, &[]);
+        assert!(got.iter().all(|m| !m.contains("error text")), "{got:?}");
+        s.rust_sites.push(site(
+            "a",
+            "S001",
+            Some("`@typeInfo` takes a name; bind it with `let`"),
+        ));
+        let got: Vec<String> = messages(&rows, &s, &[])
+            .into_iter()
+            .filter(|m| m.contains("error text"))
+            .collect();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(
+            got[0].starts_with("the Rust error text `S001 `@typeInfo` takes"),
+            "{got:?}"
+        );
+    }
+
+    #[test]
     fn the_checked_in_tree_passes() {
         let repo = Repo::discover().unwrap();
         assert_eq!(check(&repo).unwrap(), Vec::new());
