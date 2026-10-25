@@ -3026,6 +3026,8 @@ mutual
           let t ← typeInfoArg x.pos o.value
           let ti ← spec n p (Resolve.typeInfoIndex (← read).items.size) []
           return some ⟨.static (← typeInfo p ti t), false, none⟩
+        -- TODO(#381): evaluate `@Struct` (section 9.3).
+        | .atStruct p _ => fail .S004 p "a builtin is not supported yet"
         | .atField p b k => do
           let o ← need b (← onPlace place (eval n b))
           let c ← changesOf o
@@ -3097,6 +3099,8 @@ mutual
       | .fn p ps r => do
         let qs ← params n ps
         fnTy p qs (← typeExpr n r)
+      -- TODO(#381): evaluate a builtin in a type position (section 6.2, type position order).
+      | .builtin e => fail .S004 e.pos "a builtin is not supported yet"
   termination_by (b, 3)
 
   /-- The parameter types of a function type in their order, each with its `mut` mark. -/
@@ -3722,7 +3726,7 @@ mutual
     | .«match» _ x as => do
       scanExpr x
       for a in as do scanArm a
-    | .typeOf _ x | .typeInfo _ x => scanExpr x
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => scanExpr x
     | .atField _ b k => do scanExpr b; scanExpr k
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
@@ -3742,6 +3746,7 @@ mutual
     | .fn _ ps r => do
       for q in ps do scanParam q
       scanType r
+    | .builtin e => scanExpr e
 
   def scanParam : Resolve.FnParam → ScanM Unit
     | .mk _ t => scanType t

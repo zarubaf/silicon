@@ -44,6 +44,8 @@ The proof is an induction on the number of kinds. These parts of the parser need
   reads it. No `::` follows the second name.
 - `primary` at `@`: `Runs.primary_builtin` reads the name and the operands of a builtin. Its
   checks pass, because `Printable` holds `Builtin.operandsOk`, and the erasure keeps a place.
+- `typeExpr` at `@`: a builtin in a type position. `Runs.builtinHead` reads `@name(` for it and
+  for `primary`, then `Runs.args` reads the operands, and the type suffixes follow.
 - `expr` at `match`: `Runs.arms` reads the arms up to the `}`, and `Runs.pattern` reads each
   pattern with its `=>`. A variant pattern prints its binders only if it has one, and
   `Runs.binders` reads them up to their `)`.
@@ -511,6 +513,16 @@ theorem Runs.builtinCheck {ctx : Ctx} {i : Nat} {u : Token} {b : Builtin} {o : P
   intro _
   exact ⟨(), rfl, trivial⟩
 
+/-! The head `@name(` of a builtin: the parser reads its three kinds and gives the builtin. -/
+theorem Runs.builtinHead {b : Builtin} {ctx : Ctx} {i : Nat} {t : Token} {R : List Kind}
+    (hw : Win ctx.input i (.symbol "@" :: .ident b.name :: .symbol "(" :: R)) :
+    Runs (Parse.builtinHead t) ctx i (i + 1 + 1 + 1) (fun r => r.2 = b) := by
+  have hb : Builtin.ofName b.name = some b := by cases b <;> rfl
+  unfold Parse.builtinHead
+  refine Runs.peekAt_bind ?_
+  simp only [hw.tail.head, hb]
+  exact Runs.bump_bind (Runs.bump_bind (Runs.sym_bind hw.tail.tail.head (Runs.pure rfl)))
+
 /-!
 A builtin `@name(args)`: the parser reads `@`, the name, and the operands up to `)`, then it
 checks them.
@@ -525,13 +537,13 @@ theorem Runs.primary_builtin {p : Pos} {b : Builtin} {xs : List Expr}
       r.1.expr.erase = (Expr.builtin p b xs).erase ∧
         r.1.height ≤ (argToks (xs.map (Expr.toks 0))).length + 1 ∧
         r.2 = (Expr.builtin p b xs).place) := by
-  have hb : Builtin.ofName b.name = some b := by cases b <;> rfl
   rw [Parse.primary]
   refine Runs.peek_bind ?_
   simp only [hw.head]
-  refine Runs.peekAt_bind ?_
-  simp only [hw.tail.head, hb]
-  refine Runs.bump_bind (Runs.bump_bind (Runs.sym_bind hw.tail.tail.head ?_))
+  refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_
+  obtain ⟨u, b'⟩ := ub
+  simp only at hub
+  subst b'
   refine Runs.peek_bind ?_
   refine Runs.bind (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE (fun _ => rfl)
     ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp)) fun ns hns => ?_
@@ -748,10 +760,11 @@ theorem TypeExpr.toks_head (ty : TypeExpr) : ∃ k ks, ty.toks = k :: ks ∧ Not
   | case5 =>
     exact ⟨.symbol "[", _, by rw [TypeExpr.toks, List.cons_append, List.cons_append],
       by simp [NotClose]⟩
+  | case7 => exact ⟨.symbol "@", _, by rw [TypeExpr.toks]; rfl, by simp [NotClose]⟩
 
-/-! The first kind of a type: a name, `(`, `[`, or the `fn` of a function type. -/
+/-! The first kind of a type: a name, `(`, `[`, `@`, or the `fn` of a function type. -/
 theorem TypeExpr.toks_head_kind (ty : TypeExpr) : ∃ k ks, ty.toks = k :: ks ∧
-    ((∃ n, k = .ident n) ∨ k = .symbol "(" ∨ k = .symbol "[" ∨
+    ((∃ n, k = .ident n) ∨ k = .symbol "(" ∨ k = .symbol "[" ∨ k = .symbol "@" ∨
       (k = .keyword "fn" ∧ ¬ NotFn ty)) := by
   induction ty using TypeExpr.ind with
   | case2 p b xs ihb =>
@@ -762,14 +775,17 @@ theorem TypeExpr.toks_head_kind (ty : TypeExpr) : ∃ k ks, ty.toks = k :: ks �
     | _ =>
       refine ⟨k, ks ++ .symbol "[" :: argToks (xs.map (Expr.toks 0)) ++ [.symbol "]"],
         by simp [h], ?_⟩
-      rcases hk with hk | hk | hk | ⟨-, hk⟩
+      rcases hk with hk | hk | hk | hk | ⟨-, hk⟩
       · exact Or.inl hk
       · exact Or.inr (Or.inl hk)
       · exact Or.inr (Or.inr (Or.inl hk))
+      · exact Or.inr (Or.inr (Or.inr (Or.inl hk)))
       · exact absurd (fun _ _ _ h => by cases h) hk
   | case6 p ps r =>
     exact ⟨.keyword "fn", _, by simp [TypeExpr.toks]; exact rfl,
-      Or.inr (Or.inr (Or.inr ⟨rfl, fun h => h p ps r rfl⟩))⟩
+      Or.inr (Or.inr (Or.inr (Or.inr ⟨rfl, fun h => h p ps r rfl⟩)))⟩
+  | case7 =>
+    exact ⟨.symbol "@", _, by rw [TypeExpr.toks]; rfl, Or.inr (Or.inr (Or.inr (Or.inl rfl)))⟩
   | case1 p n => exact ⟨_, [], by rw [TypeExpr.toks], Or.inl ⟨n, rfl⟩⟩
   | case3 => exact ⟨.symbol "(", _, by rw [TypeExpr.toks], Or.inr (Or.inl rfl)⟩
   | case4 =>
@@ -988,7 +1004,7 @@ theorem Runs.mutMark (m : Bool) {ctx : Ctx} {i : Nat} {t : TypeExpr} {R : List K
   cases m
   · simp only [Bool.false_eq_true, ite_false, List.nil_append, List.cons_append] at hw
     refine Runs.acceptKw_false (by
-      rw [hw.head]; rcases hk with ⟨n, rfl⟩ | rfl | rfl | ⟨rfl, -⟩ <;> simp)
+      rw [hw.head]; rcases hk with ⟨n, rfl⟩ | rfl | rfl | rfl | ⟨rfl, -⟩ <;> simp)
   · exact Runs.acceptKw_true hw.head
 
 /-! The first kind of a parameter of a function type is no `)` and no `comptime`. -/
@@ -999,7 +1015,7 @@ theorem FnParam.toks_head (m : Bool) (t : TypeExpr) : ∃ k ks, (FnParam.mk m t)
   cases m
   · refine ⟨k, ks, ?_, ?_⟩
     · simp
-    rcases hk with ⟨n, rfl⟩ | rfl | rfl | ⟨rfl, -⟩ <;> simp
+    rcases hk with ⟨n, rfl⟩ | rfl | rfl | rfl | ⟨rfl, -⟩ <;> simp
   · exact ⟨.keyword "mut", k :: ks, by simp, by simp, by simp⟩
 
 theorem FnParam.toks_length (m : Bool) (t : TypeExpr) :
@@ -1156,7 +1172,8 @@ theorem Runs.fnTypes_any {ty : TypeExpr} (hT : TGoal ty) (hC : CGoal ty)
     refine Runs.peek_bind ?_
     have hk0 : isKw "fn" (tokenAt ctx.input i) = false := by
       have := hw; rw [hks] at this
-      rcases hk with ⟨n, rfl⟩ | rfl | rfl | ⟨-, hk⟩
+      rcases hk with ⟨n, rfl⟩ | rfl | rfl | rfl | ⟨-, hk⟩
+      · simp [isKw, this.head]
       · simp [isKw, this.head]
       · simp [isKw, this.head]
       · simp [isKw, this.head]
@@ -1235,6 +1252,42 @@ theorem Runs.type_of (B : Nat) (hE : ∀ x, (x.toks 0).length < B → EGoal x) (
     have hw2 := hw.drop
     exact ⟨Runs.typeSuffix_stop (by rw [hw2.head]; exact hu'.1) (by rw [hw2.head]; exact hu'.2),
       hk a.1 a.2 (f + 1) hx1 hx2 (by omega)⟩
+  | case7 p b xs =>
+    intro hB
+    refine ⟨fun hp ctx i f u R hw hu _ hf l Q hk => ?_, nf _ fun _ _ _ h => by cases h⟩
+    simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
+      List.all_eq_true] at hp
+    obtain ⟨hok, hpxs⟩ := hp
+    simp only [TypeExpr.toks, List.length_append, List.length_cons, List.length_nil]
+      at hw hf hk hB
+    simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+    have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+      ⟨hE x (by have := argToks_mem hx; omega), hpxs x hx⟩
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
+    rw [Parse.typeExpr]
+    refine Runs.peek_bind ?_
+    simp only [hw.head]
+    refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_
+    obtain ⟨v, b'⟩ := ub
+    simp only at hub
+    subst b'
+    refine Runs.peek_bind ?_
+    refine Runs.bind (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE
+      (fun _ => rfl) ctx (i + 1 + 1 + 1) f (u :: R) hw.tail.tail.tail (by omega) (by simp))
+      fun ns hns => ?_
+    have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
+      rw [List.map_map]; exact hns.1
+    have hok' : b.operandsOk (ns.map (·.expr)) = true := by
+      rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok
+    refine Runs.bind (Runs.builtinCheck hok') fun _ _ => ?_
+    refine Runs.start (by omega) (hk _ _ f ?_ ?_ (by omega))
+    · simp only [TypeExpr.erase, hys]
+    · refine Nat.le_trans (height_le (B := (argToks (xs.map (Expr.toks 0))).length) ?_)
+        (by omega)
+      intro x hx
+      simp only [List.mem_map] at hx
+      obtain ⟨m, hm, rfl⟩ := hx
+      exact hns.2 m hm
   | case3 p =>
     intro _
     refine ⟨fun _ ctx i f u R hw hu _ hf l Q hk => ?_, nf _ fun _ _ _ h => by cases h⟩

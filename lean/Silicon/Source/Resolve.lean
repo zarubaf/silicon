@@ -230,8 +230,9 @@ refers to a prelude type, a `struct` item, a `type` item, or a local. A local ho
 type `Type`, which `Elab` checks. A function type keeps its form, with the `mut` mark of each
 parameter type. A `match` holds its scrutinee and its arms. The parser checked the operands
 of a builtin, so each builtin has its own form. `typeOf` holds the place of `@TypeOf`,
-`typeInfo` holds the argument of `@typeInfo`, and `atField` holds the base and the key of
-`@field`.
+`typeInfo` holds the argument of `@typeInfo`, `atStruct` holds the argument of `@Struct`, and
+`atField` holds the base and the key of `@field`. A builtin in a type position (`builtin`) holds
+the resolved form of the builtin as an expression.
 -/
 mutual
   inductive Expr where
@@ -258,6 +259,7 @@ mutual
     | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
     | typeOf (pos : Pos) (place : Expr)
     | typeInfo (pos : Pos) (arg : Expr)
+    | atStruct (pos : Pos) (arg : Expr)
     | atField (pos : Pos) (base key : Expr)
 
   inductive TypeExpr where
@@ -267,6 +269,7 @@ mutual
     | tuple (pos : Pos) (elems : List TypeExpr)
     | array (pos : Pos) (elem : TypeExpr) (len : Expr)
     | fn (pos : Pos) (params : List FnParam) (ret : TypeExpr)
+    | builtin (e : Expr)
 
   inductive FnParam where
     | mk (mutable : Bool) (ty : TypeExpr)
@@ -276,6 +279,21 @@ mutual
 end
 
 deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
+
+/-! The position of the first token of a form. -/
+def Expr.pos : Expr → Pos
+  | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
+  | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
+  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p ..
+  | .«match» p .. | .typeOf p .. | .typeInfo p .. | .atStruct p .. | .atField p .. => p
+
+/-! The builtin of a resolved builtin form, for a message. Another form has none. -/
+def Expr.builtin? : Expr → Option Builtin
+  | .typeOf .. => some .typeOf
+  | .typeInfo .. => some .typeInfo
+  | .atStruct .. => some .struct
+  | .atField .. => some .field
+  | _ => none
 
 /-! The parsed form of a resolved pattern: its binders without their local numbers. -/
 def Pattern.source : Pattern → Source.Pattern
@@ -312,6 +330,7 @@ mutual
     | .«match» p x as => .«match» p x.source (as.map Arm.source)
     | .typeOf p x => .builtin p .typeOf [x.source]
     | .typeInfo p x => .builtin p .typeInfo [x.source]
+    | .atStruct p x => .builtin p .struct [x.source]
     | .atField p b k => .builtin p .field [b.source, k.source]
 
   def TypeExpr.source : TypeExpr → Source.TypeExpr
@@ -321,6 +340,11 @@ mutual
     | .tuple p ts => .tuple p (ts.map TypeExpr.source)
     | .array p t n => .array p t.source n.source
     | .fn p ps r => .fn p (ps.map FnParam.source) r.source
+    | .builtin e =>
+      -- The resolver puts only a builtin form here; its fallback for a wrong arity is `unit`.
+      match e.source with
+      | .builtin p b xs => .builtin p b xs
+      | _ => .unit e.pos
 
   def FnParam.source : FnParam → Source.FnParam
     | .mk m t => .mk m t.source
@@ -387,15 +411,9 @@ inductive Item where
   | enum (pos : Pos) (name : Ident) (tag : TypeExpr) (variants : List Variant)
   deriving Repr, BEq, Inhabited
 
-/-! The position of the first token of a form. -/
-def Expr.pos : Expr → Pos
-  | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
-  | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
-  | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p ..
-  | .«match» p .. | .typeOf p .. | .typeInfo p .. | .atField p .. => p
-
 def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
+  | .builtin e => e.pos
 
 def Stmt.pos : Stmt → Pos
   | .local p .. | .assign p .. | .connect p .. | .reg p .. | .wire p .. | .mem p ..
@@ -426,7 +444,7 @@ mutual
     | .fnType _ qs r => FnParam.anyLocal ps qs || r.namesLocal ps
     | .variant _ _ _ _ _ xs _ => Expr.anyLocal ps xs
     | .«match» _ x as => x.namesLocal ps || Arm.anyLocal ps as
-    | .typeOf _ x | .typeInfo _ x => x.namesLocal ps
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => x.namesLocal ps
     | .atField _ b k => b.namesLocal ps || k.namesLocal ps
 
   def Expr.anyLocal (ps : Ids) : List Expr → Bool
@@ -444,6 +462,7 @@ mutual
     | .tuple _ ts => TypeExpr.anyLocal ps ts
     | .array _ t n => t.namesLocal ps || n.namesLocal ps
     | .fn _ qs r => FnParam.anyLocal ps qs || r.namesLocal ps
+    | .builtin e => e.namesLocal ps
 
   def TypeExpr.anyLocal (ps : Ids) : List TypeExpr → Bool
     | [] => false
@@ -457,7 +476,8 @@ end
 /-!
 A function with the parameters `ps` and the result type `ret` is generic in two cases
 (section 5.1). It has a `comptime` parameter, or a parameter type or its result type names one
-of its parameters. The check reads only the resolved signature, so it needs no evaluation.
+of its parameters. The check reads only the resolved signature, so it needs no evaluation. A name
+in the operands of a builtin in a type counts too: `fn f(x: UInt[8]) -> @TypeOf(x)` is generic.
 -/
 def generic (ps : List Param) (ret : TypeExpr) : Bool :=
   let ids : Ids := ps.foldl (fun m q => m.insert q.name.id ()) {}
@@ -843,6 +863,7 @@ mutual
       return .«match» p x (← as.mapM arm)
     | .builtin p .typeOf [x] => return .typeOf p (← expr x)
     | .builtin p .typeInfo [x] => return .typeInfo p (← expr x)
+    | .builtin p .struct [x] => return .atStruct p (← expr x)
     | .builtin p .field [b, k] => return .atField p (← expr b) (← expr k)
     | .builtin p b xs => do
       -- This case only makes the match total. The parser checks the number of operands
@@ -867,6 +888,7 @@ mutual
     | .fn p ps r => do
       let ps ← ps.mapM fnParam
       return .fn p ps (← typeExpr r)
+    | .builtin p b xs => return .builtin (← expr (.builtin p b xs))
 
   /--
   The arguments of an index. The first argument of the prelude `Instance` (`inst`) resolves by

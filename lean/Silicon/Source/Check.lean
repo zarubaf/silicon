@@ -42,9 +42,14 @@ at the name. These are the static positions:
 
 The operand of `@TypeOf` is no static position, also in a static position, so
 `UInt[data_bits(@TypeOf(r))]` names `r` without `S005`. Rule 1 and rule 12 still hold for its
-indices and its keys (section 9.2). The argument of `@typeInfo` is no static position either
-(ADR 0031), so `@typeInfo(r)` gets the `S010` of pass 5. The keys of a query operand in it keep
-their rules.
+indices and its keys (section 9.2). The argument of `@typeInfo` and of `@Struct` is no static
+position either (ADR 0031), so `@typeInfo(r)` gets the `S010` of pass 5. The keys of a query
+operand in it keep their rules.
+
+A builtin in a type position (F39) is no static position either, and its operands keep the rules
+of the builtin in an expression. Thus `let y: @field(rs, 0) = ...;` for an array `rs` of
+registers gets the `S010` "Builtin as a type" of pass 5, not `S005`. Rule 12 still holds for the
+key of an `@field` there.
 
 A port family names ports, so its name in a static position is `S005`, also before its first
 declaration. A family is no mutable root, so a `mut` actual with a family root is `S008`.
@@ -84,6 +89,9 @@ declaration. A family is no mutable root, so a `mut` actual with a family root i
   a `type` item, `()`, a tuple type, or an array type takes no index.
 - A function type takes no index, in a type and in an expression: `(fn () -> UInt)[8]` is
   `S007` at the index.
+- A builtin in a type position gives a complete type, so it takes no index. Thus
+  `@TypeOf(x)[8]` in a type is `S007` "Index of a builtin type" at the `@`. An index of a builtin
+  in an expression keeps the rules of an index of a value.
 - A variant constructor `E::V(args)` has one argument for each payload type of `V`. A path
   `E::V` without a call has none. The error is at the start of the path (section 5.6). An enum
   has no parameters, so its name takes no index. Only `Elab` checks a call `E(args)` of the
@@ -537,7 +545,7 @@ mutual
       let _ ← visit static false x
       for a in as do arm static a
       return none
-    | .typeOf _ x | .typeInfo _ x => do
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => do
       let _ ← visit false false x
       return none
     | .atField _ b k => do
@@ -555,6 +563,16 @@ mutual
     | .index p (.name _ n r) xs => do
       if let some h ← head n r then indexArity p h xs
       for x in xs do let _ ← visit true false x
+    | .index p (.builtin e) xs => do
+      if let some b := e.builtin? then
+        arity p s!"a type from `@{b.name}`" 0 xs.length
+          s!"; remove the index after `@{b.name}(...)`"
+      let _ ← visit false false e
+      for x in xs do let _ ← visit true false x
+    | .index _ b@(.index _ (.builtin _) _) xs => do
+      -- The index right after the builtin reports at the same position, so its text wins.
+      typeExpr b
+      for x in xs do let _ ← visit true false x
     | .index p b xs => do
       arity p (if b matches .fn .. then "a function type" else "a complete type") 0 xs.length
       typeExpr b
@@ -565,6 +583,7 @@ mutual
     | .fn _ ps r => do
       for q in ps do fnParam q
       typeExpr r
+    | .builtin e => do let _ ← visit false false e
 
   /-- A parameter type of a function type. -/
   def fnParam : Resolve.FnParam → M Unit

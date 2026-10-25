@@ -240,7 +240,7 @@ the element is a type. The first token that is not part of a type is `S001`.
 #guard ex "[f(x); 4]" == "error S004 1:16"
 #guard ex "[a.f(x); 4]" == "error S001 1:16"
 #guard ex "[fn() -> T; 4]" == "(arraytype (fn () (name \"T\")) (num 4))"
-#guard ex "[@TypeOf(x); 4]" == "error S004 1:15"
+#guard ex "[@TypeOf(x); 4]" == "(arraytype (builtin TypeOf ((name \"x\"))) (num 4))"
 #guard ex "[a::T; 4]" == "error S004 1:16"
 
 /-! `S001` and `S004` at the other container forms. -/
@@ -397,13 +397,9 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard fails "module M() conforms C() using D() {}" .S004 1 12
 #guard fails "module M() domains(a, b) {}" .S004 1 23
 #guard fails "fn f(x: a::T) -> T {}" .S004 1 10
-#guard fails "fn f() -> @Struct(x) {}" .S004 1 11
-#guard fails "fn f() -> @typeInfo(x) {}" .S004 1 11
-#guard fails "fn f() -> @field(x, \"f\") {}" .S004 1 11
 #guard fails "fn f() -> @ports(M) {}" .S004 1 11
 #guard fails "fn f() -> a::T {}" .S004 1 12
 #guard fails "fn f() -> T::U {}" .S004 1 12
-#guard fails "fn f() -> @TypeOf(x) {}" .S004 1 11
 #guard st "@TypeOf(x);" == "(expr (builtin TypeOf ((name \"x\"))))"
 #guard st "@typeInfo(T);" == "(expr (builtin typeInfo ((name \"T\"))))"
 #guard stFails "reg r: T in d = 0;" .S004 10
@@ -571,7 +567,7 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard ex "@typeInfo(a, b)" == "error S001 1:15"
 #guard ex "@TypeOf(a.b, c)" == "error S001 1:15"
 #guard ex "(f(a, b))" == "(call (name \"f\") ((name \"a\") (name \"b\")))"
-#guard ex "@Struct(T)" == "error S004 1:14"
+#guard ex "@Struct(T)" == "(builtin Struct ((name \"T\")))"
 #guard ex "@ports(M)" == "error S004 1:14"
 #guard ex "@field(x, \"f\")" == "(builtin field ((name \"x\") (str \"f\")))"
 #guard ex "@TypeOf(x)" == "(builtin TypeOf ((name \"x\")))"
@@ -681,7 +677,7 @@ name, and with `mut` it is `S001` at `mut`, as at a module.
 #guard fails "import x $" .S004 1 1
 #guard fails "pub \"open" .S004 1 1
 #guard fails "const N: T = $; import x;" .S001 1 14
-#guard ex "@Struct(a, $)" == "error S004 1:14"
+#guard ex "@ports(a, $)" == "error S004 1:14"
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
@@ -1021,17 +1017,12 @@ name has the limit of a string in a message (section 5.5).
   "`@typeInfo`, `@Struct`, `@field`, or `@ports`"
 #guard ex "@1" == "error S001 1:15"
 
-/-!
-`@Struct` and `@ports` stay `S004` at the `@` (#345, #346). So does each builtin in a type
-position (#345), also `@typeInfo`.
--/
-#guard ex "@Struct(fs)" == "error S004 1:14"
+/-! `@ports` stays `S004` at the `@` (#346), also in a type position. -/
 #guard ex "@ports(u)" == "error S004 1:14"
 #guard ex "@TypeOf(@ports(u))" == "error S004 1:22"
-#guard stFails "let y: @TypeOf(x) = x;" .S004 8
-#guard stFails "let y: [@field(x, 0); 2] = x;" .S004 9
+#guard stFails "let y: @ports(u) = x;" .S004 8
 #guard message "const X: T = @ports(u);" == "a builtin is not supported yet"
-#guard message "const X: @TypeOf(y) = 1;" == "a builtin is not supported yet"
+#guard message "const X: @ports(y) = 1;" == "a builtin is not supported yet"
 
 /-!
 An `@field` selection of a place is a place: it is a target, and a statement starts with it.

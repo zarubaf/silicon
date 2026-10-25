@@ -48,31 +48,33 @@ inductive Pattern where
   deriving Repr, BEq, Inhabited
 
 /-!
-A builtin of slice 4 (section 9.3): `@TypeOf`, `@typeInfo`, and `@field`. Each phase of section
-14.4 adds the name of its builtin. `@Struct` and `@ports` are not yet names here.
+A builtin of slice 4 (section 9.3): `@TypeOf`, `@typeInfo`, `@Struct`, and `@field`. Each phase
+of section 14.4 adds the name of its builtin. `@ports` is not yet a name here.
 -/
 inductive Builtin where
-  | typeOf | typeInfo | field
+  | typeOf | typeInfo | struct | field
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-! The name of a builtin after `@`. -/
 def Builtin.name : Builtin → String
-  | .typeOf => "TypeOf" | .typeInfo => "typeInfo" | .field => "field"
+  | .typeOf => "TypeOf" | .typeInfo => "typeInfo" | .struct => "Struct" | .field => "field"
 
 /-! The builtin of a name after `@`, if the current phase has it. -/
 def Builtin.ofName : String → Option Builtin
   | "TypeOf" => some .typeOf
   | "typeInfo" => some .typeInfo
+  | "Struct" => some .struct
   | "field" => some .field
   | _ => none
 
 /-! The number of operands of a builtin (section 5.6): 2 for `@field`, 1 for each other. -/
 def Builtin.arity : Builtin → Nat
-  | .typeOf | .typeInfo => 1 | .field => 2
+  | .typeOf | .typeInfo | .struct => 1 | .field => 2
 
 /-! The form of a builtin in section 9.3, for the fix of "Builtin arity". -/
 def Builtin.form : Builtin → String
-  | .typeOf => "@TypeOf(x)" | .typeInfo => "@typeInfo(T)" | .field => "@field(x, k)"
+  | .typeOf => "@TypeOf(x)" | .typeInfo => "@typeInfo(T)" | .struct => "@Struct(fs)"
+  | .field => "@field(x, k)"
 
 /-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
 def Builtin.arityText (b : Builtin) (m : Nat) : String :=
@@ -93,7 +95,8 @@ is `@name(args)` at the position of its `@`, with the operands in source order (
 
 A type expression is a type name, a type family with its static arguments, or the unit type
 `()`. It can also be a tuple type, an array type `[T; N]`, or a function type
-`fn (T, mut U) -> V`. A `tuple` holds at least one element type. A function type in an
+`fn (T, mut U) -> V`. A `tuple` holds at least one element type. A `builtin` is a builtin in a
+type position (F39), with the fields of the expression form. A function type in an
 expression is a `fnType`, a unary operand. A `FnParam` is a parameter type of a function type,
 with its `mut` mark. It has no `comptime` mark, because that mark is `S001`.
 -/
@@ -127,6 +130,7 @@ mutual
     | tuple (pos : Pos) (elems : List TypeExpr)
     | array (pos : Pos) (elem : TypeExpr) (len : Expr)
     | fn (pos : Pos) (params : List FnParam) (ret : TypeExpr)
+    | builtin (pos : Pos) (b : Builtin) (args : List Expr)
 
   inductive FnParam where
     | mk (mutable : Bool) (ty : TypeExpr)
@@ -149,12 +153,12 @@ def Expr.place : Expr → Bool
 
 /-!
 The operands `xs` fit the builtin `b` (section 9.3): their number is the arity of `b`, and the
-operand of `@TypeOf` is a place. The operand of `@typeInfo` is any expression.
+operand of `@TypeOf` is a place. The operand of `@typeInfo` and of `@Struct` is any expression.
 -/
 def Builtin.operandsOk (b : Builtin) (xs : List Expr) : Bool :=
   xs.length == b.arity && match b with
     | .typeOf => xs.all Expr.place
-    | .typeInfo | .field => true
+    | .typeInfo | .struct | .field => true
 
 /-!
 The name form of a port (section 5.6). A `scalar` port has a name only. An `indexed` port has its

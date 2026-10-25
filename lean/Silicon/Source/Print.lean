@@ -139,6 +139,7 @@ mutual
     | .tuple _ ts => TypeExpr.dumpsTo (acc ++ "(tuple (") ts ++ "))"
     | .array _ t n => n.dumpTo (t.dumpTo (acc ++ "(array ") ++ " ") ++ ")"
     | .fn _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fn (") ps ++ ") ") ++ ")"
+    | .builtin _ b xs => Expr.dumpsTo (acc ++ "(builtin " ++ b.name ++ " (") xs ++ "))"
 
   /-- `sepTo TypeExpr.dumpTo`, which the recursion over `TypeExpr` needs as its own function. -/
   def TypeExpr.dumpsTo (acc : String) : List TypeExpr → String
@@ -267,7 +268,8 @@ variant without payload types prints without parentheses. A variant path `E::V` 
 A `match` has the level of `if`. It prints on one line, and each arm ends with `,`. A variant
 pattern without binders prints without parentheses. A binder `none` prints as `_`.
 
-A builtin `@name(args)` is a primary.
+A builtin `@name(args)` is a primary. In a type, it prints as in an expression, and an index
+after it needs no parentheses.
 -/
 
 def BinOp.text : BinOp → String
@@ -354,6 +356,7 @@ mutual
     | .tuple _ ts => "(" ++ args (ts.map TypeExpr.print) ++ tupleEnd ts.length
     | .array _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
     | .fn _ ps r => fnText (ps.map FnParam.print) r.print
+    | .builtin _ b xs => "@" ++ b.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
 
   def FnParam.print : FnParam → String
     | .mk m t => (if m then "mut " else "") ++ t.print

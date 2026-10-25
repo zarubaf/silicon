@@ -42,7 +42,8 @@ covers the forms of phase 4: a `mut` parameter of a function, and a receiver cal
 It covers the function types of phase 5, in a type and in an expression. It covers the enums,
 the variant paths, and the `match` expressions with their patterns of slice 3. The first name of
 a variant pattern is not `_`, because `_` starts the pattern `_`. It covers the builtins
-`@TypeOf` and `@field` of slice 4, also an `@field` selection of a place as a target.
+of slice 4 in an expression and in a type position, also an `@field` selection of a place as a
+target.
 -/
 namespace Silicon.Source
 
@@ -87,6 +88,7 @@ def TypeExpr.erase : TypeExpr → TypeExpr
   | .tuple _ ts => .tuple Pos.zero (ts.map TypeExpr.erase)
   | .array _ t n => .array Pos.zero t.erase n.erase
   | .fn _ ps r => .fn Pos.zero (ps.map FnParam.erase) r.erase
+  | .builtin _ b xs => .builtin Pos.zero b (xs.map Expr.erase)
 
 def FnParam.erase : FnParam → FnParam
   | .mk m t => .mk m t.erase
@@ -206,6 +208,7 @@ mutual
     | .tuple _ ts => !ts.isEmpty && TypeExpr.printableAll ts
     | .array _ t n => t.printable && n.printable
     | .fn _ ps r => FnParam.printableAll ps && r.printable
+    | .builtin _ b xs => b.operandsOk xs && Expr.printableAll xs
 
   def TypeExpr.printableAll : List TypeExpr → Bool
     | [] => true
@@ -333,7 +336,7 @@ theorem Expr.ind (motive : Expr → Prop)
     (fun p s arms ihs ih => case19 p s arms ihs fun q v h => ih _ h q v rfl) case20
     (fun _ _ ih _ _ h => by cases h; exact ih) (fun _ _ _ => trivial)
     (fun _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ => trivial) (fun _ _ _ => trivial)
-    (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) e
+    (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ _ _ _ => trivial) e
 
 theorem TypeExpr.ind (motive : TypeExpr → Prop)
     (case1 : ∀ pos n, motive (.name pos n))
@@ -342,7 +345,8 @@ theorem TypeExpr.ind (motive : TypeExpr → Prop)
     (case4 : ∀ pos ts, (∀ x ∈ ts, motive x) → motive (.tuple pos ts))
     (case5 : ∀ pos t n, motive t → motive (.array pos t n))
     (case6 : ∀ pos ps r, (∀ m t, FnParam.mk m t ∈ ps → motive t) → motive r →
-      motive (.fn pos ps r)) (t : TypeExpr) : motive t :=
+      motive (.fn pos ps r))
+    (case7 : ∀ pos b xs, motive (.builtin pos b xs)) (t : TypeExpr) : motive t :=
   TypeExpr.erase.induct (fun _ => True) (fun _ => True) (fun p => ∀ m t, p = .mk m t → motive t)
     motive
     (fun _ _ => trivial) (fun _ _ => trivial)
@@ -354,7 +358,8 @@ theorem TypeExpr.ind (motive : TypeExpr → Prop)
     (fun _ _ _ _ _ => trivial) (fun _ _ _ => trivial) (fun _ _ _ _ _ => trivial)
     (fun _ _ _ _ => trivial) (fun _ _ _ => trivial) (fun _ _ ih _ _ h => by cases h; exact ih)
     case1 (fun p b xs ih _ => case2 p b xs ih) case3 case4 (fun p t n ih _ => case5 p t n ih)
-    (fun p ps r ih ihr => case6 p ps r (fun m t h => ih _ h m t rfl) ihr) t
+    (fun p ps r ih ihr => case6 p ps r (fun m t h => ih _ h m t rfl) ihr)
+    (fun p b xs _ => case7 p b xs) t
 
 @[simp] theorem PortForm.map_map (f : α → β) (g : β → γ) (k : PortForm α) :
     (k.map f).map g = k.map (g ∘ f) := by
@@ -501,6 +506,11 @@ private theorem print_erase_all :
   case case23 | case25 | case27 =>
     intros
     simp_all [TypeExpr.erase, TypeExpr.print]
+  case case29 =>
+    intro p b xs ih
+    have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
+      List.map_congr_left fun x hx => ih x hx 0
+    simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm]
   all_goals
     intros
     simp only [Expr.erase]
@@ -670,6 +680,11 @@ private theorem printable_erase_all :
     intro p ts ih
     simp only [TypeExpr.erase, TypeExpr.printable, TypeExpr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
+    rw [all_congr_mem ih]
+  case case29 =>
+    intro p b xs ih
+    simp only [TypeExpr.erase, TypeExpr.printable, Builtin.operandsOk_erase,
+      Expr.printableAll_eq, List.all_map, Function.comp_def]
     rw [all_congr_mem ih]
   all_goals intros; simp_all [Expr.erase, Expr.printable, TypeExpr.erase, TypeExpr.printable]
 
