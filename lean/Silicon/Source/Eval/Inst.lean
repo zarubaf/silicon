@@ -402,14 +402,14 @@ def outputText (f : String) : String :=
     "input of the child"
 
 /-!
-The family of the child that the field `f` of the base `v` names, when `v` is an `Instance`
-handle (section 5.6). The interface of the child holds its families.
+The symbol of the family of the child that the field `f` of the base `v` names, when `v` is an
+`Instance` handle (section 5.6). The interface of the child holds its families.
 -/
-def childFamily (v : Val) (f : Ident) : Eval.M Bool := do
-  let .handle (.inst _ _ iface _) := v | return false
+def childFamily (v : Val) (f : Ident) : Eval.M (Option Nat) := do
+  let .handle (.inst _ _ iface _) := v | return none
   match (← read).field f.pos with
-  | some y => return iface.families.contains y
-  | none => return false
+  | some y => return if iface.families.contains y then some y else none
+  | none => return none
 
 /-! Records the `S018` data `x` at `p`. The first by position wins (section 6.2). -/
 def breach (p : Pos) (x : Breach) : Eval.M Unit :=

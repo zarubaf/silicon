@@ -156,7 +156,6 @@ theorem queryWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
   | q, [] => by rw [queryWalk.eq_def, queryWalk.eq_def]; follows
   | q, sel :: rest => by
     rw [queryWalk.eq_def, queryWalk.eq_def]
-    dsimp only
     follows [he, need_f, guardedBy_f, selectionKey_f, childPort_f, portFind_f, childFamily_f,
       queryKey_f he, queryStep_f, queryField_f, queryWalk_f he]
 termination_by _ sels => sels.length
