@@ -4027,4 +4027,118 @@ earlier binding there is `S016`, and so is a graph effect. Their texts name the 
   "a key of `@TypeOf` has no graph effect such as `diagnostic`; call `diagnostic` before " ++
     "`@TypeOf`, keep the result in a `let`, and use that name in the key"
 
+/-!
+`@typeInfo(T)` (section 9.3). Each of the 19 kind tags sets the fields of its kind. Each other
+field keeps its default: no fields, `Unit`, 0, 0, and no variants. `tiOut` is the serialization
+of the `TypeInfo` record, `fiOut` of a `FieldInfo`, and `viOut` of a `VariantInfo`.
+-/
+def tiOut (k : String) (fs : List String := []) (e : String := "unit") (l w : Nat := 0)
+    (vs : List String := []) : String :=
+  s!"(record (struct prelude TypeInfo ()) ((string \"{k}\") (list (struct prelude FieldInfo ()) " ++
+    s!"({" ".intercalate fs})) (type {e}) (int {l}) (int {w}) " ++
+    s!"(list (struct prelude VariantInfo ()) ({" ".intercalate vs}))))"
+def fiOut (x t : String) : String :=
+  s!"(record (struct prelude FieldInfo ()) ((string \"{x}\") (type {t})))"
+def viOut (x : String) (tag : Nat) (ps : List String) : String :=
+  s!"(record (struct prelude VariantInfo ()) ((string \"{x}\") (int {tag}) (list type " ++
+    s!"({" ".intercalate (ps.map (s!"(type {·})"))}))))"
+def tiSrc : String :=
+  "module C() {}\ntype T2 = (Bool, UInt[4]);\ntype U = ();\n" ++
+  "struct P { a: UInt[8], b: (Bool, UInt[4]) }\n" ++
+  "enum E: UInt[2] { A(UInt[3], Bool, Bool) = 0, B = 2 }\nenum F: UInt[1] { X = 0, Y = 1 }\n"
+
+-- The scalars: `Bool`, `UInt[W]`, and `SInt[W]` set `width`. The others keep each default.
+#guard out tiSrc "@typeInfo(Bool)" == tiOut "bool" (w := 1)
+#guard out tiSrc "@typeInfo(UInt[8])" == tiOut "uint" (w := 8)
+#guard out tiSrc "@typeInfo(SInt[5])" == tiOut "sint" (w := 5)
+#guard out tiSrc "@typeInfo(U)" == tiOut "unit"
+#guard out tiSrc "@typeInfo(Int)" == tiOut "int"
+#guard out tiSrc "@typeInfo(Nat)" == tiOut "nat"
+#guard out tiSrc "@typeInfo(String)" == tiOut "string"
+#guard out tiSrc "@typeInfo(Type)" == tiOut "type"
+#guard out tiSrc "@typeInfo(fn (mut Nat) -> Bool)" == tiOut "function"
+#guard out tiSrc "@typeInfo(Instance[C])" == tiOut "instance"
+-- An array sets `element` and `length`, and it has the `width` 0 as hardware data too.
+#guard out tiSrc "@typeInfo([Bool; 3])" == tiOut "array" (e := "bool") (l := 3)
+-- A tuple names its fields `0`, `1`, and so on. A record has its declared names.
+#guard out tiSrc "@typeInfo(T2)" ==
+  tiOut "tuple" [fiOut "0" "bool", fiOut "1" "(uint 4)"] (l := 2)
+#guard out tiSrc "@typeInfo(P)" ==
+  tiOut "record" [fiOut "a" "(uint 8)", fiOut "b" "(tuple (bool (uint 4)))"] (l := 2)
+-- A struct with parameters gives the field types of its specialization. A prelude struct is a
+-- `record` too.
+#guard out tiSrc "@typeInfo(ReadResponse[UInt[8]])" ==
+  tiOut "record" [fiOut "data" "(uint 8)", fiOut "valid" "bool"] (l := 2)
+-- `List[T]` and the handle types set `element`. A list has no length, and `Mem` has its depth.
+#guard out tiSrc "@typeInfo(List[Nat])" == tiOut "list" (e := "nat")
+#guard out tiSrc "@typeInfo(Reg[P])" == tiOut "reg" (e := "(struct root P ())")
+#guard out tiSrc "@typeInfo(Wire[Bool])" == tiOut "wire" (e := "bool")
+#guard out tiSrc "@typeInfo(Input[Bool])" == tiOut "input" (e := "bool")
+#guard out tiSrc "@typeInfo(Mem[UInt[8], 4])" == tiOut "mem" (e := "(uint 8)") (l := 4)
+-- An enum sets its tag type, its `data_bits`, and a `VariantInfo` for each variant in order,
+-- with and without payloads.
+#guard out tiSrc "@typeInfo(E)" == tiOut "enum" (e := "(uint 2)") (w := 7)
+  (vs := [viOut "A" 0 ["(uint 3)", "bool", "bool"], viOut "B" 2 []])
+#guard out tiSrc "@typeInfo(F)" ==
+  tiOut "enum" (e := "(uint 1)") (w := 1) (vs := [viOut "X" 0 [], viOut "Y" 1 []])
+
+/-!
+A value that is not a `Type` is `S010` "`@typeInfo` of a value" at the argument, and the text
+tells the user to bind it and use `@TypeOf`.
+-/
+#guard out "" "@typeInfo(3)" == "S010 1:11"
+#guard msg "" "@typeInfo(3)" == "`@typeInfo` takes a type, not a value of `Int`; bind the " ++
+  "value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+
+/-!
+The argument has the guard kind `arg`: a mutation of an earlier binding and a graph effect are
+`S016` with their own texts. A `diagnostic` keeps its own name, also in a callee. A key of a
+query operand in the argument keeps the kind `query`.
+-/
+def tiFns : String :=
+  "fn mu(mut x: Nat) -> Type { x = 1; return Bool; }\n" ++
+  "fn g() -> Type { diagnostic(\"a\", 0); return Bool; }\n"
+#guard msg (tiFns ++ "fn f() -> Nat { let mut n: Nat = 0; let t = @typeInfo(mu(n)); return 0; }")
+    "f()" ==
+  "an argument of `@typeInfo` cannot change `n`; change `n` before `@typeInfo`, keep the " ++
+    "result in a `let`, and use that name in the argument"
+#guard msg (tiFns ++ "fn f() -> Nat { let t = @typeInfo(g()); return 0; }") "f()" ==
+  "an argument of `@typeInfo` has no graph effect such as `diagnostic`; call `diagnostic` " ++
+    "before `@typeInfo`, keep the result in a `let`, and use that name in the argument"
+#guard msg ("fn f() -> Nat { let t = [1, 2]; " ++
+    "let y = @typeInfo(@TypeOf(t[diagnostic(\"a\", 0)])); return 0; }") "f()" ==
+  "a key of `@TypeOf` has no graph effect such as `diagnostic`; call `diagnostic` before " ++
+    "`@TypeOf`, keep the result in a `let`, and use that name in the key"
+
+/-!
+The charges (section 6.2, **`@typeInfo` order**). The node charges 1, then the argument, and
+then the first use of `TypeInfo` (82 units here). Then 1 for each field and variant charges, and
+then 1 for each payload type. The depth check comes next. Last, the size of the result charges:
+11 for `Bool`, 25 for `P`, and 26 for `E`.
+-/
+#guard exact tiSrc "@typeInfo(Bool)" (1 + cost tiSrc "Bool" + 82 + 11)
+#guard exact tiSrc "@typeInfo(P)" (1 + cost tiSrc "P" + 82 + 2 + 25)
+#guard exact tiSrc "@typeInfo(E)" (1 + cost tiSrc "E" + 82 + 2 + 3 + 26)
+-- `@typeInfo(E)` costs 170 units: the fields and variants at 139 to 141, the payload types at
+-- 141 to 144, the depth check, and the size at 144 to 170. Each charge fails on its own, in this
+-- order.
+#guard msg tiSrc "@typeInfo(E)" 140 5 == "the fuel cannot pay 2 unit(s); 1 remain; raise --fuel"
+#guard msg tiSrc "@typeInfo(E)" 143 5 == "the fuel cannot pay 3 unit(s); 2 remain; raise --fuel"
+#guard msg tiSrc "@typeInfo(E)" 144 5 ==
+  "the depth 6 goes above the nesting depth 5; raise --depth to at least 6"
+#guard msg tiSrc "@typeInfo(E)" 169 == "the fuel cannot pay 26 unit(s); 25 remain; raise --fuel"
+-- The depth of the result above the nesting depth is `S015` at the `@`.
+#guard out tiSrc "@typeInfo(Bool)" (depth := 5) == "S015 1:1"
+#guard (out tiSrc "@typeInfo(Bool)" (depth := 6)).startsWith "(record"
+
+/-!
+The first use of `TypeInfo` can run inside the specialization of another struct. A struct in
+progress as the argument is `S019` at the argument, before the use of `TypeInfo`.
+-/
+#guard out "struct S { a: [Bool; @typeInfo(Bool).width] }\n" "@typeInfo(S).fields" ==
+  s!"(list (struct prelude FieldInfo ()) ({fiOut "a" "(array bool 1)"}))"
+#guard out "struct S { a: [Bool; @typeInfo(S).length] }\n" "S()" == "S019 1:32"
+#guard msg "struct S { a: [Bool; @typeInfo(S).length] }\n" "S()" ==
+  "the specialization S is in progress"
+
 end Silicon.Source.Test.Eval

@@ -3792,6 +3792,36 @@ core name.
   names (tyMod "") "M" "M"
 
 /-!
+`@typeInfo` in a module (section 9.4). A place that is the whole argument reads no value. Thus a
+register and its field are the `S010` of the argument, with the fix that names `@TypeOf`. Each
+other node of the argument with a hardware value is `S011` "Value not static" at that node.
+Examples are a hardware condition, a hardware local, and a read at a typed use. A hardware key
+of a family selection in a query operand is this `S011` too. Without the argument, the same
+`@TypeOf` is "Family as a value". `@TypeOf` of a hardware place is valid.
+-/
+#guard tyRecords "  let t = @typeInfo(rg);\n" == ["S010 21:21"]
+#guard said (tyMod "  let t = @typeInfo(rg);\n") == "`@typeInfo` takes a type, not a handle " ++
+  "of `Reg[P]`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+#guard tyRecords "  let t = @typeInfo(rg.a);\n" == ["S010 21:21"]
+#guard said (tyMod "  let t = @typeInfo(rg.a);\n") == "`@typeInfo` takes a type, not a value " ++
+  "of `UInt[8]`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+#guard tyRecords "  let t = @typeInfo(if (rg.b.0) { Bool } else { Bool });\n" == ["S011 21:25"]
+#guard said (tyMod "  let t = @typeInfo(if (rg.b.0) { Bool } else { Bool });\n") ==
+  "a static position needs a static value, not a value of `(Bool, UInt[4])`; compute the " ++
+    "value from static values, for example from constants and `comptime` parameters"
+#guard tyRecords "  let h = s +% 1;\n  let t = @typeInfo(if (h == 0) { Bool } else { Bool });\n" ==
+  ["S011 22:25"]
+def tiFn : String := "fn tq(x: P) -> Type { return Bool; }\n"
+#guard tyRecords "  let t = @typeInfo(tq(rg));\n" tiFn == ["S011 22:21"]
+#guard tyRecords "  diagnostic(\"t\", @typeInfo(@TypeOf(rg)).kind);\n" ==
+  ["(string \"reg\")", "ok"]
+#guard tyRecords "  diagnostic(\"t\", @typeInfo(@TypeOf(rg.b)).length);\n" == ["(int 2)", "ok"]
+def tiKey (q : String) : String :=
+  s!"fn ek(x: Instance[C], k: UInt[8]) -> Type \{ return {q}; }\n"
+#guard tyRecords "  diagnostic(\"t\", ek(u, s));\n" (tiKey "@typeInfo(@TypeOf(x.e[k])).element") ==
+  ["S011 10:74"]
+
+/-!
 `@field` in a module (section 9.3). On an `Instance` handle, a `String` key and a scalar `PortKey`
 select a public port. This includes a port that a helper of the child declares with a computed name:
 its symbol is in the run-time table. An indexed `PortKey` selects an entry of a family. A register
