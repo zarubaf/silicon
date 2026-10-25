@@ -427,12 +427,16 @@ def pend (p : Pos) (x : String) (id : Nat) : M Unit := do
 def shut (id : Nat) : M Unit :=
   modify fun s => { s with pending := s.pending.insert id (s.pending.getD id 0 - 1) }
 
+/-! The text "Value not static" of section 6.2 for the value `v`. -/
+def notStaticText (v : Val) : String :=
+  s!"a static position needs a static value, not {v.about}; compute the value from static " ++
+    "values, for example from constants and `comptime` parameters"
+
 /-! The value of a static position at the node `pos`. Another value there is `S011`. -/
 def static (pos : Pos) : Val → M Value
   | .static v => pure v
   | .pending q _ => fail .S010 q "`[]` needs the type [T; 0] from its context"
-  | v => fail .S011 pos (s!"a static position needs a static value, not {v.about}; compute " ++
-    "the value from static values, for example from constants and `comptime` parameters")
+  | v => fail .S011 pos (notStaticText v)
 
 /-! A static condition. -/
 def test (pos : Pos) : Val → M Bool
