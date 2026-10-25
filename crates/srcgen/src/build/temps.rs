@@ -85,7 +85,7 @@ impl Builder {
     /// says so: mostly one, sometimes two, each joins the pool of the port tape.
     pub(super) fn temp_reads(&mut self, ctx: &mut Ctx, child: &Child) -> Built {
         self.on_temp(|b| {
-            if b.tape.below(2) == 0 {
+            if b.tape.below(3) != 0 {
                 return Ok(());
             }
             let reads = b.child_outputs(child);
@@ -93,7 +93,7 @@ impl Builder {
                 return Ok(());
             }
             // A second read in one of four.
-            let count = 1 + u32::from(b.tape.below(4) == 0);
+            let count = 1 + u32::from(b.tape.below(3) == 0);
             #[cfg(test)]
             let before = ctx.port.len();
             for _ in 0..count {
@@ -127,7 +127,7 @@ impl Builder {
             || !child.sig.enum_inputs.is_empty()
             || declared.iter().any(|d| d.dir == Dir::In);
         self.on_temp(|b| {
-            if !inputs || b.tape.below(4) != 0 {
+            if !inputs || b.tape.below(5) != 0 {
                 return Ok(None);
             }
             let pool = Self::container_pool(ctx, child);
