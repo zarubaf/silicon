@@ -25,7 +25,7 @@ The user accepted the recommended option of each question on 2026-10-25.
 ## Consequences
 
 - An `S016` in a builtin argument tells the user which builtin holds the argument, and how to move the effect out of it.
-- The rule of structural contexts stays one rule. The new kind adds two texts and no new check.
+- The rule of structural contexts stays one rule. The new kind adds two texts and one check: a node of the argument with a hardware value is `S011` "Value not static" at that node. A place that is the whole argument reads no value, so it keeps the `S010` of G3. Each key in it gets the check. The first `S011` or `S016` in the order of evaluation comes before the `S010` of the argument.
 - `@typeInfo(r)` of a register `r` gives a fix that names `@TypeOf`, not the general text of a static position.
 - A type position takes the same builtins as an expression, so a user does not bind a type with `const` first. The proof of `parse_print` must cover a builtin in a type.
 - The front-end spec records these points in decision row F31 and in sections 6.1, 6.2, 9.2, 9.3, and 9.4.
