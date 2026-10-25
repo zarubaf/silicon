@@ -35,6 +35,7 @@ mod observe;
 mod pack;
 mod place;
 mod record;
+mod reflect;
 mod store;
 mod string;
 mod target;
@@ -75,10 +76,10 @@ use crate::scan::{CallArgs, Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
 use crate::{Budget, Code, Error};
-use parse::ast::{BinOp, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
+use parse::ast::{BinOp, Builtin, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The result of an expression. Only `Made` is a new value. The others are references, so a
 /// binding of them is a copy.
@@ -227,13 +228,16 @@ struct Evaluator<'a> {
     /// The data type of each type with the handle flag that a read of a container made
     /// (`data_ty`).
     data_tys: BTreeMap<TyId, TyId>,
+    /// The `let` bindings without a type annotation. The type of such a slot comes from its
+    /// value, so `@TypeOf` does not take it as a declared type (section 9.3).
+    untyped: BTreeSet<DeclId>,
     /// The lengths of the types and the powers of ten that the records measured.
     lens: crate::serial::Cache,
 }
 
 /// The kind of a guard (section 9.4): a hardware arm or a structural context. A family key
-/// (`Key`), an index of a `:=` target (`Index`), and an `as` key (`Name`) are structural contexts
-/// with their own texts.
+/// (`Key`), an index of a `:=` target (`Index`), an `as` key (`Name`), and a key of the operand
+/// of the builtin `q` (`Query`) are structural contexts with their own texts.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuardKind {
     Arm,
@@ -241,6 +245,7 @@ pub(crate) enum GuardKind {
     Key,
     Index,
     Name,
+    Query(Builtin),
 }
 
 /// The innermost guard: its kind, the nesting depth at its start, and `callee`. The `callee` is
@@ -286,6 +291,11 @@ impl Guard {
                 "an `as` key cannot change `{x}`; change `{x}` before this statement, keep the \
                  result in a `let`, and use that name in the key"
             ),
+            GuardKind::Query(q) => format!(
+                "a key of `@{q}` cannot change `{x}`; change `{x}` before `@{q}`, keep the result \
+                 in a `let`, and use that name in the key",
+                q = q.name()
+            ),
         }
     }
 
@@ -310,6 +320,11 @@ impl Guard {
             GuardKind::Name => format!(
                 "an `as` key has no graph effect such as `{g}`; call `{g}` before this \
                  statement, keep the result in a `let`, and use that name in the key"
+            ),
+            GuardKind::Query(q) => format!(
+                "a key of `@{q}` has no graph effect such as `{g}`; call `{g}` before `@{q}`, \
+                 keep the result in a `let`, and use that name in the key",
+                q = q.name()
             ),
         }
     }
@@ -420,6 +435,7 @@ impl<'a> Evaluator<'a> {
             calls: Vec::new(),
             call: 0,
             domains: BTreeMap::new(),
+            untyped: BTreeSet::new(),
             data_tys: BTreeMap::new(),
             lens: crate::serial::Cache::default(),
         }
@@ -832,7 +848,6 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(v))))
     }
 
-    // TODO(#344): the arm of `Expr::Builtin` goes in steps 11 to 13.
     #[allow(clippy::too_many_lines)]
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
@@ -848,6 +863,12 @@ impl Evaluator<'_> {
             }
             Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
             Expr::Match { pos, scrut, arms } => self.match_expr(*pos, scrut, arms),
+            Expr::Builtin {
+                pos,
+                builtin: Builtin::TypeOf,
+                args,
+            } => self.type_of_builtin(*pos, args),
+            // TODO(#344): `@field` goes in steps 12 and 13.
             Expr::Builtin { pos, .. } => fail(
                 Code::S004,
                 *pos,
@@ -1338,6 +1359,9 @@ impl Evaluator<'_> {
             self.store.take(o)
         };
         let id = self.decl(name)?;
+        if t.is_none() {
+            self.untyped.insert(id);
+        }
         let x = self.named(pos, id, x)?;
         let ty = t.or_else(|| x.ty(&self.graph, &mut self.tys));
         self.bind(

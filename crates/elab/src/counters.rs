@@ -115,6 +115,9 @@ pub(crate) struct Counts {
     pub publics: u64,
     /// The bytes of a name that a look-up in the table of symbols hashes and compares.
     pub named: u64,
+    /// The steps that a `@TypeOf` took along a part, and the nodes of a static tuple whose type
+    /// it built.
+    pub queried: u64,
 }
 
 impl Counts {
@@ -168,6 +171,7 @@ impl Counts {
             read,
             publics,
             named,
+            queried,
         } = *self;
         [
             scanned,
@@ -216,6 +220,7 @@ impl Counts {
             read,
             publics,
             named,
+            queried,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -271,6 +276,7 @@ pub(crate) enum Count {
     Read,
     Publics,
     Named,
+    Queried,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -355,6 +361,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Read => &mut c.read,
             Count::Publics => &mut c.publics,
             Count::Named => &mut c.named,
+            Count::Queried => &mut c.queried,
         };
         *field += n;
     }

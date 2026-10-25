@@ -309,7 +309,7 @@ impl Evaluator<'_> {
 
     /// The number of the part that the evaluated step `key` takes from `base`, after its checks,
     /// and the declared type of the part when the step names a field (Lean `placeStep`).
-    fn step_at(&self, key: &Key<'_>, base: Seen<'_>) -> Res<(usize, Option<TyId>)> {
+    pub(super) fn step_at(&self, key: &Key<'_>, base: Seen<'_>) -> Res<(usize, Option<TyId>)> {
         match key {
             Key::Index(q, xp, i) => Ok((self.pick_at(*q, *xp, base, i)?, None)),
             Key::Select(q, r, index) => Ok((self.select_at(*q, *r, index, base)?, None)),
@@ -711,7 +711,7 @@ impl Evaluator<'_> {
     }
 
     /// The type of the part that the evaluated step `key` selects in a container of type `t`.
-    fn key_ty(&self, t: TyId, key: &Key<'_>) -> Option<TyId> {
+    pub(super) fn key_ty(&self, t: TyId, key: &Key<'_>) -> Option<TyId> {
         match key {
             Key::Index(_, _, Index::Number(k)) => self.part_ty(t, *k),
             Key::Index(..) => None,
@@ -1368,6 +1368,6 @@ impl Evaluator<'_> {
 }
 
 /// A selector in a message, with at most 256 bits of a large number.
-fn selector_text(index: &Nat) -> String {
+pub(super) fn selector_text(index: &Nat) -> String {
     Int::from_decimal(index.as_str()).map_or_else(|| index.as_str().to_owned(), |n| int_text(&n))
 }
