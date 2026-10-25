@@ -27,7 +27,6 @@ rust | S007 Arity of `read` | 314
 rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
 lean | S001 Query operand | 344
-rust | S001 Query operand | 344
 pin | S001 Query operand | 344
 lean | S010 `@typeInfo` of a value | 345
 rust | S010 `@typeInfo` of a value | 345
@@ -40,7 +39,6 @@ fix | S010 Port in a place | 344
 rust | S010 Port in a place | 344
 rust | S010 Query without a type | 344
 rust | S010 String index in a query | 344
-rust | S001 Not a builtin | 344
 rust | S010 Key of `@field` | 344
 rust | S010 Base of `@field` | 344
 rust | S010 No field | 344
@@ -338,3 +336,4 @@ unlisted | S021 the `match` has no arm {} | 354
 unlisted | S001 brackets nest deeper than {} levels; raise --syn | 354
 unlisted | S001 invalid character in string | 354
 unlisted | S022 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
+unlisted | S004 a builtin is not supported yet | 344
