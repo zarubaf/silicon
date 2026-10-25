@@ -75,7 +75,13 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
         | HExpr::Unit
         | HExpr::Entry(..)
         | HExpr::ChildEntry(..) => {}
-        HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => {
+        HExpr::Unary(_, a)
+        | HExpr::Resize(_, a)
+        | HExpr::Reinterpret(_, a)
+        | HExpr::Index(a, _)
+        | HExpr::Select(a, _)
+        | HExpr::Member(a, _)
+        | HExpr::Read(a) => {
             hexpr(root, a, callees, uses);
         }
         HExpr::Binary(_, a, b) => {
@@ -86,7 +92,6 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
             hexpr(root, addr, callees, uses);
             hexpr(root, en, callees, uses);
         }
-        HExpr::Index(a, _) | HExpr::Select(a, _) | HExpr::Read(a) => hexpr(root, a, callees, uses),
         HExpr::If(c, t, f) => {
             for x in [c, t, f] {
                 hexpr(root, x, callees, uses);

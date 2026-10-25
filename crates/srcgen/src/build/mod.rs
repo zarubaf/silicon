@@ -72,6 +72,7 @@ mod ports;
 mod record;
 mod stat;
 mod strings;
+mod temps;
 
 pub use lines::lines;
 
@@ -177,6 +178,7 @@ enum Lane {
     Side,
     Hand,
     Port,
+    Temp,
 }
 
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
@@ -526,6 +528,11 @@ struct Stats {
     second_loops: u32,
     child_binds: u32,
     child_reads: u32,
+    temp_reads: u32,
+    temp_tuples: u32,
+    temp_arrays: u32,
+    temp_records: u32,
+    temp_helpers: u32,
     as_strings: u32,
     as_core: u32,
     as_portkeys: u32,
@@ -555,6 +562,9 @@ struct Builder {
     /// of ports draw from it, so that a program without them is the program
     /// of the other tapes alone.
     port: Tape,
+    /// The same numbers from the end, mixed with a third constant. The reads
+    /// of a child through temporary containers draw from it.
+    temp: Tape,
     /// The tape that `on_side`, `on_hand`, or `on_port` has swapped into
     /// `tape`, if any.
     swapped: Option<Lane>,
@@ -572,6 +582,10 @@ struct Builder {
     res_helpers: Vec<handles::ResHelper>,
     /// The structs of handles that those helpers return.
     hstructs: Vec<StructDef>,
+    /// The structs and the helpers that hold a child in a temporary
+    /// container, from the temp tape.
+    temp_structs: Vec<temps::Temp<StructDef>>,
+    temp_helpers: Vec<temps::Temp<Item>>,
     /// The resources that handle forms declare so far, once for each env
     /// that runs the declaration.
     decls: usize,
@@ -635,6 +649,7 @@ impl Builder {
             Lane::Side => &mut self.side,
             Lane::Hand => &mut self.hand,
             Lane::Port => &mut self.port,
+            Lane::Temp => &mut self.temp,
         };
         std::mem::swap(&mut self.tape, parked);
     }
@@ -663,6 +678,17 @@ impl Builder {
                     .collect::<Vec<_>>()
                     .into_iter(),
             },
+            temp: Tape {
+                numbers: tape
+                    .iter()
+                    .rev()
+                    .map(|n| {
+                        let m = n.wrapping_mul(0x1656_67B1) ^ 0xC2B2_AE35;
+                        m ^ (m >> 13)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            },
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -677,6 +703,8 @@ impl Builder {
             helpers: Vec::new(),
             res_helpers: Vec::new(),
             hstructs: Vec::new(),
+            temp_structs: Vec::new(),
+            temp_helpers: Vec::new(),
             decls: 0,
             max_decls: handles::MAX_DECLS,
             called: BTreeSet::new(),
@@ -806,11 +834,14 @@ impl Builder {
                 body: body.clone(),
             })
         });
+        let (temp_structs, temp_helpers) = self.temp_items();
         self.file_items()
             .into_iter()
             .chain(self.hstructs.iter().cloned().map(Item::Struct))
+            .chain(temp_structs)
             .chain(helpers)
             .chain(res)
+            .chain(temp_helpers)
             .chain(self.port_helper_items())
             .chain(self.hw_value_items())
             .chain(modules)

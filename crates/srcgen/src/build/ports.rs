@@ -1151,6 +1151,8 @@ impl Builder {
                 *value = HExpr::Binary(op, Box::new(read), Box::new(old));
                 note!(b, port_reaches);
                 note!(b, child_reads, ctx.child_reads.contains(&i));
+                #[cfg(test)]
+                b.note_temp(&h.expr);
             }
         });
     }
