@@ -593,8 +593,8 @@ theorem selectAt_f (p q : Pos) (i : Nat) (v : Val) :
     Follows cap (selectAt p q i v) (selectAt p q i v) := by
   unfold selectAt; follows
 
-theorem noEnumField_f (p : Pos) (f : String) (v : Val) :
-    Follows cap (noEnumField p f v) (noEnumField p f v) := by
+theorem noEnumField_f (p : Pos) (f : String) (t : Option Ty) :
+    Follows cap (noEnumField p f t) (noEnumField p f t) := by
   unfold noEnumField; follows
 
 theorem selectKey_f (p q : Pos) (i : Nat) (v : Val) :
@@ -1020,14 +1020,22 @@ theorem portPart_f (p : Pos) (id : Nat) (path : Names.Path) (q : Port) :
     Follows cap (portPart p id path q) (portPart p id path q) := by
   unfold portPart; follows [readRef_f]
 
+theorem portFind_f (p : Pos) (i : Iface) (y : Option Nat) (n : String) :
+    Follows cap (portFind p i y n) (portFind p i y n) := by
+  unfold portFind; follows
+
 theorem portOf_f (p : Pos) (id : Nat) (path : Names.Path) (i : Iface) (y : Option Nat)
     (n : String) : Follows cap (portOf p id path i y n) (portOf p id path i y n) := by
-  unfold portOf; follows [portPart_f]
+  unfold portOf; follows [portFind_f, portPart_f]
+
+theorem childPort_f (kp : Pos) (i : Iface) (t : Ty) (y : Nat) (n : String) (key : Nat) :
+    Follows cap (childPort kp i t y n key) (childPort kp i t y n key) := by
+  unfold childPort; follows
 
 theorem childEntry_f (p kp : Pos) (id : Nat) (path : Names.Path) (i : Iface) (t : Ty) (y : Nat)
     (n : String) (key : Nat) :
     Follows cap (childEntry p kp id path i t y n key) (childEntry p kp id path i t y n key) := by
-  unfold childEntry; follows [portPart_f]
+  unfold childEntry; follows [childPort_f, portPart_f]
 
 theorem fieldPart_f (p : Pos) (o : Out) (f : Ident) :
     Follows cap (fieldPart p o f) (fieldPart p o f) := by

@@ -412,13 +412,13 @@ def selectAt (pos q : Pos) (i : Nat) : Val → M (Nat × Value)
   | v => fail .S010 pos s!"the selector `.{i}` needs a tuple, not {v.text}"
 
 /-!
-A field `.f` or a selector `.N` of an enum value at `pos` is `S010`. Section 6.2 gives the text.
-An enum has the leaves `tag` and `payload`, but no field (section 5.1). `f` is the field name or
-the number of the selector. The text names `data_bits` of the enum, the width of its metadata.
-Another value passes.
+A field `.f` or a selector `.N` at `pos` of a part of the type `t` is `S010` when `t` is an enum.
+Section 6.2 gives the text. An enum has the leaves `tag` and `payload`, but no field (section
+5.1). `f` is the field name or the number of the selector. The text names `data_bits` of the
+enum, the width of its metadata. Another type passes.
 -/
-def noEnumField (pos : Pos) (f : String) (v : Val) : M Unit := do
-  if let some t@(.enum ..) := v.ty? then
+def noEnumField (pos : Pos) (f : String) (t : Option Ty) : M Unit := do
+  if let some t@(.enum ..) := t then
     fail .S010 pos (s!"`{t.text}` is an enum and has no field `{f}`; read a payload with " ++
       s!"`match`, or the bits with `reinterpret(UInt[{t.info.width}], e)`")
 
@@ -428,7 +428,7 @@ to the element `<i>e`. The result is the number of the element and the element. 
 element (`noEnumField`).
 -/
 def selectKey (pos q : Pos) (i : Nat) (v : Val) : M (Nat × Val) := do
-  noEnumField pos (toString i) v
+  noEnumField pos (toString i) v.ty?
   match v with
   | v@(.agg (.tuple _ xs)) =>
     match xs[i]? with
@@ -749,7 +749,7 @@ gives a reference to the part with the leaf field `f`. The result is the number 
 its value, and its type. An enum has no field (`noEnumField`).
 -/
 def fieldKey (pos : Pos) (f : Ident) (v : Val) : M (Nat × Val × Ty) := do
-  noEnumField pos f.name v
+  noEnumField pos f.name v.ty?
   match v with
   | v@(.agg (.record n xs)) => do
     let (k, ft) ← fieldOf pos f n.ty v.text
