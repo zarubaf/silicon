@@ -1,0 +1,19 @@
+// T1 of the work-counter tests of `@typeInfo` (issue #345). A struct has N fields, and the module asks for its
+// `@typeInfo` 8 times. Each call charges 1 for each field, then the size of the result, and the walk reads the fifth
+// metadata number of each field type. A walk into the field types, or a recursive size of each field type, makes more
+// work than the charge pays for, and the work escapes the bound.
+// SCALE typeinfo_fields 16 32 64 128 256
+// TOP M()
+struct P {
+// REPEAT i {N}
+    f{i}: (UInt[8], (Bool, UInt[4])),
+// END
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+// REPEAT i 8
+    let t{i} = @typeInfo(P);
+// END
+    o := x;
+}

@@ -1,0 +1,12 @@
+// `@typeInfo` of a struct charges its node, the use of `TypeInfo`, 1 for each field, the depth check, and the size of the result. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 196
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: (Bool, UInt[4]),
+}
+module M() domains() {
+    output o: Bool;
+    let t = @typeInfo(P);
+    o := true;
+}
