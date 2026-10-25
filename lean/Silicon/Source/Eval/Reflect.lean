@@ -194,7 +194,7 @@ def queryTy (p : Pos) : Query → M Ty
   | .value v none =>
     match v.ty? with
     | some t => pure t
-    | none => fail .S010 p (s!"`@TypeOf` takes a part with a type, not {v.text}; pass a value, " ++
+    | none => fail .S010 p (s!"`@TypeOf` takes a part with a type, not {v.about}; pass a value, " ++
         "a port, or a resource")
 
 end Silicon.Source.Eval

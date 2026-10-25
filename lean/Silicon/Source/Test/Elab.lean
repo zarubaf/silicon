@@ -3676,6 +3676,10 @@ def tyWire : String := "(type (wire (struct root P ())))"
       "fn fw(x: Wire[P]) -> Type { return @TypeOf(x); }\n") ==
   [tyRegP, tyWire, tyRegP, tyWire, tyRegP, tyWire, "ok"]
 #guard elabUnits (tyMod "  let t = @TypeOf(w);\n") "M" == 260 + 2
+-- A domain has no type: "Query without a type" at the `@`, with the domain in the form `{a}`.
+#guard tyRecords (tyOf "clk") == ["S010 21:19"]
+#guard said (tyMod (tyOf "clk")) == "`@TypeOf` takes a part with a type, not the domain " ++
+  "`clk`; pass a value, a port, or a resource"
 -- A hardware local, a container of handles, and a tuple of a handle and a static value.
 #guard tyRecords ("  let h = s +% 1;\n  let rs = [rg, rg];\n  let x = (rg, 1);\n" ++
     String.join (["h", "rs", "rs[1]", "rs[1].a", "x", "x.0", "x.0.b.1", "x.1"].map tyOf)) ==
