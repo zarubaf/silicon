@@ -432,8 +432,9 @@ pub(crate) enum HExpr {
     Read(Box<HExpr>),
     /// An input entry `fam[key]` of a family of the module.
     Entry(String, SExpr),
-    /// An output entry `u.fam[key]` of a child.
-    ChildEntry(String, String, SExpr),
+    /// An output entry `base.fam[key]` of a child. The base is the child
+    /// itself, or a container of handles that holds it.
+    ChildEntry(Box<HExpr>, String, SExpr),
 }
 
 /// The target of `:=`.
@@ -1315,7 +1316,7 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
         HExpr::Select(b, k) => format!("{}.{k}", hexpr(b)),
         HExpr::Read(h) => format!("read({})", hexpr(h)),
         HExpr::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
-        HExpr::ChildEntry(u, fam, k) => format!("{u}.{fam}[{}]", sexpr(k)),
+        HExpr::ChildEntry(u, fam, k) => format!("{}.{fam}[{}]", hexpr(u), sexpr(k)),
     }
 }
 
@@ -1627,7 +1628,7 @@ module M1(comptime P0: Nat) domains() {
                     name: "l0".to_owned(),
                     mutable: false,
                     ty: None,
-                    value: HExpr::ChildEntry("u0".to_owned(), "z0".to_owned(), dec(3)),
+                    value: HExpr::ChildEntry(Box::new(hname("u0")), "z0".to_owned(), dec(3)),
                 },
                 Stmt::Let {
                     name: "l1".to_owned(),

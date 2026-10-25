@@ -1406,7 +1406,10 @@ impl<'a> Walk<'a> {
                 self.entry_key(k);
             }
             HExpr::ChildEntry(u, _, k) => {
-                self.rename(u);
+                match &mut **u {
+                    HExpr::Name(n) => self.rename(n),
+                    base => self.handle_expr(base),
+                }
                 self.entry_key(k);
             }
             HExpr::Tuple(_)

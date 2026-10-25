@@ -825,7 +825,9 @@ impl Writer<'_> {
                 panic!("a literal of handles reads as data: {e:?}")
             }
             HExpr::Entry(fam, k) => HExpr::Name(self.entry(fam, k, fr)),
-            HExpr::ChildEntry(u, fam, k) => HExpr::Field(fr.name(u), self.entry(fam, k, fr)),
+            HExpr::ChildEntry(u, fam, k) => {
+                HExpr::Field(self.instance_of(u, fr), self.entry(fam, k, fr))
+            }
         }
     }
 
@@ -889,6 +891,15 @@ impl Writer<'_> {
         match self.handle(e, fr) {
             HVal::Res(n) => HExpr::Name(n),
             _ => panic!("a read of the builder is on no register or wire: {e:?}"),
+        }
+    }
+
+    /// The twin name of the instance that `e` names: the instance itself,
+    /// or a container of handles that holds it.
+    fn instance_of(&self, e: &HExpr, fr: &Frame) -> String {
+        match self.handle(e, fr) {
+            HVal::Res(n) => n,
+            _ => panic!("a read of the builder is on no instance: {e:?}"),
         }
     }
 
