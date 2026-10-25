@@ -708,10 +708,9 @@ impl Evaluator<'_> {
 
     /// Before the key of `step` evaluates, gives each waiting key of `keyed` at the numbers
     /// `waiting` its own value if the key of `step` has a call, as Lean reads each key at its step.
-    /// Such a key is a name that its step paid, so its copy takes work within that charge, or a
-    /// number of one word. Another key fails its check at the walk, and the run stops there: the
-    /// result is false, and the caller applies the steps first. A step with a call empties
-    /// `waiting`.
+    /// The copy takes work within the charge of the key (`owns_within_charge`). Another key fails
+    /// its check at the walk, and the run stops there: the result is false, and the caller applies
+    /// the steps first. A step with a call empties `waiting`.
     fn own_waiting(
         &mut self,
         step: &Sel<'_>,
@@ -727,13 +726,27 @@ impl Evaluator<'_> {
             let Some(Key::Named(n)) = keyed.get_mut(at) else {
                 continue;
             };
-            if !n.paid && n.at.is_none() {
+            if !Self::owns_within_charge(n, self.store.value(&n.key)) {
                 return false;
             }
             let key = std::mem::replace(&mut n.key, Out::Made(Val::Static(Value::Unit)));
             n.key = Out::Made(self.store.take(key));
         }
         true
+    }
+
+    /// Whether a copy of the key `value` of the step `n` takes work within the charge of the key: a
+    /// number of one word, a name that its step paid, or a paid `PortKey` whose index has at most
+    /// 32 bits. Each other key fails its check at the walk.
+    fn owns_within_charge(n: &Named<'_>, value: &Value) -> bool {
+        match value {
+            Value::Int(_) => n.at.is_some(),
+            Value::Str(_) => n.paid,
+            Value::Record(_, fields) => {
+                n.paid && matches!(fields.as_slice(), [.., Value::Int(k)] if k.fits_unsigned(32))
+            }
+            _ => false,
+        }
     }
 
     /// Whether the key of the step can change a local of its frame while it evaluates: it holds a
