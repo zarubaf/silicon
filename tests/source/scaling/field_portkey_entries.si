@@ -1,0 +1,22 @@
+// T4 of the work-counter tests of `@field` (issue #344). A child has N input entries `req[i]`. The parent selects an entry
+// by the `PortKey` of its name N times N times. The name charges its size, and its symbol finds the entry in the interface
+// of the child. A scan of the entries for each use makes N more work for each use, and the work escapes the bound.
+// SCALE field_portkey_entries 4 8 16 32 64
+// TOP M()
+module C() {
+    comptime for i in 0..{N} {
+        input g: UInt[8] as PortKey("req", true, i);
+    }
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    comptime for j in 0..{N2} {
+        let h = @field(u, PortKey("req", true, j % {N}));
+    }
+    comptime for i in 0..{N} {
+        u.req[i] := x;
+    }
+    o := x;
+}
