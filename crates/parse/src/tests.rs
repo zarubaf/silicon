@@ -33,7 +33,6 @@ fn first_error_64(input: &str) -> Option<(Code, usize, usize)> {
 }
 
 /// An expression as a short S-expression, to compare shapes.
-#[allow(clippy::match_wildcard_for_single_variants)]
 fn sx(e: &Expr) -> String {
     let list = |xs: &[Expr]| xs.iter().map(sx).collect::<Vec<_>>().join(" ");
     match e {
@@ -72,11 +71,9 @@ fn sx(e: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
+        Expr::Builtin { builtin, args, .. } => format!("(@{} {})", builtin.name(), list(args)),
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
         Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
-        // The shape of a node that the parser does not make yet.
-        #[allow(unreachable_patterns)]
-        _ => "?".to_owned(),
     }
 }
 
@@ -505,8 +502,6 @@ fn later_slice_syntax_is_s004() {
         ("module M() domains(a, b) { }", 1, 23),
         ("module M(x: Nat) { }", 1, 10), // S001: a module parameter needs comptime
         ("fn f(x: a::T) -> T { }", 1, 10),
-        ("module M() { @TypeOf(x); }", 1, 14),
-        ("module M() { @field(x, \"f\") = 1; }", 1, 14),
         ("module M() { reg r: T in d = 0; }", 1, 23),
         ("module M() { wire w: T in d; }", 1, 24),
         ("module M() { instance u = A() with { }; }", 1, 31),
@@ -515,13 +510,11 @@ fn later_slice_syntax_is_s004() {
         ("const X: T = @Struct(T);", 1, 14),
         ("const X: T = @ports(M);", 1, 14),
         ("const X: T = a::b::c;", 1, 18),
-        ("const X: T = @TypeOf(x);", 1, 14),
         ("const X: @typeInfo(T) = f;", 1, 10),
         ("const X: @Struct(T) = f;", 1, 10),
         ("const X: @ports(M) = f;", 1, 10),
         ("const X: T::U = f;", 1, 11),
         ("const X: a::T = f;", 1, 11),
-        ("const X: T = @field(x, \"f\");", 1, 14),
         ("enum E(T): U {}", 1, 7),
     ];
     let wrong: Vec<_> = cases
@@ -742,7 +735,18 @@ fn a_height_error_loses_to_any_other_error() {
 
 #[test]
 fn deep_input_does_not_overflow_the_stack() {
-    for open in ["(", "-", "f(", "{", "a[", "if (", "module M() {"] {
+    for open in [
+        "(",
+        "-",
+        "f(",
+        "{",
+        "a[",
+        "if (",
+        "module M() {",
+        "@TypeOf(",
+        "@field(a, ",
+        "@field(",
+    ] {
         let input = open.repeat(100_000);
         let parsed = parse(&input);
         assert!(!parsed.errors.is_empty());
@@ -845,26 +849,33 @@ fn rules_of_the_lean_parser() {
             24,
         ),
         ("fn f(x: a::T) -> T { }", Code::S004, 1, 10),
-        // A builtin: S004 at the `@`, whatever its arguments are.
-        ("const X: T = @TypeOf(a.b, c);", Code::S004, 1, 14),
-        ("const X: T = @TypeOf(f(a, b), (c)), d);", Code::S004, 1, 14),
-        ("const X: T = @TypeOf(a, b", Code::S004, 1, 14),
+        // The arity of a builtin is S001 at its name, after all operands. A syntax error in an
+        // operand comes first.
+        ("const X: T = @TypeOf(a.b, c);", Code::S001, 1, 15),
+        ("const X: T = @TypeOf(f(a, b), (c)), d);", Code::S001, 1, 15),
+        ("const X: T = @TypeOf(a, b", Code::S001, 1, 26),
         ("const X: T = (a $ , b);", Code::S001, 1, 17),
-        ("const X: T = @field(a[1, 2], b);", Code::S004, 1, 14),
-        ("const X: T = (@TypeOf(a, b));", Code::S004, 1, 15),
-        // A target that starts with a builtin: S004 at the `@`.
-        ("module M() { @field(x, \"i\") = e; }", Code::S004, 1, 14),
-        ("module M() { @field(a.b, \"c\") := e; }", Code::S004, 1, 14),
-        ("module M() { @field(a, \"0\") = e; }", Code::S004, 1, 14),
-        ("module M() { @field(a, 0x1) = e; }", Code::S004, 1, 14),
-        ("module M() { @field(a, 1 +) = e; }", Code::S004, 1, 14),
-        (
-            "module M() { @field(a, if (c) { 1 } else { 2 }) = e; }",
-            Code::S004,
-            1,
-            14,
-        ),
-        ("module M() { @field(a, f(x)).b = e; }", Code::S004, 1, 14),
+        ("const X: T = (@TypeOf(a, b));", Code::S001, 1, 16),
+        ("const X: T = @TypeOf(a, $);", Code::S001, 1, 25),
+        ("const X: T = @TypeOf();", Code::S001, 1, 15),
+        ("const X: T = @field(a);", Code::S001, 1, 15),
+        ("const X: T = @field(a, b, c);", Code::S001, 1, 15),
+        ("module M() { @field(a, 1 +) = e; }", Code::S001, 1, 27),
+        // The operand of `@TypeOf` is a place, else S001 at its first token, also a `(`.
+        ("const X: T = @TypeOf(1);", Code::S001, 1, 22),
+        ("const X: T = @TypeOf(f(x));", Code::S001, 1, 22),
+        ("const X: T = @TypeOf(a + b);", Code::S001, 1, 22),
+        ("const X: T = @TypeOf((a + b));", Code::S001, 1, 22),
+        ("const X: T = @TypeOf(a.m(x));", Code::S001, 1, 22),
+        ("const X: T = @TypeOf(E::V);", Code::S001, 1, 22),
+        ("const X: T = @TypeOf(@TypeOf(a));", Code::S001, 1, 22),
+        ("const X: T = @TypeOf(@field(f(x), 0));", Code::S001, 1, 22),
+        // Another name after `@` is "Not a builtin" at the name.
+        ("const X: T = @x(y);", Code::S001, 1, 15),
+        ("module M() { @x(y); }", Code::S001, 1, 15),
+        // A builtin of a later phase is S004 at the `@`, whatever its arguments are.
+        ("const X: T = @typeInfo(a, b);", Code::S004, 1, 14),
+        ("module M() { @ports(u).a = 1; }", Code::S004, 1, 14),
         ("module M() { f(x)[0] = e; }", Code::S001, 1, 22),
         ("module M() { f(x) = e; }", Code::S001, 1, 19),
         // A third part of a path, also in parentheses: S004 at the second `::`.
@@ -898,6 +909,21 @@ fn rules_of_the_lean_parser() {
         "module M() { if (a) { 1 } else { 2 }; }",
         "module M() domains(a,) { }",
         "module M() { a.b = 1; a.b.c := 2; }",
+        "const X: T = @TypeOf(x);",
+        "const X: T = @TypeOf((a));",
+        "const X: T = @TypeOf((a).b[1].0);",
+        "const X: T = @TypeOf(@field(a, k));",
+        "const X: T = @field(a[1, 2], b);",
+        "const X: T = @field(f(x), 1 + 2);",
+        "const X: T = @field(@field(a, 0), \"f\").g[0] + 1;",
+        "module M() { @TypeOf(x); }",
+        "module M() { @field(x, \"i\") = e; }",
+        "module M() { @field(a.b, \"c\") := e; }",
+        "module M() { @field(a, \"0\") = e; }",
+        "module M() { @field(a, 0x1) = e; }",
+        "module M() { @field(a, if (c) { 1 } else { 2 }) = e; }",
+        "module M() { @field(a, f(x)).b = e; }",
+        "module M() { @field(a, 0)[1].0 = e; }",
     ] {
         assert_eq!(first_error(ok), None, "{ok}");
     }
@@ -2024,4 +2050,114 @@ fn a_deep_chain_of_function_types_drops_without_recursion() {
     let parsed = parse(&nested);
     assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
     drop(parsed);
+}
+
+#[test]
+fn builtins_are_primaries_with_their_operands() {
+    for (input, want) in [
+        ("@TypeOf(x)", "(@TypeOf x)"),
+        ("@TypeOf((x))", "(@TypeOf x)"),
+        (
+            "@TypeOf(a.b[1].0)",
+            "(@TypeOf (select (index (field a b) 1) 0))",
+        ),
+        ("@field(a, \"f\")", "(@field a \"f\")"),
+        ("@field(a, 1,)", "(@field a 1)"),
+        ("@field(a, k).g[0]", "(index (field (@field a k) g) 0)"),
+        ("1 + @TypeOf(x)", "(add 1 (@TypeOf x))"),
+        ("@field(f(x), g(y))", "(@field (call f x) (call g y))"),
+        ("@field(@field(a, 0), 1)", "(@field (@field a 0) 1)"),
+        ("@field(a, 0)(x)", "(call (@field a 0) x)"),
+    ] {
+        assert_eq!(shape(input), want, "{input}");
+    }
+}
+
+#[test]
+fn a_builtin_dumps_as_lean_prints_it() {
+    for (input, want) in [
+        ("@TypeOf(x)", "(builtin TypeOf ((name \"x\")))"),
+        (
+            "@field(a.b, \"c\")",
+            "(builtin field ((field (name \"a\") \"b\") (str \"c\")))",
+        ),
+    ] {
+        assert_eq!(expr_dump(input), want, "{input}");
+    }
+}
+
+#[test]
+fn the_text_of_a_builtin_error_equals_lean() {
+    let long = "x".repeat(70);
+    for (input, want) in [
+        (
+            "const X: T = @x(y);".to_owned(),
+            "`@x` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or `@ports`"
+                .to_owned(),
+        ),
+        (
+            format!("const X: T = @{long}(y);"),
+            format!(
+                "`@{}... (70 characters)` is not a builtin; use `@TypeOf`, `@typeInfo`, \
+                 `@Struct`, `@field`, or `@ports`",
+                "x".repeat(64)
+            ),
+        ),
+        (
+            "const X: @x(y) = 1;".to_owned(),
+            "`@x` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or `@ports`"
+                .to_owned(),
+        ),
+        (
+            "const X: T = @TypeOf(a, b);".to_owned(),
+            "`@TypeOf` takes 1 argument(s), but it has 2; write `@TypeOf(x)`".to_owned(),
+        ),
+        (
+            "const X: T = @field(a);".to_owned(),
+            "`@field` takes 2 argument(s), but it has 1; write `@field(x, k)`".to_owned(),
+        ),
+        (
+            "const X: T = @TypeOf(a + b);".to_owned(),
+            "`@TypeOf` takes a name or a selection of a name; bind the value with `let` and \
+             pass the name"
+                .to_owned(),
+        ),
+        (
+            "const X: T = @typeInfo(a);".to_owned(),
+            "a builtin is not supported yet".to_owned(),
+        ),
+    ] {
+        let errors = parse(&input).errors;
+        assert_eq!(
+            errors.first().map(|e| e.message.clone()),
+            Some(want),
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn a_deep_chain_of_builtins_dumps_and_drops() {
+    // Each `@field(` is a bracket and a level of the height, so the chain ends at the limit.
+    let n = DEFAULT_SYNTAX_DEPTH - 2;
+    let input = format!(
+        "module M() {{ {}a{} = 1; }}",
+        "@field(".repeat(n),
+        ", 0)".repeat(n)
+    );
+    let parsed = parse(&input);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    assert!(
+        parsed
+            .dump()
+            .unwrap()
+            .is_some_and(|d| d.contains("(builtin field"))
+    );
+    // One more level is above the limit: S001, never a stack overflow.
+    let over = format!(
+        "const X: T = {}a{};",
+        "@field(".repeat(DEFAULT_SYNTAX_DEPTH + 1),
+        ", 0)".repeat(DEFAULT_SYNTAX_DEPTH + 1)
+    );
+    assert_eq!(first_error(&over).map(|e| e.0), Some(Code::S001));
 }
