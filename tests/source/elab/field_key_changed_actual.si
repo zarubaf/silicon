@@ -1,0 +1,30 @@
+// A `mut` actual that selects with `@field` updates the part that the key named at its step, also when a later key with a call changes the local that holds the key.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 24 5 M () (string "index") (record (struct root S ()) ((array (uint 4) ((uint 4 9))) (array (uint 4) ((uint 4 2))))))
+// OBSERVE-NEXT: (record 28 5 M () (string "key") (record (struct root S ()) ((array (uint 4) ((uint 4 9))) (array (uint 4) ((uint 4 4))))))
+struct S {
+    a: [UInt[4]; 1],
+    b: [UInt[4]; 1],
+}
+fn change(mut k: String) -> Nat {
+    k = "b";
+    return 0;
+}
+fn h(mut w: UInt[4]) -> Nat {
+    w = 9;
+    return 0;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let mut k = "a";
+    let mut s = S([1], [2]);
+    let z = h(@field(s, k)[change(k)]);
+    diagnostic("index", s);
+    let mut j = "a";
+    let mut q = S([3], [4]);
+    let y = h(@field(@field(q, j), change(j)));
+    diagnostic("key", q);
+    o := x;
+}

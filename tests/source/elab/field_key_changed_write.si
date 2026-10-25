@@ -1,0 +1,30 @@
+// A key of `@field` that a local holds is read at its step. A later key with a call changes the local through a `mut` actual, and the write still goes to the field that the key named.
+// TOP M()
+// CHECK: (module M
+// OBSERVE: (record 24 5 M () (string "index") (record (struct root S ()) ((array (uint 4) ((uint 4 9))) (array (uint 4) ((uint 4 2))))))
+// OBSERVE-NEXT: (record 28 5 M () (string "key") (record (struct root S ()) ((array (uint 4) ((uint 4 7))) (array (uint 4) ((uint 4 4))))))
+struct S {
+    a: [UInt[4]; 1],
+    b: [UInt[4]; 1],
+}
+fn change(mut k: String) -> Nat {
+    k = "b";
+    return 0;
+}
+fn h(mut w: UInt[4]) -> Nat {
+    w = 9;
+    return 0;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let mut k = "a";
+    let mut s = S([1], [2]);
+    @field(s, k)[change(k)] = 9;
+    diagnostic("index", s);
+    let mut j = "a";
+    let mut q = S([3], [4]);
+    @field(@field(q, j), change(j)) = 7;
+    diagnostic("key", q);
+    o := x;
+}
