@@ -282,14 +282,34 @@ def Info.value (info : Info) (ti fi vi : Ty) : Value :=
       .record vi #[.str x, .int tag, .list .type (ps.map .type)])]
 
 /-!
+A value has only type leaves when it is a `Type`. A tuple or a non-empty array has them when its
+elements have them (section 6.2). The walk reads only the argument, which its evaluation
+charged, so it charges nothing.
+-/
+mutual
+  def typeLeaves : Value → Bool
+    | .type _ => true
+    | .tuple ⟨xs⟩ => typeLeavesAll xs
+    | .array _ ⟨x :: xs⟩ => typeLeavesAll (x :: xs)
+    | _ => false
+
+  def typeLeavesAll : List Value → Bool
+    | [] => true
+    | x :: xs => typeLeaves x && typeLeavesAll xs
+end
+
+/-!
 The fix `{h}` of "`@typeInfo` of a value" for the argument `v` (section 6.2). A domain has no
-type. A tuple of types names its tuple type. Each other value takes its type with `@TypeOf`.
+type. A tuple or an array with only type leaves names its type. Each other value takes its type
+with `@TypeOf`.
 -/
 def typeInfoHint : Val → String
-  | .handle (.domain _) => "a domain has no type"
-  | .static (.tuple xs) =>
-    if xs.all (· matches .type _) then
-      "name the tuple type with `type T = (A, B);` and use `@typeInfo(T)`"
+  | .handle (.domain _) => "a domain has no type, so remove the `@typeInfo`"
+  | .static v@(.tuple _) =>
+    if typeLeaves v then "name the tuple type with `type T = (A, B);` and use `@typeInfo(T)`"
+    else bindHint
+  | .static v@(.array ..) =>
+    if typeLeaves v then "name the array type with `type T = [A; N];` and use `@typeInfo(T)`"
     else bindHint
   | _ => bindHint
 where
