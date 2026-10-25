@@ -209,6 +209,7 @@ impl Ids {
         }
     }
 
+    #[allow(clippy::match_wildcard_for_single_variants)]
     fn expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Num { .. }
@@ -264,6 +265,9 @@ impl Ids {
                     self.expr(&arm.value);
                 }
             }
+            // A node of a later phase has no name of its own.
+            #[allow(unreachable_patterns, clippy::match_same_arms)]
+            _ => {}
         }
     }
 }
