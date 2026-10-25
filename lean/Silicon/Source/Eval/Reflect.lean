@@ -291,20 +291,39 @@ def typeInfoArg (pos : Pos) : Val → M Ty
       "`let x = ...;` and use `@typeInfo(@TypeOf(x))`")
 
 /-!
+The number of fields and the variants of the type `t` at the node `p`, as the type stores them
+(section 6.2, **`@typeInfo` order**, step 5). A tuple stores its elements, a struct the fields of
+its done entry, and an enum the variants of its done entry. No read walks a part.
+-/
+def counts (p : Pos) (t : Ty) : M (Nat × Array (Nat × Array Ty)) := do
+  match t with
+  | .tuple ts => return (ts.size, #[])
+  | .struct .. => do
+    let some fs := (← get).specs.parts t | fail .S010 p s!"{t.text} has no entry"
+    return (fs.size, #[])
+  | .enum i .. => do
+    let some (.done _ _ _ vs _) := (← get).specs.enums[i]?
+      | fail .S010 p s!"{t.text} has no entry"
+    return (0, vs)
+  | _ => return (0, #[])
+
+/-!
 `@typeInfo(t)` at the node `p`, after the use of `TypeInfo` gave `ti` (section 6.2, **`@typeInfo`
 order**, steps 5 to 8). The field types of `TypeInfo` give `FieldInfo` and `VariantInfo`. The
-call charges 1 for each field and for each variant. Then it adds the payload counts of the
-variants and charges 1 for each payload type. Then the result gets its depth check (`S015`), and
-its recursive size charges. This size counts each field type, each payload type, and each name as
-a string. Only then the record exists.
+call charges 1 for each field and for each variant (`counts`). Then it adds the payload counts of
+the variants and charges 1 for each payload type. Only then the parts of the record exist
+(`infoOf`). Then the result gets its depth check (`S015`), and its recursive size charges. This
+size counts each field type, each payload type, and each name as a string. Only then the record
+exists.
 -/
 def typeInfo (p : Pos) (ti t : Ty) : M Value := do
   let (some (_, Ty.list fi), some (_, Ty.list vi)) :=
       (((← get).specs.parts ti).bind (·[1]?), ((← get).specs.parts ti).bind (·[5]?))
     | fail .S010 p s!"{ti.text} has no entry"
+  let (f, vs) ← counts p t
+  charge p (f + vs.size)
+  charge p (vs.foldl (fun n (_, ps) => n + ps.size) 0)
   let info ← infoOf p t
-  charge p (info.fields.size + info.variants.size)
-  charge p (info.variants.foldl (fun n (_, _, ps) => n + ps.size) 0)
   let v := info.value ti fi vi
   bounded p v.depth
   charge p v.size
