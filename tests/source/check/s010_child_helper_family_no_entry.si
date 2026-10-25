@@ -12,6 +12,6 @@ module C() {
 module M() {
     instance u = C();
     // expected-error S010 @+2
-    // expected-message: the instance has no port `req`
+    // expected-message: `Instance[C]` has no public port `req`; select a port that `Instance[C]` declares
     let b = u.req;
 }

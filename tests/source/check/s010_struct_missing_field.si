@@ -5,6 +5,7 @@ struct P {
 }
 module M() domains() {
     let r = P(true);
-    // expected-error S010 @+1
+    // expected-error S010 @+2
+    // expected-message: `P` has no field `c`; select a field that `P` declares
     let b = r.c;
 }

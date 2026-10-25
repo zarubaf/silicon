@@ -1,0 +1,2 @@
+// A builtin parses as an operand of a binary operator.
+const A: T = 1 + @TypeOf(x);

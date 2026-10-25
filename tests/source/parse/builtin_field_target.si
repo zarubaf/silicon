@@ -1,0 +1,2 @@
+// `@field` parses as the base of an assignment target.
+module M() { @field(x, "f") = 1; }

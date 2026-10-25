@@ -1,0 +1,2 @@
+// A builtin call parses in an expression: `@TypeOf` takes the operand as a place.
+const A: T = @TypeOf(x);
