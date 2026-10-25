@@ -17,8 +17,8 @@ after a statement is never `else`, so a `comptime if` without `else` stops after
 The fuel is linear in the number of kinds, so a block needs no more than four units of fuel
 for each of its kinds.
 
-The proof is an induction on the number of kinds. A statement that starts with a name reads
-a postfix form. A place gives the flag `true`, and `=` or `:=` follows it. Another form starts
+The proof is an induction on the number of kinds. A statement that starts with a name or `@`
+reads a postfix form. A place gives the flag `true`, and `=` or `:=` follows it. Another form starts
 an expression statement.
 -/
 namespace Silicon.Source.ParsePrint
@@ -99,7 +99,7 @@ theorem EHead.ne_kw {k : Kind} (h : EHead k) {w : String}
   simp_all [EHead, PStart]
 
 theorem EHead.ne_sym {k : Kind} (h : EHead k) {s : String}
-    (hs : s ≠ "(" ∧ s ≠ "[" ∧ s ≠ "!" ∧ s ≠ "~" ∧ s ≠ "-") : k ≠ .symbol s := by
+    (hs : s ≠ "(" ∧ s ≠ "[" ∧ s ≠ "!" ∧ s ≠ "~" ∧ s ≠ "-" ∧ s ≠ "@") : k ≠ .symbol s := by
   rintro rfl
   simp_all [EHead, PStart]
 
@@ -708,9 +708,12 @@ theorem Runs.stmt_block (p : Pos) (b : List Stmt) (hB : BGoal b) : SGoal (.block
   refine Runs.bind (hB ctx i f _ hp hw (by omega) hd) fun b' hb' => Runs.pure ?_
   simp [Stmt.erase, hb']
 
-/-! A statement that starts with an expression and with no name: an expression statement. -/
+/-!
+A statement that starts with an expression, with no name, and with no `@`: an expression
+statement.
+-/
 theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Prop}
-    (hk : (tokenAt ctx.input i).kind = k) (hE : EHead k) (hn : ∀ n, k ≠ .ident n)
+    (hk : (tokenAt ctx.input i).kind = k) (hE : EHead k) (hn : ¬ PostHead k)
     (h : Runs (Parse.value f >>= fun e => sym ";" >>= fun _ =>
       Pure.pure (Stmt.expr (tokenAt ctx.input i).pos e)) ctx i l Q) :
     Runs (stmt (f + 1)) ctx i l Q := by
@@ -723,20 +726,21 @@ theorem Runs.stmt_fallback {ctx : Ctx} {i f l : Nat} {k : Kind} {Q : Stmt → Pr
     | exact h
     | exact absurd rfl (EHead.ne_kw hE (by decide))
     | exact absurd rfl (EHead.ne_sym hE (by decide))
-    | exact absurd rfl (hn _)
+    | exact absurd (Or.inl ⟨_, rfl⟩) hn
+    | exact absurd (Or.inr rfl) hn
 
-/-! A statement that starts with a name. -/
-theorem Runs.stmt_ident {ctx : Ctx} {i f j l : Nat} {n : String} {Q : Stmt → Prop}
-    {P' : Node × Bool → Prop} (hk : (tokenAt ctx.input i).kind = .ident n)
+/-! A statement that starts with a name or `@`. -/
+theorem Runs.stmt_ident {ctx : Ctx} {i f j l : Nat} {Q : Stmt → Prop}
+    {P' : Node × Bool → Prop} (hk : PostHead (tokenAt ctx.input i).kind)
     (hpost : Runs (postfixExpr f) ctx i j P')
     (hplace : ∀ e pl, P' (e, pl) → Runs (placeStmt f (tokenAt ctx.input i).pos e pl) ctx j l Q) :
     Runs (stmt (f + 1)) ctx i l Q := by
   rw [Parse.stmt]
   refine Runs.peek_bind ?_
-  simp only [hk]
-  refine Runs.bind hpost ?_
-  rintro ⟨e, pl⟩ h
-  exact hplace e pl h
+  rcases hk with ⟨n, hk⟩ | hk <;> simp only [hk] <;>
+  · refine Runs.bind hpost ?_
+    rintro ⟨e, pl⟩ h
+    exact hplace e pl h
 
 theorem Runs.stmt_expr (p : Pos) (v : Expr) : SGoal (.expr p v) := by
   intro ctx i f t R hp hw ht hf hd
@@ -749,11 +753,10 @@ theorem Runs.stmt_expr (p : Pos) (v : Expr) : SGoal (.expr p v) := by
   obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
   obtain ⟨k, hk, hek⟩ := Expr.headKind v 0
   have hk0 := hw.head' hk
-  by_cases hid : ∃ n, k = .ident n
-  · obtain ⟨n, rfl⟩ := hid
-    obtain ⟨T1, hT1, htok, hpost⟩ :=
-      Runs.postfix_climb v hp ⟨n, hk⟩ ctx i f _ (t :: R) hw After.semi (by omega)
-    refine Runs.stmt_ident hk0 hpost ?_
+  by_cases hid : PostHead k
+  · obtain ⟨T1, hT1, htok, hpost⟩ :=
+      Runs.postfix_climb v hp ⟨k, hk, hid⟩ ctx i f _ (t :: R) hw After.semi (by omega)
+    refine Runs.stmt_ident (hk0 ▸ hid) hpost ?_
     rintro e pl ⟨-, hclimb⟩
     rw [Parse.placeStmt]
     refine Runs.peek_bind ?_
@@ -767,7 +770,7 @@ theorem Runs.stmt_expr (p : Pos) (v : Expr) : SGoal (.expr p v) := by
     refine Runs.bind (Runs.checkHeight (by have := hn'.2; omega)) fun _ _ => ?_
     refine Runs.sym_bind hw.drop.head (Runs.pure ?_)
     simp [Stmt.erase, hn'.1]
-  · refine Runs.stmt_fallback hk0 hek (fun n h => hid ⟨n, h⟩) ?_
+  · refine Runs.stmt_fallback hk0 hek hid ?_
     refine Runs.bind (Runs.value v hp ctx i f _ _ hw After.semi (by omega) (by omega))
       fun v' hv' => ?_
     refine Runs.sym_bind hw.drop.head (Runs.pure ?_)
@@ -780,34 +783,39 @@ theorem Expr.toks_place {e : Expr} (h : e.place = true) (c : Nat) (hc : c ≤ 11
     e.toks c = e.toks 0 :=
   Expr.toks_noparen (by rw [Expr.place_level h]; omega)
 
-theorem Expr.place_head (e : Expr) : e.place = true → ∃ n, (e.toks 0).head? = some (.ident n) := by
+theorem Expr.place_head (e : Expr) :
+    e.place = true → ∃ k, (e.toks 0).head? = some k ∧ PostHead k := by
   induction e using Expr.ind with
-  | case4 p n => intro _; exact ⟨n, by simp [Expr.toks, Expr.level, postfixLevel]⟩
+  | case4 p n => intro _; exact ⟨.ident n, by simp [Expr.toks, Expr.level, postfixLevel],
+      Or.inl ⟨n, rfl⟩⟩
   | case10 p b m ihb =>
     intro h
     simp only [Expr.place] at h
-    obtain ⟨n, hn⟩ := ihb h
-    refine ⟨n, ?_⟩
+    obtain ⟨k, hn, hk⟩ := ihb h
+    refine ⟨k, ?_, hk⟩
     rw [← Expr.toks_place (e := .field p b m) (by simpa [Expr.place] using h) 11 (Nat.le_refl _),
       Expr.toks11_field, Expr.toks_place h 11 (Nat.le_refl _)]
     exact head?_append_of hn
   | case9 p b xs ihb _ =>
     intro h
     simp only [Expr.place] at h
-    obtain ⟨n, hn⟩ := ihb h
-    refine ⟨n, ?_⟩
+    obtain ⟨k, hn, hk⟩ := ihb h
+    refine ⟨k, ?_, hk⟩
     rw [← Expr.toks_place (e := .index p b xs) (by simpa [Expr.place] using h) 11
       (Nat.le_refl _), Expr.toks11_index, Expr.toks_place h 11 (Nat.le_refl _)]
     exact head?_append_of hn
   | case14 p b q k ihb =>
     intro h
     simp only [Expr.place] at h
-    obtain ⟨n, hn⟩ := ihb h
-    refine ⟨n, ?_⟩
+    obtain ⟨k', hn, hk⟩ := ihb h
+    refine ⟨k', ?_, hk⟩
     have h11 : (Expr.select p b q k).toks 0 = b.toks 11 ++ [.symbol ".", .number k] := by
       simp [Expr.toks, Expr.level, postfixLevel]
     rw [h11, Expr.toks_place h 11 (Nat.le_refl _)]
     exact head?_append_of hn
+  | case20 p b xs _ =>
+    intro _
+    exact ⟨.symbol "@", by simp [Expr.toks, Expr.level, postfixLevel], Or.inr rfl⟩
   | _ => intro h; simp [Expr.place] at h
 
 /-! An assignment or a connection: a place, `=` or `:=`, a value, and `;`. -/
@@ -820,7 +828,7 @@ theorem Runs.stmt_place {ctx : Ctx} {i f : Nat} {t : Kind} {R : List Kind} (p : 
     Runs (stmt (f + 1)) ctx i (i + ((tg.toks 0).length + (v.toks 0).length + 2))
       (fun s' => s'.erase =
         (if sy = "=" then Stmt.assign p tg v else Stmt.connect p tg v).erase) := by
-  obtain ⟨n, hn⟩ := Expr.place_head tg hpl
+  obtain ⟨k, hn, hpk⟩ := Expr.place_head tg hpl
   have hk0 := hw.head' hn
   have hsy' : (tokenAt ctx.input (i + (tg.toks 0).length)).kind = .symbol sy := hw.drop.head
   have h11 := Expr.toks_place hpl 11 (Nat.le_refl _)
@@ -828,7 +836,7 @@ theorem Runs.stmt_place {ctx : Ctx} {i f : Nat} {t : Kind} {R : List Kind} (p : 
     (by rw [h11]; exact hw) (by rcases hsy with rfl | rfl <;> decide)
     (by rcases hsy with rfl | rfl <;> decide) (by rw [h11]; omega)
   rw [h11] at hpost
-  refine Runs.stmt_ident hk0 hpost ?_
+  refine Runs.stmt_ident (hk0 ▸ hpk) hpost ?_
   rintro e pl ⟨hres, hpl'⟩
   simp only at hpl'
   subst pl

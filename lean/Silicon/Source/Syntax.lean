@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: Apache-2.0
 /-!
-The source AST of slices 1 to 3, its source positions, the error codes of the front end, and
+The source AST of slices 1 to 4, its source positions, the error codes of the front end, and
 the prelude type names.
 The AST dump prints each constructor name in lowercase, and the Rust front end uses the
 same names. Each node keeps the position of the first token of its form.
@@ -48,6 +48,32 @@ inductive Pattern where
   deriving Repr, BEq, Inhabited
 
 /-!
+A builtin of slice 4 (section 9.3): `@TypeOf` and `@field`. Each phase of section 14.4 adds the
+name of its builtin. `@typeInfo`, `@Struct`, and `@ports` are not yet names here.
+-/
+inductive Builtin where
+  | typeOf | field
+  deriving Repr, DecidableEq, BEq, Inhabited
+
+/-! The name of a builtin after `@`. -/
+def Builtin.name : Builtin → String
+  | .typeOf => "TypeOf" | .field => "field"
+
+/-! The builtin of a name after `@`, if the current phase has it. -/
+def Builtin.ofName : String → Option Builtin
+  | "TypeOf" => some .typeOf
+  | "field" => some .field
+  | _ => none
+
+/-! The number of operands of a builtin (section 5.6): 2 for `@field`, 1 for each other. -/
+def Builtin.arity : Builtin → Nat
+  | .typeOf => 1 | .field => 2
+
+/-! The form of a builtin in section 9.3, for the fix of "Builtin arity". -/
+def Builtin.form : Builtin → String
+  | .typeOf => "@TypeOf(x)" | .field => "@field(x, k)"
+
+/-!
 An expression and a type expression. The two are mutually recursive, because an array type
 `[T; N]` is also an expression (`arrayType`). Its element `T` is a type expression, and its
 length `N` is an expression.
@@ -57,7 +83,8 @@ element: `()` is `unit`. A `select` is the selector `.N` of a tuple. Its `litPos
 of the number literal, for `S013`. A `method` is the receiver call `recv.name(args)`. Its position
 is the position of the receiver, the start of the call. A `path` is a variant path `E::V` of
 two names (slice 3). A constructor `E::V(args)` is a `call` of a `path`. A `match` holds its
-scrutinee and its arms, and an `Arm` holds a pattern and its expression (slice 3).
+scrutinee and its arms, and an `Arm` holds a pattern and its expression (slice 3). A `builtin`
+is `@name(args)` at the position of its `@`, with the operands in source order (slice 4).
 
 A type expression is a type name, a type family with its static arguments, or the unit type
 `()`. It can also be a tuple type, an array type `[T; N]`, or a function type
@@ -86,6 +113,7 @@ mutual
     | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
     | path (pos : Pos) (ty variant : Ident)
     | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
+    | builtin (pos : Pos) (b : Builtin) (args : List Expr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -104,11 +132,24 @@ end
 
 deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
 
-/-! A place: a name, or a field, an index, or a selector of a place. -/
+/-!
+A place: a name, or a field, an index, a selector, or an `@field` selection of a place (section
+9.3). The base of `@field` is its first operand.
+-/
 def Expr.place : Expr → Bool
   | .name .. => true
   | .field _ b _ | .index _ b _ | .select _ b .. => b.place
+  | .builtin _ .field [b, _] => b.place
   | _ => false
+
+/-!
+The operands `xs` fit the builtin `b` (section 9.3): their number is the arity of `b`, and the
+operand of `@TypeOf` is a place.
+-/
+def Builtin.operandsOk (b : Builtin) (xs : List Expr) : Bool :=
+  xs.length == b.arity && match b with
+    | .typeOf => xs.all Expr.place
+    | .field => true
 
 /-!
 The name form of a port (section 5.6). A `scalar` port has a name only. An `indexed` port has its

@@ -3858,4 +3858,8 @@ def readText (a : String) : String :=
 #guard out "fn f() -> Int { let read = 3; return read; }" "f()" == "(int 3)"
 #guard out "fn f(read: Int) -> Int { return read; }" "f(4)" == "(int 4)"
 
+/-! The builtins evaluate in a later step of #344. Until then, each is `S004` at its `@`. -/
+#guard out "const C: Nat = 1;" "@TypeOf(C)" == "S004 1:1"
+#guard out "const C: (Nat,) = (1,);" "1 + @field(C, 0)" == "S004 1:5"
+
 end Silicon.Source.Test.Eval

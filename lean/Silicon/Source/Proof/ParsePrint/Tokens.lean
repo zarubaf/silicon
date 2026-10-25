@@ -69,6 +69,9 @@ mutual
       | .«match» _ s arms =>
         [.keyword "match", .symbol "("] ++ s.toks 0 ++ [.symbol ")", .symbol "{"]
           ++ (arms.map Arm.toks).flatten ++ [.symbol "}"]
+      | .builtin _ b xs =>
+        [.symbol "@", .ident b.name, .symbol "("] ++ argToks (xs.map (Expr.toks 0)) ++
+          [.symbol ")"]
     if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
 
   def TypeExpr.toks : TypeExpr → List Kind

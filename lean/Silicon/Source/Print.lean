@@ -15,6 +15,8 @@ The Rust front end copies the dump byte for byte, so these rules fix each byte:
   `(variant <name> <payload> <tag>)`. A `FnParam` prints as `(fnparam <mutable> <ty>)`. An
   `Arm` prints as `(arm <pat> <value>)`.
 - A `ParamMode` prints as its constructor name: `none`, `comptime`, or `mut`.
+- A `Builtin` prints as its name after `@`, for example `TypeOf` or `field`. A `builtin` node
+  prints as `(builtin <name> <args>)`.
 - A `pos` field does not print. An `Ident` prints as its name, as a string.
 - A `String` prints in double quotes. It escapes `"`, `\`, LF, CR, and tab as `\"`, `\\`,
   `\n`, `\r`, and `\t`, the escapes of the grammar. Each other character prints as itself.
@@ -122,6 +124,7 @@ mutual
     | .fnType _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fntype (") ps ++ ") ") ++ ")"
     | .path _ t v => acc ++ "(path " ++ ident t ++ " " ++ ident v ++ ")"
     | .«match» _ s arms => Arm.dumpsTo (s.dumpTo (acc ++ "(match ") ++ " (") arms ++ "))"
+    | .builtin _ b xs => Expr.dumpsTo (acc ++ "(builtin " ++ b.name ++ " (") xs ++ "))"
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -263,6 +266,8 @@ variant without payload types prints without parentheses. A variant path `E::V` 
 
 A `match` has the level of `if`. It prints on one line, and each arm ends with `,`. A variant
 pattern without binders prints without parentheses. A binder `none` prints as `_`.
+
+A builtin `@name(args)` is a primary.
 -/
 
 def BinOp.text : BinOp → String
@@ -337,6 +342,7 @@ mutual
       | .path _ t v => t.name ++ "::" ++ v.name
       | .«match» _ s arms =>
         "match (" ++ s.print 0 ++ ") {" ++ armsText (arms.map Arm.print) ++ " }"
+      | .builtin _ b xs => "@" ++ b.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
     if e.level < ctx then "(" ++ text ++ ")" else text
 
   def TypeExpr.print : TypeExpr → String

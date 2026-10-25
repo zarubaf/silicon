@@ -404,7 +404,7 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard fails "fn f() -> a::T {}" .S004 1 12
 #guard fails "fn f() -> T::U {}" .S004 1 12
 #guard fails "fn f() -> @TypeOf(x) {}" .S004 1 11
-#guard stFails "@TypeOf(x);" .S004 1
+#guard st "@TypeOf(x);" == "(expr (builtin TypeOf ((name \"x\"))))"
 #guard stFails "@typeInfo(T);" .S004 1
 #guard stFails "reg r: T in d = 0;" .S004 10
 #guard stFails "wire w: T in d;" .S004 11
@@ -413,8 +413,10 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard stFails "input i[0]: T in d;" .S004 15
 #guard stFails "instance u = M() with { clock = d };" .S004 18
 #guard stFails "instance u = p::M();" .S004 15
-#guard stFails "@field(a, \"i\") = 1;" .S004 1
-#guard stFails "@field(a.b, \"c\") := 1;" .S004 1
+#guard st "@field(a, \"i\") = 1;" ==
+  "(assign (builtin field ((name \"a\") (str \"i\"))) (num 1))"
+#guard st "@field(a.b, \"c\") := 1;" ==
+  "(connect (builtin field ((field (name \"a\") \"b\") (str \"c\"))) (num 1))"
 
 /-! The message of the error of `s`, or the empty string. -/
 def message (s : String) : String :=
@@ -564,17 +566,16 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard (parseSource defaultSyntaxDepth (ctBody "wire w: Bool;\nreturn 1;")).toBool
 #guard (parseSource defaultSyntaxDepth "module M() {\nwire w: Bool;\n}").toBool
 #guard (parseSource defaultSyntaxDepth "module M() {\nmem m: [Bool; 4];\n}").toBool
-#guard stFails "@field(a, \"0\") = 1;" .S004 1
-#guard stFails "@field(a, b) = 1;" .S004 1
-#guard stFails "@field(x, \"f\") = 1;" .S004 1
+#guard st "@field(a, 0) = 1;" == "(assign (builtin field ((name \"a\") (num 0))) (num 1))"
+#guard st "@field(a, b) = 1;" == "(assign (builtin field ((name \"a\") (name \"b\"))) (num 1))"
 #guard ex "@typeInfo(a, b)" == "error S004 1:14"
-#guard ex "@TypeOf(a.b, c)" == "error S004 1:14"
+#guard ex "@TypeOf(a.b, c)" == "error S001 1:15"
 #guard ex "(f(a, b))" == "(call (name \"f\") ((name \"a\") (name \"b\")))"
 #guard ex "@Struct(T)" == "error S004 1:14"
 #guard ex "@ports(M)" == "error S004 1:14"
-#guard ex "@field(x, \"f\")" == "error S004 1:14"
-#guard ex "@TypeOf(x)" == "error S004 1:14"
-#guard ex "@TypeOf(f(a, b), (c)), d)" == "error S004 1:14"
+#guard ex "@field(x, \"f\")" == "(builtin field ((name \"x\") (str \"f\")))"
+#guard ex "@TypeOf(x)" == "(builtin TypeOf ((name \"x\")))"
+#guard ex "@TypeOf(f(a, b), (c)), d)" == "error S001 1:15"
 
 /-!
 A struct, with and without parameters, and a `type` alias at an item and at a statement. A
@@ -680,7 +681,7 @@ name, and with `mut` it is `S001` at `mut`, as at a module.
 #guard fails "import x $" .S004 1 1
 #guard fails "pub \"open" .S004 1 1
 #guard fails "const N: T = $; import x;" .S001 1 14
-#guard ex "@TypeOf(a, $)" == "error S004 1:14"
+#guard ex "@typeInfo(a, $)" == "error S004 1:14"
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
@@ -938,5 +939,127 @@ def pv (ty w : String) (bs : List (Option String)) : Pattern :=
 #guard constRoundtrip (bin .add (mat (v "x") [(.wild p, n 1)]) (.unary p .neg (mat (v "y") [])))
 #guard constRoundtrip (.field p (mat (v "x") [(.wild p, .cond p (v "c") (n 1) (n 2))]) (nm "f"))
 #guard fnRoundtrip [.expr p (mat (v "x") [(.wild p, n 0)]), .ret p (some (mat (n 1) []))]
+
+/-!
+The builtins `@TypeOf` and `@field` (section 9.3). A builtin is a primary at its `@`. The operand
+of `@TypeOf` is a place: a name, parentheses, a field, a selector, an index, or an `@field`
+selection of a place, at any depth.
+-/
+#guard ex "@TypeOf((x))" == "(builtin TypeOf ((name \"x\")))"
+#guard ex "@TypeOf(x.f)" == "(builtin TypeOf ((field (name \"x\") \"f\")))"
+#guard ex "@TypeOf(t.0)" == "(builtin TypeOf ((select (name \"t\") 0)))"
+#guard ex "@TypeOf(xs[i + 1])" ==
+  "(builtin TypeOf ((index (name \"xs\") ((binary add (name \"i\") (num 1))))))"
+#guard ex "@TypeOf(@field(x, \"a\"))" ==
+  "(builtin TypeOf ((builtin field ((name \"x\") (str \"a\")))))"
+#guard ex "@TypeOf((@field((x).f, k)[0]).1)" ==
+  "(builtin TypeOf ((select (index (builtin field ((field (name \"x\") \"f\") (name \"k\"))) " ++
+  "((num 0))) 1)))"
+#guard ex "@TypeOf(UInt[8])" == "(builtin TypeOf ((index (name \"UInt\") ((num 8)))))"
+#guard ex "@field(f(x), 0)" == "(builtin field ((call (name \"f\") ((name \"x\"))) (num 0)))"
+#guard ex "@field(x, 0).a + 1" ==
+  "(binary add (field (builtin field ((name \"x\") (num 0))) \"a\") (num 1))"
+#guard ex "f(@TypeOf(x))" == "(call (name \"f\") ((builtin TypeOf ((name \"x\")))))"
+#guard ex "x[@TypeOf(y)]" == "(index (name \"x\") ((builtin TypeOf ((name \"y\")))))"
+#guard ex "-@TypeOf(x)" == "(unary neg (builtin TypeOf ((name \"x\"))))"
+#guard ex "@ field (x, 0,)" == "(builtin field ((name \"x\") (num 0)))"
+#guard match constValue "@TypeOf(x)" with
+  | .ok (.builtin q .typeOf [.name r "x"]) => q == ⟨1, 14⟩ && r == ⟨1, 22⟩
+  | _ => false
+
+/-! Each other form of the operand of `@TypeOf` is `S001` "Query operand" at its first token. -/
+#guard ex "@TypeOf(f(x))" == "error S001 1:22"
+#guard ex "@TypeOf(1)" == "error S001 1:22"
+#guard ex "@TypeOf(\"s\")" == "error S001 1:22"
+#guard ex "@TypeOf(a + b)" == "error S001 1:22"
+#guard ex "@TypeOf((a + b))" == "error S001 1:22"
+#guard ex "@TypeOf(x.m())" == "error S001 1:22"
+#guard ex "@TypeOf(x.m().f)" == "error S001 1:22"
+#guard ex "@TypeOf(E::V)" == "error S001 1:22"
+#guard ex "@TypeOf(-x)" == "error S001 1:22"
+#guard ex "@TypeOf((x,))" == "error S001 1:22"
+#guard ex "@TypeOf([x])" == "error S001 1:22"
+#guard ex "@TypeOf(@TypeOf(x))" == "error S001 1:22"
+#guard ex "@TypeOf(@field(f(x), 0))" == "error S001 1:22"
+#guard ex "@TypeOf(a.b[@TypeOf(c + d)])" == "error S001 1:34"
+#guard message "const X: T = @TypeOf((a + b));" ==
+  "`@TypeOf` takes a name or a selection of a name; bind the value with `let` and pass the name"
+
+/-!
+A builtin has the number of operands of its name, else `S001` "Builtin arity" at the name after
+`@`. The parser reads the operands first, so an error in an operand wins.
+-/
+#guard ex "@TypeOf()" == "error S001 1:15"
+#guard ex "@TypeOf(1, 2)" == "error S001 1:15"
+#guard ex "@field(x)" == "error S001 1:15"
+#guard ex "@field(x, 0, 1)" == "error S001 1:15"
+#guard ex "@ field()" == "error S001 1:16"
+#guard ex "@TypeOf(a, $)" == "error S001 1:25"
+#guard message "const X: T = @field(x);" ==
+  "`@field` takes 2 argument(s), but it has 1; write `@field(x, k)`"
+#guard message "const X: T = @TypeOf(a, b);" ==
+  "`@TypeOf` takes 1 argument(s), but it has 2; write `@TypeOf(x)`"
+#guard message "const X: T = @TypeOf();" ==
+  "`@TypeOf` takes 1 argument(s), but it has 0; write `@TypeOf(x)`"
+
+/-!
+Another name after `@` is `S001` "Not a builtin" at the name, in an expression and in a type. The
+name has the limit of a string in a message (section 5.5).
+-/
+#guard message "const X: T = @foo(1);" ==
+  "`@foo` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or `@ports`"
+#guard ex "@typeof(x)" == "error S001 1:15"
+#guard fails "fn f() -> @foo {}" .S001 1 12
+#guard message "fn f() -> @Field {}" ==
+  "`@Field` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or `@ports`"
+#guard message ("const X: T = @" ++ "".pushn 'a' 100 ++ ";") ==
+  "`@" ++ "".pushn 'a' 64 ++ "... (100 characters)` is not a builtin; use `@TypeOf`, " ++
+  "`@typeInfo`, `@Struct`, `@field`, or `@ports`"
+#guard ex "@1" == "error S001 1:15"
+
+/-!
+`@typeInfo`, `@Struct`, and `@ports` stay `S004` at the `@` (#345, #346). So does each builtin in
+a type position (#345).
+-/
+#guard ex "@typeInfo(T)" == "error S004 1:14"
+#guard ex "@Struct(fs)" == "error S004 1:14"
+#guard ex "@ports(u)" == "error S004 1:14"
+#guard ex "@TypeOf(@ports(u))" == "error S004 1:22"
+#guard stFails "let y: @TypeOf(x) = x;" .S004 8
+#guard stFails "let y: [@field(x, 0); 2] = x;" .S004 9
+#guard stFails "@typeInfo(T) = 1;" .S004 1
+#guard message "const X: T = @ports(u);" == "a builtin is not supported yet"
+#guard message "const X: @TypeOf(y) = 1;" == "a builtin is not supported yet"
+
+/-!
+An `@field` selection of a place is a place: it is a target, and a statement starts with it.
+Another builtin is no target.
+-/
+#guard st "@field(@field(u, \"a\"), 1) := 1;" ==
+  "(connect (builtin field ((builtin field ((name \"u\") (str \"a\"))) (num 1))) (num 1))"
+#guard st "@field(x, 0).f[1] = 2;" ==
+  "(assign (index (field (builtin field ((name \"x\") (num 0))) \"f\") ((num 1))) (num 2))"
+#guard st "@field(x, 0);" == "(expr (builtin field ((name \"x\") (num 0))))"
+#guard st "@field(x, 0).m(1);" ==
+  "(expr (method (builtin field ((name \"x\") (num 0))) \"m\" ((num 1))))"
+#guard st "@TypeOf(x) == T;" ==
+  "(expr (binary eq (builtin TypeOf ((name \"x\"))) (name \"T\")))"
+#guard stFails "@field(f(x), 0) = 1;" .S001 17
+#guard stFails "@TypeOf(x) = 1;" .S001 12
+#guard stFails "@field(x, 0).m() = 1;" .S001 18
+
+/-! The parser reads the printed text of each form back to the same AST. -/
+def bi (b : Builtin) (xs : List Expr) : Expr := .builtin p b xs
+#guard [bi .typeOf [v "x"], bi .typeOf [.field p (v "x") (nm "f")],
+    bi .typeOf [.select p (v "t") p 1], bi .typeOf [.index p (v "xs") [bin .add (v "i") (n 1)]],
+    bi .typeOf [.select p (bi .field [.field p (v "x") (nm "f"), .str p "a"]) p 0],
+    bi .typeOf [.index p (v "UInt") [n 8]], bi .field [.call p (v "f") [], n 0],
+    .field p (bi .field [v "x", n 0]) (nm "a"), bin .add (bi .typeOf [v "x"]) (n 1),
+    .call p (bi .field [v "x", n 0]) [n 1], .method p (bi .field [v "x", n 0]) (nm "m") [],
+    .unary p .neg (bi .typeOf [v "x"]),
+    .index p (v "x") [bi .typeOf [bi .field [v "y", bi .typeOf [v "z"]]]]].all constRoundtrip
+#guard fnRoundtrip [.assign p (bi .field [v "x", n 0]) (n 1),
+  .connect p (.field p (bi .field [.field p (v "u") (nm "a"), n 0]) (nm "b")) (n 1),
+  .expr p (bi .typeOf [v "x"]), .expr p (bin .eq (bi .field [v "x", n 0]) (n 1))]
 
 end Silicon.Source.Test.Parse

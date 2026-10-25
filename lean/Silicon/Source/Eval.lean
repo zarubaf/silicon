@@ -2626,6 +2626,8 @@ mutual
         let t ← enumUse n p i
         let vs ← operands n xs fun _ o => pure o.value
         return some ⟨← variantOf p t j vs, false, none⟩
+      -- TODO(#344): evaluate `@TypeOf` and `@field` (section 9.3).
+      | .builtin p .. => fail .S004 p "a builtin is not supported yet"
       | .«match» p x as => do
         let v ← data x.pos (← need x (← eval n x)).value
         let t ← scrutTy x.pos v
@@ -3267,6 +3269,7 @@ mutual
     | .«match» _ x as => do
       scanExpr x
       for a in as do scanArm a
+    | .builtin _ _ xs => for x in xs do scanExpr x
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
   def scanArm : Resolve.Arm → ScanM Unit

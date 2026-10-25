@@ -42,6 +42,8 @@ The proof is an induction on the number of kinds. These parts of the parser need
 - `unary` at `fn`: a function type in an expression is a unary operand.
 - `primary` at a name: a `::` after the name starts a variant path, and `Runs.primary_path`
   reads it. No `::` follows the second name.
+- `primary` at `@`: `Runs.primary_builtin` reads the name and the operands of a builtin. Its
+  checks pass, because `Printable` holds `Builtin.operandsOk`, and the erasure keeps a place.
 - `expr` at `match`: `Runs.arms` reads the arms up to the `}`, and `Runs.pattern` reads each
   pattern with its `=>`. A variant pattern prints its binders only if it has one, and
   `Runs.binders` reads them up to their `)`.
@@ -496,6 +498,57 @@ theorem argToks_mem {xs : List Expr} {y : Expr} (hy : y ∈ xs) :
     rcases hy with rfl | hy
     · omega
     · have := commaToks_mem hy; omega
+
+/-! The checks of a builtin pass on operands that fit it. -/
+theorem Runs.builtinCheck {ctx : Ctx} {i : Nat} {u : Token} {b : Builtin} {o : Pos}
+    {ys : List Expr} (h : b.operandsOk ys = true) :
+    Runs (Parse.builtinCheck u b o ys) ctx i i (fun _ => True) := by
+  have h1 : (ys.length != b.arity) = false := by
+    simp only [Builtin.operandsOk, Bool.and_eq_true, beq_iff_eq] at h
+    simp [h.1]
+  unfold Parse.builtinCheck
+  simp only [h1, h, Bool.false_eq_true, ite_false]
+  intro _
+  exact ⟨(), rfl, trivial⟩
+
+/-!
+A builtin `@name(args)`: the parser reads `@`, the name, and the operands up to `)`, then it
+checks them.
+-/
+theorem Runs.primary_builtin {p : Pos} {b : Builtin} {xs : List Expr}
+    (hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true) (hok : b.operandsOk xs = true) {ctx : Ctx}
+    {i f : Nat} {R : List Kind}
+    (hw : Win ctx.input i (.symbol "@" :: .ident b.name :: .symbol "(" ::
+      (argToks (xs.map (Expr.toks 0)) ++ .symbol ")" :: R)))
+    (hf : 4 * (argToks (xs.map (Expr.toks 0))).length + 3 ≤ f) :
+    Runs (primary (f + 1)) ctx i (i + ((argToks (xs.map (Expr.toks 0))).length + 4)) (fun r =>
+      r.1.expr.erase = (Expr.builtin p b xs).erase ∧
+        r.1.height ≤ (argToks (xs.map (Expr.toks 0))).length + 1 ∧
+        r.2 = (Expr.builtin p b xs).place) := by
+  have hb : Builtin.ofName b.name = some b := by cases b <;> rfl
+  rw [Parse.primary]
+  refine Runs.peek_bind ?_
+  simp only [hw.head]
+  refine Runs.peekAt_bind ?_
+  simp only [hw.tail.head, hb]
+  refine Runs.bump_bind (Runs.bump_bind (Runs.sym_bind hw.tail.tail.head ?_))
+  refine Runs.peek_bind ?_
+  refine Runs.bind (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE (fun _ => rfl)
+    ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp)) fun ns hns => ?_
+  have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
+    rw [List.map_map]; exact hns.1
+  have hok' : b.operandsOk (ns.map (·.expr)) = true := by
+    rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok
+  have he : (Expr.builtin (tokenAt ctx.input i).pos b (ns.map (·.expr))).erase =
+      (Expr.builtin p b xs).erase := by
+    simp only [Expr.erase, hys]
+  refine Runs.bind (Runs.builtinCheck hok') fun _ _ => Runs.idx (by omega) (Runs.pure ⟨he, ?_, ?_⟩)
+  · refine height_le fun x hx => ?_
+    simp only [List.mem_map] at hx
+    obtain ⟨m, hm, rfl⟩ := hx
+    exact hns.2 m hm
+  · simp only
+    rw [← Expr.place_erase, he, Expr.place_erase]
 
 theorem Expr.toks11_paren (u : Expr) (hl : u.level < 11) :
     u.toks 11 = .symbol "(" :: (u.toks 0 ++ [.symbol ")"]) := by
@@ -1454,6 +1507,26 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.ind with
+  | case20 p b xs _ =>
+    intro hp hIH ctx i f t R hw ht _ hf l Q hk
+    unfold SufK at hk
+    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
+    obtain ⟨hok, hpxs⟩ := hp
+    have hT : (Expr.builtin p b xs).toks 11 = .symbol "@" :: .ident b.name :: .symbol "(" ::
+        (argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]) := by
+      simp [Expr.toks, Expr.level, postfixLevel]
+    rw [hT] at hw hf hk hIH
+    simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
+    simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
+    obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by omega⟩
+    have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+      ⟨hIH x (by have := argToks_mem hx; omega), hpxs x hx⟩
+    refine Runs.postfix_base (T := (argToks (xs.map (Expr.toks 0))).length + 4)
+      (u := .builtin p b xs) (pl := (Expr.builtin p b xs).place)
+      (Runs.mono (Runs.primary_builtin (p := p) hE hok hw (by omega)) ?_) ?_
+    · rintro r ⟨h1, h2, h3⟩
+      exact ⟨⟨h1, by omega⟩, h3⟩
+    · intro n f' hn hf'; exact hk n f' hn (by omega)
   | case17 => exact Runs.postfix_paren _ (by simp [Expr.level, unaryLevel]) rfl
   | case16 p r m xs ihr _ =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
@@ -2808,12 +2881,21 @@ theorem Expr.level_le (e : Expr) : e.level ≤ 11 := by
   | binary _ op => have := BinOp.level_lt op; simp [Expr.level]; omega
   | _ => simp [Expr.level, unaryLevel, postfixLevel]
 
+/-! The first kind of a statement that starts with a postfix form: a name or `@`. -/
+def PostHead (k : Kind) : Prop := (∃ n, k = .ident n) ∨ k = .symbol "@"
+
+theorem PostHead.ne_kw {w : String} (h : PostHead (.keyword w)) : False := by
+  rcases h with ⟨_, h⟩ | h <;> cases h
+
+theorem PostHead.sym {s : String} (h : PostHead (.symbol s)) : s = "@" := by
+  rcases h with ⟨_, h⟩ | h <;> cases h; rfl
+
 /-!
-An expression statement that starts with a name: the statement parser reads a postfix form,
-then the infix operators with `climb`.
+An expression statement that starts with a name or `@`: the statement parser reads a postfix
+form, then the infix operators with `climb`.
 -/
 theorem Runs.postfix_climb (e : Expr) (hp : e.printable = true)
-    (hid : ∃ n, (e.toks 0).head? = some (.ident n)) (ctx : Ctx) (i f : Nat) (t : Kind)
+    (hid : ∃ k, (e.toks 0).head? = some k ∧ PostHead k) (ctx : Ctx) (i f : Nat) (t : Kind)
     (R : List Kind) (hw : Win ctx.input i (e.toks 0 ++ t :: R)) (ht : After 1 t)
     (hf : 4 * (e.toks 0).length ≤ f) :
     ∃ T1, T1 ≤ (e.toks 0).length ∧
@@ -2822,11 +2904,11 @@ theorem Runs.postfix_climb (e : Expr) (hp : e.printable = true)
       Runs (postfixExpr f) ctx i (i + T1) (fun r => r.1.height ≤ T1 ∧
         ∀ start, Runs (climb f 1 start r.1) ctx (i + T1) (i + (e.toks 0).length)
           (Res e (e.toks 0).length)) := by
-  obtain ⟨nm, hnm⟩ := hid
+  obtain ⟨k0, hnm, hpk⟩ := hid
   have hl : 1 ≤ e.level := by
     cases e with
-    | cond => simp [Expr.toks] at hnm
-    | «match» => simp [Expr.toks] at hnm
+    | cond => simp [Expr.toks] at hnm; subst hnm; exact hpk.ne_kw.elim
+    | «match» => simp [Expr.toks] at hnm; subst hnm; exact hpk.ne_kw.elim
     | binary _ op => exact BinOp.level_pos op
     | _ => simp [Expr.level, unaryLevel, postfixLevel]
   have h01 := Expr.toks_one e hl
@@ -2850,10 +2932,19 @@ theorem Runs.postfix_climb (e : Expr) (hp : e.printable = true)
     rw [Expr.toks_paren (ctx := 11)]
     by_cases hlt : u.level < cu
     · simp [hlt] at hks
+      obtain ⟨rfl, -⟩ := hks
+      exact absurd hpk.sym (by decide)
     · have h10 : u.level ≠ 10 := by
         intro h10
         cases u with
-        | unary | fnType => simp [hlt, Expr.toks] at hks
+        | unary _ op =>
+          simp [hlt, Expr.toks] at hks
+          obtain ⟨rfl, -⟩ := hks
+          exact absurd hpk.sym (by cases op <;> decide)
+        | fnType =>
+          simp [hlt, Expr.toks] at hks
+          obtain ⟨rfl, -⟩ := hks
+          exact hpk.ne_kw.elim
         | binary _ op => have := BinOp.level_lt op; simp [Expr.level] at h10; omega
         | _ => simp [Expr.level, postfixLevel] at h10
       rw [ite_eq_right hlt, ite_eq_right (by omega)]

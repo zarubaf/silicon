@@ -732,4 +732,33 @@ it is no mutable root (`S008`).
 #guard fails (modBody "push(req[0], 1);\ninput req[0]: Bool;") .S008 2 6
 #guard fails "comptime fn g() -> Nat {\ninput req[0]: Bool;\nreturn 1;\n}" .S006 2 1
 
+/-!
+The builtins (section 9.2, G11). The operand of `@TypeOf` is no static position, also in a static
+position, but its indices and keys are. The key of `@field` is a static position, and its base
+takes the position of the `@field`.
+-/
+#guard ok (modBody "reg r: UInt[8] = 0;\nlet x: UInt[data_bits(@TypeOf(r))] = 0;")
+#guard ok (modBody "reg r: Bool = false;\ncomptime if (@TypeOf(r) == Reg[Bool]) {}")
+#guard ok (modBody "reg r: Bool = false;\nlet y = @field(r, 0);")
+#guard fails (modBody ("reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\n" ++
+  "let t = @TypeOf(rs[w]);")) .S005 4 20
+#guard fails (modBody "wire w: Bool;\nlet p = 1;\nlet y = @field(p, w);") .S005 4 19
+#guard message (modBody "wire w: Bool;\nlet p = 1;\nlet y = @field(p, w);") ==
+  "`w` is a wire; a static position needs a static value"
+#guard fails (modBody "reg r: Bool = false;\nlet y: UInt[@field(r, 0)] = 0;") .S005 3 20
+#guard fails (modBody "reg r: Bool = false;\nwire w: Bool;\nlet t = @TypeOf(@field(r, w));")
+  .S005 4 27
+
+/-! A `mut` actual through `@field` has the root of its base (`S008`). -/
+def mutFns (s : String) : String :=
+  "fn g(mut a: Nat) -> Nat { return 1; }\nfn h(mut a: Nat, mut b: Nat) -> Nat { return 1; }\n" ++
+    fnBody s
+#guard ok (mutFns "let mut y = 1;\nlet mut z = 1;\nlet r = h(@field(y, 0), @field(z.a, 1));")
+#guard fails (mutFns "let y = 1;\nlet r = g(@field(y, 0));") .S008 5 11
+#guard message (mutFns "let y = 1;\nlet r = g(@field(y, 0));") ==
+  "a `mut` actual has a `let mut` local or a `mut` formal as its root"
+#guard fails (mutFns "let mut y = 1;\nlet r = h(@field(y, 0), @field(y, 1));") .S008 5 25
+#guard message (mutFns "let r = g(@field(f(p), 0));") == "a `mut` actual is a place"
+#guard fails (mutFns "let r = g(@TypeOf(p));") .S008 4 11
+
 end Silicon.Source.Test.Check
