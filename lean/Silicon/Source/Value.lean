@@ -80,13 +80,27 @@ structure Meta where
   handles : Bool
   deriving Repr, DecidableEq, BEq, Inhabited
 
+/-!
+The origin of a struct type (section 5.6): a struct item (`user`) or a prelude struct
+(`prelude`).
+-/
+inductive Origin where
+  | user
+  | prelude
+  deriving Repr, DecidableEq, Inhabited
+
+/-! The token of the origin `o` in the serialization of a struct type. -/
+def Origin.token : Origin → String
+  | .user => "root"
+  | .prelude => "prelude"
+
 mutual
   /--
   A type as a static value. Its forms are the scalar types of slice 1 with a static width and
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
   tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
-  entry in the table of specializations, its item, its static arguments, and its metadata. Its
-  flag `prelude` marks a prelude struct (section 7.1). An enum type is the
+  entry in the table of specializations, its item, its static arguments, its metadata, and its
+  origin. The origin `prelude` marks a prelude struct (section 7.1). An enum type is the
   index of its item, its name, and its metadata.
   `String` and `List[T]` are static types only. A function type is its parameter types with
   their `mut` marks, and its result type. The handle types `Reg[T]`, `Wire[T]`, `Input[T]`,
@@ -102,7 +116,7 @@ mutual
     | array (elem : Ty) (len : Nat)
     | tuple (elems : Array Ty)
     | struct (spec : Nat) (item : String) (args : Array Value) (info : Meta)
-        (prelude : Bool := false)
+        (origin : Origin := .user)
     | string
     | list (elem : Ty)
     | fn (params : Array TyParam) (ret : Ty)
@@ -575,7 +589,7 @@ mutual
     | .array t n => Print.node "array" [t.serialize, toString n]
     | .tuple ⟨ts⟩ => Print.node "tuple" [Print.list (Ty.serializeAll ts)]
     | .struct _ i ⟨xs⟩ _ e =>
-      Print.node "struct" [if e then "prelude" else "root", i, Print.list (Value.serializeAll xs)]
+      Print.node "struct" [e.token, i, Print.list (Value.serializeAll xs)]
     | .string => "string"
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
@@ -742,8 +756,8 @@ mutual
     | .array t n => t.put (o ++ "[") ++ s!"; {intText n}]"
     | .tuple ⟨[t]⟩ => t.put (o ++ "(") ++ ",)"
     | .tuple ⟨ts⟩ => Ty.putAll (o ++ "(") ts ++ ")"
-    | .struct _ i ⟨[]⟩ _ p => o ++ itemText p i
-    | .struct _ i ⟨xs⟩ _ p => Value.putAll (o ++ itemText p i ++ "[") xs ++ "]"
+    | .struct _ i ⟨[]⟩ _ p => o ++ itemText (p == .prelude) i
+    | .struct _ i ⟨xs⟩ _ p => Value.putAll (o ++ itemText (p == .prelude) i ++ "[") xs ++ "]"
     | .string => o ++ "String"
     | .list t => t.put (o ++ "List[") ++ "]"
     | .fn ⟨ps⟩ r => r.put (TyParam.putAll (o ++ "fn (") ps ++ ") -> ")

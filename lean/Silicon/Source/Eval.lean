@@ -1709,7 +1709,8 @@ def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
       withReader (fun c => { c with item := i, frame := ⟨none, 0⟩ }) do
     let keys ← withReader (fun c => { c with binding := i :: c.binding }) <|
       bindParams ty p "a comptime parameter" ps args
-    specialize p x.name i pre (keys.map (·.2)) (fs.mapM fun f => return (f.name.name, ← ty f.ty))
+    let o : Origin := if pre then .prelude else .user
+    specialize p x.name i o (keys.map (·.2)) (fs.mapM fun f => return (f.name.name, ← ty f.ty))
   if pre then atUse p work else work
 
 /-!

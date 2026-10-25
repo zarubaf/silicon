@@ -362,7 +362,7 @@ identity. A message names the prelude struct in its source form and the user str
 -/
 def response (pre : Bool) : Ty :=
   .struct 4 "ReadResponse" #[.type (.uint 8)] (Meta.struct [(Ty.uint 8).info, Ty.bool.info] [2])
-    pre
+    (if pre then .prelude else .user)
 #guard (response true).serialize == "(struct prelude ReadResponse ((type (uint 8))))"
 #guard (response false).serialize == "(struct root ReadResponse ((type (uint 8))))"
 #guard (response true).text == "ReadResponse[UInt[8]]"
@@ -496,8 +496,8 @@ def userBool : Ty := .struct 102 "Bool" #[] (Meta.struct [Meta.finite 1] [])
 #guard (Ty.array (.list userBool) 4).text == "[List[crate::Bool]; 4]"
 #guard (Ty.tuple #[.bool, userBool]).text == "(Bool, crate::Bool)"
 #guard (Value.record userBool #[.uint 1 1]).literal == "crate::Bool(1)"
-#guard (Ty.struct 5 "PortKey" #[] (Meta.struct [] []) true).text == "PortKey"
-#guard (Ty.struct 0 "ReadResponse" #[.type (.uint 8)] (Meta.struct [] [1]) true).text ==
+#guard (Ty.struct 5 "PortKey" #[] (Meta.struct [] []) .prelude).text == "PortKey"
+#guard (Ty.struct 0 "ReadResponse" #[.type (.uint 8)] (Meta.struct [] [1]) .prelude).text ==
   "ReadResponse[UInt[8]]"
 #guard (Ty.struct 104 "Packet2" #[] (Meta.struct [] [])).text == "Packet2"
 #guard boundText (userBool.put (String.ofList (List.replicate 1020 'a'))) ==

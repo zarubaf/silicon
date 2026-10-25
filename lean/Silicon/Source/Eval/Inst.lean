@@ -344,9 +344,9 @@ check reads the bit length, so it takes constant work, and the index renders onl
 -/
 def portKey? : Value → Option (Except Fault (String × Option Nat))
   | .str x => some (.ok (x, none))
-  | .record (.struct _ "PortKey" _ _ true) #[.str x, .bool false, .int k] =>
+  | .record (.struct _ "PortKey" _ _ .prelude) #[.str x, .bool false, .int k] =>
     some (if k == 0 then .ok (x, none) else .error (.S022, scalarIndexText k))
-  | .record (.struct _ "PortKey" _ _ true) #[.str x, .bool true, .int k] =>
+  | .record (.struct _ "PortKey" _ _ .prelude) #[.str x, .bool true, .int k] =>
     some (if k < 2 ^ 32 then .ok (x, some k.toNat) else .error (.S012, keyRangeText k))
   | _ => none
 

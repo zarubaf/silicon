@@ -360,21 +360,21 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M (Value × Ty)) : M (Valu
     return (c, t)
 
 /-!
-A use at `p` of the struct item `i` with the name `x`, the prelude flag `pre`, and the
+A use at `p` of the struct item `i` with the name `x`, the origin `o`, and the
 normalized static arguments `args`. `bindParams` charged their sizes before the lookup. The key
 of the lookup is the item and the arguments, so its work stays in those charges. The first use runs
 `fields`, which evaluates the field types. The caller nests it.
 -/
-def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
+def specialize (p : Pos) (x : String) (i : Nat) (o : Origin) (args : List Value)
     (fields : M (List (String × Ty))) : M Ty := do
   match (← get).specs.find? i args with
   | some (_, ⟨_, _, .done t _⟩) => return t
   | some (k, ⟨_, _, .inProgress⟩) =>
-    let t := Ty.struct k x args.toArray Meta.static pre
+    let t := Ty.struct k x args.toArray Meta.static o
     fail .S019 p s!"the specialization {t.text} is in progress"
   | none => do
     let k := (← get).specs.entries.size
-    charge p (Ty.struct k x args.toArray Meta.static pre).size
+    charge p (Ty.struct k x args.toArray Meta.static o).size
     modify fun s => { s with specs := { s.specs with
       entries := s.specs.entries.push ⟨i, args, .inProgress⟩,
       index := s.specs.index.insert (i, args) k } }
@@ -384,7 +384,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (pre : Bool) (args : List Value)
     let m := Meta.struct ms (args.map Value.depth)
     bounded p m.depth
     sums p ms m
-    let t := Ty.struct k x args.toArray m pre
+    let t := Ty.struct k x args.toArray m o
     modify fun s => { s with specs := { s.specs with
       entries := s.specs.entries.set! k ⟨i, args, .done t fs.toArray⟩ } }
     return t
