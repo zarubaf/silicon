@@ -1,0 +1,26 @@
+// A place that selects with `@field` writes the part that the key named at its step. A later key with a call changes the local of the key, and the write still goes to the field `a`.
+// TOP M()
+// CHECK: (design M
+// CHECK-NEXT: (module M
+// CHECK-NEXT: (input x (bits 4))
+// CHECK-NEXT: (output o (bits 4))
+// CHECK-NEXT: (let q$1v$b$0e (bits 4) q$b$0e)
+// CHECK-NEXT: (let q$a$0e (bits 4) x)
+// CHECK-NEXT: (let q$b$0e (bits 4) (add x (const 4 1)))
+// CHECK-NEXT: (assign o (const 4 7))))
+struct P {
+    a: [UInt[4]; 1],
+    b: [UInt[4]; 1],
+}
+fn g(mut v: String) -> Nat {
+    v = "b";
+    return 0;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let mut s = "a";
+    let mut q = P([x], [x +% 1]);
+    @field(@field(q, s), g(s)) = 7;
+    o := q.a[0];
+}
