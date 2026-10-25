@@ -2249,17 +2249,24 @@ def portPart (p : Pos) (id : Nat) (path : Path) (q : Port) : M Out := do
   return ⟨r, !(r matches .static _), none⟩
 
 /-!
-The port with the symbol `y` and the name `name` at `p` of the child number `id` with the path
-`path` and the interface `iface` (`portPart`). A family of the child without a key is `S010`
-"Family as a value" (section 5.6). No symbol is no port.
+The scalar port with the symbol `y` and the name `name` at `p` of a child with the interface
+`iface`. A family of the child without a key is `S010` "Family as a value" (section 5.6). No
+symbol is no port.
 -/
-def portOf (p : Pos) (id : Nat) (path : Path) (iface : Iface) (y : Option Nat) (name : String) :
-    M Out := do
+def portFind (p : Pos) (iface : Iface) (y : Option Nat) (name : String) : M Port := do
   match y >>= fun y => iface.ports[((y, none) : PortId)]? with
-  | some q => portPart p id path q
+  | some q => pure q
   | none =>
     if y.any iface.families.contains then fail .S010 p (Elab.familyValueText name)
     fail .S010 p s!"the instance has no port `{name}`"
+
+/-!
+The port with the symbol `y` and the name `name` at `p` of the child number `id` with the path
+`path` and the interface `iface` (`portFind`, then `portPart`).
+-/
+def portOf (p : Pos) (id : Nat) (path : Path) (iface : Iface) (y : Option Nat) (name : String) :
+    M Out := do
+  portPart p id path (← portFind p iface y name)
 
 /-!
 The part that the field `f` at `p` selects from the base `o`. On an `Instance` handle it is the
@@ -2308,15 +2315,24 @@ def entryAt (p kp : Pos) (x : String) (id k : Nat) : M Out := do
   | v => return ⟨v, true, none⟩
 
 /-!
+The entry `key` of the family with the symbol `y` and the name `name` of a child with the
+interface `iface` and the type `ty`. A key that the child did not declare is `S013` "Child family
+key" at the key `kp`.
+-/
+def childPort (kp : Pos) (iface : Iface) (ty : Ty) (y : Nat) (name : String) (key : Nat) :
+    M Port := do
+  match iface.ports[((y, some key) : PortId)]? with
+  | some port => pure port
+  | none => fail .S013 kp (Elab.childKeyText ty.text name key)
+
+/-!
 The entry `key` at `p` of the family with the symbol `y` and the name `name` of the child number
-`id` with the path `path`, the interface `iface`, and the type `ty` (`portPart`). A key that the
-child did not declare is `S013` "Child family key" at the key `kp`.
+`id` with the path `path`, the interface `iface`, and the type `ty` (`childPort`, then
+`portPart`).
 -/
 def childEntry (p kp : Pos) (id : Nat) (path : Path) (iface : Iface) (ty : Ty) (y : Nat)
     (name : String) (key : Nat) : M Out := do
-  match iface.ports[((y, some key) : PortId)]? with
-  | some port => portPart p id path port
-  | none => fail .S013 kp (Elab.childKeyText ty.text name key)
+  portPart p id path (← childPort kp iface ty y name key)
 
 /-!
 The selection `u.f[k]` at the index node `p` of the family `f` of the child behind the base `o`,
