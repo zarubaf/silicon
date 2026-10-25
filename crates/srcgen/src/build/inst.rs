@@ -4,9 +4,10 @@
 
 use super::hw::{DEPTH, Want};
 use super::stat::value_expr;
+use super::temps::{Peer, Route};
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, HwEnum, Module, Sig};
 use crate::eval::{Env, Fault, Value, convert};
-use crate::program::{HExpr, Place, SExpr, STy, Stmt};
+use crate::program::{HExpr, SExpr, STy, Stmt};
 
 /// An instance that the builder declared: its name, the signature of its
 /// module, and the env of its arguments for each env of the caller.
@@ -14,6 +15,8 @@ pub(super) struct Child {
     pub(super) name: String,
     pub(super) sig: Sig,
     pub(super) envs: Vec<Env>,
+    /// The local container that the `:=` of the inputs go through, if any.
+    pub(super) via: Option<Route>,
 }
 
 impl Builder {
@@ -74,11 +77,17 @@ impl Builder {
         j: usize,
         out: &mut Vec<Stmt>,
     ) -> Built {
-        let child = self.declare_child(ctx, m, j, out)?;
+        let mut child = self.declare_child(ctx, m, j, out)?;
+        child.via = self.temp_route(ctx, m, &child, out)?;
         self.bind_child_inputs(ctx, &child, None, DEPTH, out)?;
         self.expose_child_outputs(ctx, &child)?;
         self.read_child_ports(ctx, m, &child, out)?;
-        self.temp_reads(ctx, &child)
+        self.temp_reads(ctx, &child)?;
+        ctx.instances.push(Peer {
+            name: child.name.clone(),
+            ty: Self::instance_ty(&child),
+        });
+        Ok(())
     }
 
     /// `instance u = M<j>(args);`
@@ -102,7 +111,12 @@ impl Builder {
         let name = m.names.fresh("u");
         out.push(Stmt::Instance(name.clone(), sig.name.clone(), args));
         let envs: Vec<Env> = tuples.iter().map(|a| Env::of(&sig.params, a)).collect();
-        Ok(Child { name, sig, envs })
+        Ok(Child {
+            name,
+            sig,
+            envs,
+            via: None,
+        })
     }
 
     /// The `:=` of each input of the child, but the input `skip`, which
@@ -121,15 +135,13 @@ impl Builder {
             }
             let types = self.types(t, &child.envs)?;
             let value = self.driver_at(ctx, &Want { types, ty: None }, depth);
-            let place = Place::Field(child.name.clone(), p.clone());
+            let place = Self::input_place(child, p, None);
             out.push(Stmt::Connect(place, value));
         }
         for (p, def) in &child.sig.enum_inputs {
             let value = self.enum_driver(ctx, def);
-            out.push(Stmt::Connect(
-                Place::Field(child.name.clone(), p.clone()),
-                value,
-            ));
+            let place = Self::input_place(child, p, None);
+            out.push(Stmt::Connect(place, value));
         }
         self.bind_child_ports(ctx, child, out)
     }

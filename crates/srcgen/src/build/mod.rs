@@ -279,6 +279,9 @@ struct Ctx {
     port: Vec<Hw>,
     /// The places in `port` of the names that read an output of a child.
     child_reads: BTreeSet<usize>,
+    /// The instances of this frame and its parents, which a container of
+    /// the temp tape can hold besides the child.
+    instances: Vec<temps::Peer>,
 }
 
 impl Ctx {
@@ -350,6 +353,7 @@ impl Ctx {
             // The names of a nested frame do not reach the pool of the
             // module, so a read there is no read that counts.
             child_reads: BTreeSet::new(),
+            instances: self.instances.clone(),
         }
     }
 
@@ -533,6 +537,12 @@ struct Stats {
     temp_arrays: u32,
     temp_records: u32,
     temp_helpers: u32,
+    temp_writes: u32,
+    write_tuples: u32,
+    write_arrays: u32,
+    write_records: u32,
+    mixed_slots: u32,
+    temp_pairs: u32,
     as_strings: u32,
     as_core: u32,
     as_portkeys: u32,
@@ -683,8 +693,8 @@ impl Builder {
                     .iter()
                     .rev()
                     .map(|n| {
-                        let m = n.wrapping_mul(0x1656_67B1) ^ 0xC2B2_AE35;
-                        m ^ (m >> 13)
+                        let m = n.wrapping_mul(0x85EB_CA6B);
+                        m ^ (m >> 15)
                     })
                     .collect::<Vec<_>>()
                     .into_iter(),

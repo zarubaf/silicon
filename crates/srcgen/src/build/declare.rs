@@ -494,6 +494,7 @@ impl Builder {
                 name: name.clone(),
                 envs: vec![Env::of(&sig.params, &tuple)],
                 sig: sig.clone(),
+                via: None,
             };
             self.bind_child_inputs(&mut hb.ctx, &child, None, HANDLE_DEPTH, &mut hb.body)?;
         }
@@ -684,6 +685,7 @@ impl Builder {
                     name: root.to_owned(),
                     envs: vec![env; ctx.envs.len()],
                     sig,
+                    via: None,
                 };
                 if !part.bound {
                     note!(self, caller_child_inputs);

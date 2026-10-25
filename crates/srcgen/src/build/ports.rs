@@ -1066,10 +1066,7 @@ impl Builder {
                         b.driver_at(&ctx.port_view(), &want, PORT_DEPTH)
                     }
                 };
-                let place = match d.public.key {
-                    Some(k) => Place::ChildEntry(child.name.clone(), d.public.base.clone(), lit(k)),
-                    None => Place::Field(child.name.clone(), d.public.base.clone()),
-                };
+                let place = Builder::input_place(child, &d.public.base, d.public.key.map(lit));
                 out.push(Stmt::Connect(place, value));
                 note!(b, child_binds);
             }
