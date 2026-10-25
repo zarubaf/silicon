@@ -69,6 +69,8 @@ impl Len {
                 work.pop();
                 continue;
             }
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::TypeNodes, 1);
             let mut parts = Vec::new();
             match tys.get(t) {
                 Ty::Array(elem, _)
@@ -221,6 +223,8 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
 
 /// The node of a type. Its parts wait on the stack.
 fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Vec<Item<'a>>) {
+    #[cfg(test)]
+    crate::counters::add(crate::counters::Count::TypeNodes, 1);
     match ty {
         Ty::Bool => out.write_str("bool").unwrap_or_default(),
         Ty::Nat => out.write_str("nat").unwrap_or_default(),

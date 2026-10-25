@@ -125,6 +125,9 @@ pub(crate) struct Counts {
     /// The fields, the variants, and the payload types that the shape and the build of the
     /// result of a `@typeInfo` visited.
     pub reflected: u64,
+    /// The type nodes that a walk into a type visited: the zero value, the length of the text,
+    /// the text, and the serialization.
+    pub type_nodes: u64,
 }
 
 impl Counts {
@@ -183,6 +186,7 @@ impl Counts {
             waited,
             checked,
             reflected,
+            type_nodes,
         } = *self;
         [
             scanned,
@@ -235,6 +239,7 @@ impl Counts {
             waited,
             checked,
             reflected,
+            type_nodes,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -294,6 +299,7 @@ pub(crate) enum Count {
     Waited,
     Checked,
     Reflected,
+    TypeNodes,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -382,6 +388,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Waited => &mut c.waited,
             Count::Checked => &mut c.checked,
             Count::Reflected => &mut c.reflected,
+            Count::TypeNodes => &mut c.type_nodes,
         };
         *field += n;
     }
