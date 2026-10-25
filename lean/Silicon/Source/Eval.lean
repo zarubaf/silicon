@@ -3117,11 +3117,15 @@ mutual
   Its steps then run once from the root outward (`queryWalk`). A family root with an index runs
   the selection order. The index node and the name node charge 1 each. Then the key evaluates in
   a structural context of the kind `query` (`selectionKey`, `entryVal`). A bare family is `S010`
-  "Family as a value". A root that names no binding evaluates the whole operand as an ordinary
+  "Family as a value". A `const` item gives its value and its annotation as the declared type
+  (`constItem`). A root that names no binding evaluates the whole operand as an ordinary
   expression, in the `raw` context and in a structural context of the kind `query`. Its value has
   no declared type. Then the part gives its type (`queryTy`).
   -/
   def typeOfPart (n : Nat) (p : Pos) (x : Resolve.Expr) : M Ty := do
+    let whole : M Ty := do
+      let o ← guardedBy (.query .typeOf) do need x (← eval n x)
+      queryTy p (.value o.value none)
     match chain x with
     | some (.name rp y r@(.local id), sels) => do
       let q ← match (← get).frame[id]? with
@@ -3136,9 +3140,11 @@ mutual
       let e ← entryVal k.pos y id (← selectionKey rp k.pos y v)
       queryTy p (← queryWalk (eval n) (.value e none) sels)
     | some (.name rp y (.family ..), _) => fail .S010 rp (Elab.familyValueText y)
-    | _ => do
-      let o ← guardedBy (.query .typeOf) do need x (← eval n x)
-      queryTy p (.value o.value none)
+    | some (.name rp y (.item i), sels) => do
+      let some (.const cp _ ty v) := (← read).items[i]? | whole
+      let (c, t) ← constItem n rp cp y i ty v
+      queryTy p (← queryWalk (eval n) (.value (.static c) (some t)) sels)
+    | _ => whole
   termination_by (n + 1, 2)
 
   /--

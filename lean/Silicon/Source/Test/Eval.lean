@@ -3944,6 +3944,21 @@ ordinary expression. A type gives `Type`, and a function its function type.
 -/
 #guard out "" "@TypeOf(UInt[8])" == "(type type)"
 #guard out "fn f(x: Nat) -> Nat { return x; }" "@TypeOf(f)" == "(type (fn (nat) nat))"
+
+/-!
+A `const` item is a root with its annotation as the declared type (section 9.3). It resolves with
+no charge beyond its first use, and a tuple constant builds no type. `C` costs 51: its name node
+1 and its first use 50. `@TypeOf(C)` costs its node 1 and the first use, and `@TypeOf(C.1)` one
+more for its step.
+-/
+#guard out "const C: Nat = 1;" "@TypeOf(C)" == "(type nat)"
+def constTuple : String := "const C: (Nat, (Int,)) = (1, (2,));"
+#guard cost constTuple "C" == 51
+#guard exact constTuple "@TypeOf(C)" (1 + 50)
+#guard out constTuple "@TypeOf(C)" == "(type (tuple (nat (tuple (int)))))"
+#guard exact constTuple "@TypeOf(C.1)" (1 + 50 + 1)
+#guard out constTuple "@TypeOf(C.0)" == "(type nat)"
+#guard out (constTuple ++ "\nconst D: Type = @TypeOf(C.1);") "D" == "(type (tuple (int)))"
 #guard out "" "@TypeOf(len)" == "S010 1:9"
 
 /-!
