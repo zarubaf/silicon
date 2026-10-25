@@ -623,12 +623,7 @@ impl Walker {
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            // TODO(#344): walk the operands of a builtin.
-            Expr::Num { .. }
-            | Expr::Bool { .. }
-            | Expr::Str { .. }
-            | Expr::Unit { .. }
-            | Expr::Builtin { .. } => {}
+            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
             Expr::Name { pos, id, name } => self.value_name(*pos, *id, name),
             Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {
@@ -676,7 +671,9 @@ impl Walker {
                 self.expr(len);
             }
             Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
-            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
+            Expr::Tuple { elems, .. }
+            | Expr::Array { elems, .. }
+            | Expr::Builtin { args: elems, .. } => {
                 for elem in elems {
                     self.expr(elem);
                 }
