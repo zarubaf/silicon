@@ -182,7 +182,7 @@ theorem childSel_f {ev ev' : Resolve.Expr → M (Option Out)}
 theorem indexBase_f (he : ∀ e, Follows m (eval k e) (eval m e)) (place : Bool) (p : Pos)
     (b x : Resolve.Expr) : Follows m (indexBase k place p b x) (indexBase m place p b x) := by
   rw [indexBase.eq_def k, indexBase.eq_def m]
-  follows [he, need_f, fieldPart_f, childSel_f he, onPlace_f]
+  follows [he, need_f, fieldPart_f, childSel_f he, onPlace_f, argHw_f]
 
 theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (x : String)
     (id : Nat) (e : Resolve.Expr) :
@@ -249,7 +249,7 @@ theorem follows_all : ∀ n,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
           familySel_f (he k), typeOfPart_f (he k) (ht k), staticValue_f, fieldOut_f,
-          argNode_f, onPlace_f, operand_f, guardedBy_f, typeInfoArg_f, typeInfo_f]
+          argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -262,7 +262,7 @@ theorem follows_all : ∀ n,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
           familySel_f (he m), typeOfPart_f (he m) (ht m), staticValue_f, fieldOut_f,
-          argNode_f, onPlace_f, operand_f, guardedBy_f, typeInfoArg_f, typeInfo_f]
+          argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)

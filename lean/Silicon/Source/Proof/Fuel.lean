@@ -1154,6 +1154,10 @@ theorem onPlace_f (b : Bool) {x y : M α} (h : Follows cap x y) :
     Follows cap (onPlace b x) (onPlace b y) := by
   unfold onPlace; follows [h]
 
+theorem argElement_f (p : Pos) (v : Val) :
+    Follows cap (argElement p v) (argElement p v) := by
+  unfold argElement; follows [element_f, argHw_f]
+
 theorem operand_f (p : Pos) (x : Resolve.Expr) (v : Val) :
     Follows cap (operand p x v) (operand p x v) := by
   unfold operand; follows [data_f, argHw_f]
