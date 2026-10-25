@@ -368,30 +368,39 @@ impl Evaluator<'_> {
     /// number of its specialization, and the symbol of `f` finds the number of the field, so
     /// the selection compares no name.
     pub(super) fn agg_field(&mut self, pos: Pos, f: &Ident, out: Out) -> Res<Out> {
+        let sym = self.field_sym(f);
+        self.agg_field_by((pos, pos), (self.port_sym(f), &f.name, sym), out)
+    }
+
+    /// The field with the symbol `y` and the name `name` of the aggregate `out`, a result of the
+    /// field at `pos`. The look-up and its errors are at `kp`. A reference to a record gives a
+    /// reference to the part with the leaf field, named by the symbol `leaf`.
+    pub(super) fn agg_field_by(
+        &mut self,
+        (pos, kp): (Pos, Pos),
+        (y, name, leaf): (Option<Sym>, &str, Option<Sym>),
+        out: Out,
+    ) -> Res<Out> {
         let Seen::Agg(agg) = self.store.seen(&out) else {
             return fail(
                 Code::S010,
-                pos,
+                kp,
                 "a hardware aggregate is expected".to_owned(),
             );
         };
-        self.no_enum_field(pos, &f.name, Seen::Agg(agg))?;
-        let Some((k, ft)) = self.agg_field_at(agg, f) else {
+        self.no_enum_field(kp, name, Seen::Agg(agg))?;
+        let Some((k, ft)) = self.agg_field_at_by(agg, y, name) else {
             return fail(
                 Code::S010,
-                pos,
-                format!("{} has no field `{}`", self.text(Seen::Agg(agg)), f.name),
+                kp,
+                format!("{} has no field `{name}`", self.text(Seen::Agg(agg))),
             );
         };
         let step = match agg {
-            Agg::Ref(..) => match self.field_sym(f) {
+            Agg::Ref(..) => match leaf {
                 Some(sym) => Step::User(sym),
                 None => {
-                    return fail(
-                        Code::S010,
-                        pos,
-                        format!("the field `{}` has no symbol", f.name),
-                    );
+                    return fail(Code::S010, kp, format!("the field `{name}` has no symbol"));
                 }
             },
             _ => Step::Elem(0),

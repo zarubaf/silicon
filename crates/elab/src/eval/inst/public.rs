@@ -261,21 +261,25 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The public name that the static `as` key `v` gives at `kp`, and the family key of an entry (section 6.2, steps 6 and 7 of the port order). A `String`
-    /// is a scalar name. A record of the prelude struct `PortKey` is a scalar name with the index
-    /// 0, or an entry with an index below 2^32. Each other value is `S010` "Port key type". The
-    /// index check reads the bit length, so it takes constant work, and the index renders only in
-    /// an error.
-    fn port_key<'v>(&self, kp: Pos, v: &'v Value) -> Res<(&'v str, Option<u32>)> {
+    /// The public name and the family key that the static `String` or `PortKey` `v` gives at
+    /// `kp` (section 6.2, Lean `Elab.portKey?`). A `String` is a scalar name. A record of the
+    /// prelude struct `PortKey` is a scalar name with the index 0, or an entry with an index
+    /// below 2^32. The index check reads the bit length, so it takes constant work, and the
+    /// index renders only in an error. Another value has no such kind.
+    pub(in crate::eval) fn port_key_of<'v>(
+        &self,
+        kp: Pos,
+        v: &'v Value,
+    ) -> Option<Res<(&'v str, Option<u32>)>> {
         if let Value::Str(x) = v {
-            return Ok((x, None));
+            return Some(Ok((x, None)));
         }
         if let Value::Record(t, fields) = v
             && self.is_port_key(*t)
             && let [Value::Str(x), Value::Bool(indexed), Value::Int(k)] = fields.as_slice()
         {
             if !indexed {
-                return if k.is_zero() {
+                return Some(if k.is_zero() {
                     Ok((x, None))
                 } else {
                     fail(
@@ -287,19 +291,28 @@ impl Evaluator<'_> {
                             int_text(k)
                         ),
                     )
-                };
+                });
             }
-            return FamKey::of_int(k).key(kp).map(|k| (x.as_str(), Some(k)));
+            return Some(FamKey::of_int(k).key(kp).map(|k| (x.as_str(), Some(k))));
         }
-        fail(
-            Code::S010,
-            kp,
-            format!(
-                "an `as` key is a static `String` or `PortKey`, not {}; write the public name as \
-                 a string, for example `as \"req_0\"`",
-                self.about(Seen::Static(v))
-            ),
-        )
+        None
+    }
+
+    /// The public name that the static `as` key `v` gives at `kp`, and the family key of an entry
+    /// (section 6.2, steps 6 and 7 of the port order). Each value that is no `String` and no
+    /// `PortKey` is `S010` "Port key type".
+    fn port_key<'v>(&self, kp: Pos, v: &'v Value) -> Res<(&'v str, Option<u32>)> {
+        self.port_key_of(kp, v).unwrap_or_else(|| {
+            fail(
+                Code::S010,
+                kp,
+                format!(
+                    "an `as` key is a static `String` or `PortKey`, not {}; write the public name as \
+                     a string, for example `as \"req_0\"`",
+                    self.about(Seen::Static(v))
+                ),
+            )
+        })
     }
 
     /// The port with the binder `id`, the type `t`, and the `as` key `key` at `pos` (section 6.2,

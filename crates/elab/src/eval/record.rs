@@ -19,6 +19,16 @@ use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size, width_size};
 use parse::ast::{Expr, Ident, Item, Pos};
 
+/// The `S010` "No field" of section 6.2 at `pos`, for the struct type `ty` and the field name
+/// `field`. The name has the limit of a string in a message (section 5.5).
+pub(super) fn no_field<T>(pos: Pos, ty: &str, field: &str) -> Res<T> {
+    fail(
+        Code::S010,
+        pos,
+        format!("`{ty}` has no field `{field}`; select a field that `{ty}` declares"),
+    )
+}
+
 impl Evaluator<'_> {
     /// A call whose callee is not a function item or a prelude function: the callee is a type,
     /// and the call is its constructor. No argument is the zero `T()`. A struct type takes one
@@ -347,7 +357,18 @@ impl Evaluator<'_> {
 
     /// The field `.f` of a record: a reference to the field.
     pub(super) fn record_field(&mut self, pos: Pos, b: Out, f: &Ident) -> Res<Out> {
-        let (k, _) = self.field_at(pos, f, self.store.seen(&b))?;
+        self.record_field_by(pos, (self.port_sym(f), &f.name), b)
+    }
+
+    /// The field with the symbol `y` and the name `name` of the record `b`: a reference to the
+    /// field. The look-up and its errors are at `kp`.
+    pub(super) fn record_field_by(
+        &mut self,
+        kp: Pos,
+        (y, name): (Option<Sym>, &str),
+        b: Out,
+    ) -> Res<Out> {
+        let (k, _) = self.field_at_by(kp, (y, name), self.store.seen(&b))?;
         Ok(super::place::elem(Opnd::Static(b), k))
     }
 

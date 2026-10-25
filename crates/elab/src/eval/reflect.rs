@@ -22,7 +22,7 @@ use crate::Code;
 use crate::agg::Agg;
 use crate::hw::{Handle, Kind as Resource, Port, Ref, Root, Seen, Val};
 use crate::names::PathId;
-use crate::ops::{Fuel, str_text};
+use crate::ops::Fuel;
 use crate::types::{Ty, TyId, Types};
 use crate::value::Value;
 use parse::ast::{Builtin, Expr, Ident, Nat, Pos};
@@ -79,27 +79,6 @@ enum Ending {
     Handle(Handle),
     /// A literal that waits for its type has none.
     Pending,
-}
-
-/// The `S010` "No field" of section 6.2 at `pos`, for the struct type `ty` and the field name
-/// `field`.
-fn no_field<T>(pos: Pos, ty: &str, field: &str) -> Res<T> {
-    fail(
-        Code::S010,
-        pos,
-        format!("`{ty}` has no field `{field}`; select a field that `{ty}` declares"),
-    )
-}
-
-/// The `S010` "No public port" of section 6.2 at `pos`, for the key `key` of a child of the
-/// instance type `child`. The key has the limit of a string in a message (section 5.5).
-fn no_port<T>(pos: Pos, child: &str, key: &str) -> Res<T> {
-    let key = str_text(key);
-    fail(
-        Code::S010,
-        pos,
-        format!("`{child}` has no public port `{key}`; select a port that `{child}` declares"),
-    )
 }
 
 /// The `S010` "Query without a type" of section 6.2 at `pos`, for the part `about`.
@@ -455,14 +434,11 @@ impl Evaluator<'_> {
     /// without a key is "Family as a value", and a name that the child does not declare is "No
     /// public port".
     fn port_find(&self, pos: Pos, info: InstInfo, field: &Ident) -> Res<Port> {
-        let sym = self.port_sym(field);
-        if let Some(port) = sym.and_then(|sym| self.elab.port(info.inst, (sym, None))) {
-            return Ok(port);
-        }
-        if sym.is_some_and(|sym| self.has_family(info.inst, sym)) {
-            return super::family_value(pos, &field.name);
-        }
-        no_port(pos, &self.tys.text(info.ty), &field.name)
+        self.port_named(
+            pos,
+            (info.inst, info.ty),
+            (self.port_sym(field), &field.name),
+        )
     }
 
     /// The walk from a port of a child: an input gives its handle, and an output its type, with
@@ -614,7 +590,7 @@ impl Evaluator<'_> {
                     return Ok((number, Some(field_ty)));
                 }
                 match record {
-                    Some(ty) => no_field(*pos, &self.tys.text(ty), &field.name),
+                    Some(ty) => super::record::no_field(*pos, &self.tys.text(ty), &field.name),
                     None => fail(
                         Code::S010,
                         *pos,
@@ -676,7 +652,7 @@ impl Evaluator<'_> {
             Ty::Enum(_) => self.enum_field_error(pos, &field.name, ty),
             Ty::Struct(_) => match self.struct_field(ty, field) {
                 Some((_, field_ty)) => Ok(field_ty),
-                None => no_field(pos, &self.tys.text(ty), &field.name),
+                None => super::record::no_field(pos, &self.tys.text(ty), &field.name),
             },
             _ => fail(
                 Code::S010,

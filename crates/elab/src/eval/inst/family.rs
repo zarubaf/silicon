@@ -50,6 +50,17 @@ pub(in crate::eval) fn child_key<T>(pos: Pos, m: &str, x: &str, k: u32) -> Res<T
     )
 }
 
+/// The `S010` "No public port" of section 6.2 at `pos`, for the key `key` of a child of the
+/// instance type `child`. The key has the limit of a string in a message (section 5.5).
+pub(in crate::eval) fn no_port<T>(pos: Pos, child: &str, key: &str) -> Res<T> {
+    let key = str_text(key);
+    fail(
+        Code::S010,
+        pos,
+        format!("`{child}` has no public port `{key}`; select a port that `{child}` declares"),
+    )
+}
+
 /// A static family key as the typed use at `Nat` sees it: a key, a number out of range with its
 /// text, or a value of another type with its description.
 pub(in crate::eval) enum FamKey {
@@ -110,6 +121,25 @@ impl Evaluator<'_> {
             Names::Top => None,
             Names::File => self.syms.fields.get(&f.id).copied(),
         }
+    }
+
+    /// The scalar port with the symbol `y` and the name `name` at `pos` of the done instantiation
+    /// `inst` of the instance type `ty`. A family of the child without a key is `S010` "Family
+    /// as a value", and a name that the child does not declare is "No public port" (section
+    /// 5.6).
+    pub(in crate::eval) fn port_named(
+        &self,
+        pos: Pos,
+        (inst, ty): (usize, TyId),
+        (y, name): (Option<Sym>, &str),
+    ) -> Res<Port> {
+        if let Some(port) = y.and_then(|sym| self.elab.port(inst, (sym, None))) {
+            return Ok(port);
+        }
+        if y.is_some_and(|sym| self.has_family(inst, sym)) {
+            return family_value(pos, name);
+        }
+        no_port(pos, &self.tys.text(ty), name)
     }
 
     /// Whether the done instantiation `inst` has a port family with the symbol `sym`.
