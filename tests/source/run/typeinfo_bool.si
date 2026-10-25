@@ -1,0 +1,10 @@
+// `@typeInfo(Bool)` gives the kind `bool` and the width 1. Only the default fields stay: no fields, the element `Unit`, the length 0, and no variants.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Bool) == TypeInfo("bool", list(FieldInfo), Unit, 0, 1, list(VariantInfo)), "bool");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

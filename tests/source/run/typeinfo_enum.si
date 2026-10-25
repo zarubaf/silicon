@@ -1,0 +1,21 @@
+// An enum sets the element to its tag type, the width to `data_bits`, and one variant for each variant in order.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1, Pair(Bool, UInt[4]) = 2 }
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut vs = list(VariantInfo);
+    let p0 = list(Type);
+    let mut p1 = list(Type);
+    push(p1, UInt[8]);
+    let mut p2 = list(Type);
+    push(p2, Bool);
+    push(p2, UInt[4]);
+    push(vs, VariantInfo("Add", 0, p0));
+    push(vs, VariantInfo("Load", 1, p1));
+    push(vs, VariantInfo("Pair", 2, p2));
+    static_assert(@typeInfo(Op) == TypeInfo("enum", list(FieldInfo), UInt[2], 0, 10, vs), "enum");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

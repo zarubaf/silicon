@@ -1,0 +1,10 @@
+// `@typeInfo(UInt[8])` gives the kind `uint` and the width 8. Only the default fields stay: no fields, the element `Unit`, the length 0, and no variants.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(UInt[8]) == TypeInfo("uint", list(FieldInfo), Unit, 0, 8, list(VariantInfo)), "uint");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

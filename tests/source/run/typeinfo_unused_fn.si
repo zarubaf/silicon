@@ -1,0 +1,12 @@
+// A function that nothing calls holds `@typeInfo(Nat)`. The file is accepted, and the function adds no hardware.
+// TOP M()
+fn unused() -> Nat {
+    return @typeInfo(Nat).width;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

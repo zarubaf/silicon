@@ -1,0 +1,18 @@
+// A declared struct sets its field names in order and the length. The width stays 0.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut fs = list(FieldInfo);
+    push(fs, FieldInfo("a", UInt[8]));
+    push(fs, FieldInfo("b", BU));
+    static_assert(@typeInfo(P) == TypeInfo("record", fs, Unit, 2, 0, list(VariantInfo)), "record");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

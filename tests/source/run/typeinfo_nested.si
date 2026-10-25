@@ -1,0 +1,20 @@
+// The type of a field of a result is a type, so `@typeInfo` takes it again.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let t = @typeInfo(@typeInfo(P).fields[1].ty);
+    let mut fs = list(FieldInfo);
+    push(fs, FieldInfo("0", Bool));
+    push(fs, FieldInfo("1", UInt[4]));
+    static_assert(t == TypeInfo("tuple", fs, Unit, 2, 0, list(VariantInfo)), "tuple");
+    static_assert(@typeInfo(@typeInfo(P).fields[0].ty).width == 8, "width");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

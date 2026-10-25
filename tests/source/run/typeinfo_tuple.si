@@ -1,0 +1,14 @@
+// A tuple type sets the fields "0", "1", and so on, and the length. The width stays 0.
+// TOP M()
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut fs = list(FieldInfo);
+    push(fs, FieldInfo("0", Bool));
+    push(fs, FieldInfo("1", UInt[4]));
+    static_assert(@typeInfo(BU) == TypeInfo("tuple", fs, Unit, 2, 0, list(VariantInfo)), "tuple");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

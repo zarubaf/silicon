@@ -1,0 +1,10 @@
+// `@typeInfo(Type)` gives the kind `type`. Only the default fields stay: no fields, the element `Unit`, the length 0, and no variants.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Type) == TypeInfo("type", list(FieldInfo), Unit, 0, 0, list(VariantInfo)), "type");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

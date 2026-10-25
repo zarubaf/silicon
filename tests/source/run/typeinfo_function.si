@@ -1,0 +1,13 @@
+// The type of a function has the kind `function` and the default fields.
+// TOP M()
+fn inc(v: UInt[8]) -> UInt[8] {
+    return v;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(@TypeOf(inc)) == TypeInfo("function", list(FieldInfo), Unit, 0, 0, list(VariantInfo)), "function");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

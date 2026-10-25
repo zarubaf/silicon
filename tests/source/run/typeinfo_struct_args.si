@@ -1,0 +1,13 @@
+// A prelude struct with arguments gives the field types of its specialization. It has the kind `record`.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut fs = list(FieldInfo);
+    push(fs, FieldInfo("data", UInt[8]));
+    push(fs, FieldInfo("valid", Bool));
+    static_assert(@typeInfo(ReadResponse[UInt[8]]) == TypeInfo("record", fs, Unit, 2, 0, list(VariantInfo)), "record");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

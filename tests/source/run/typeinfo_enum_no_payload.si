@@ -1,0 +1,14 @@
+// An enum with no payload has the width of its tag, and each variant has an empty payload list.
+// TOP M()
+enum Mode: UInt[2] { Idle = 0, Run = 1 }
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut vs = list(VariantInfo);
+    push(vs, VariantInfo("Idle", 0, list(Type)));
+    push(vs, VariantInfo("Run", 1, list(Type)));
+    static_assert(@typeInfo(Mode) == TypeInfo("enum", list(FieldInfo), UInt[2], 0, 2, vs), "enum");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)
