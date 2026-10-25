@@ -560,8 +560,8 @@ impl Parser<'_> {
         None
     }
 
-    /// `@TypeOf(x)`, `@typeInfo(T)`, or `@field(x, k)`, a primary. It reads all operands, then checks their
-    /// number at the name, then the form of the operand of `@TypeOf` at its first token. Thus
+    /// `@TypeOf(x)`, `@typeInfo(T)`, or `@field(x, k)`, a primary. It reads all operands, then
+    /// checks their number at the name, then the form of the operand of `@TypeOf` at its first token. Thus
     /// a syntax error in an operand comes first. The operand of `@typeInfo` is any expression.
     /// Another builtin is `S004`.
     fn builtin_expr(&mut self) -> Res {
