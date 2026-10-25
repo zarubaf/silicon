@@ -54,11 +54,16 @@ pub(in crate::eval) fn child_key<T>(pos: Pos, m: &str, x: &str, k: u32) -> Res<T
 /// instance type `child`. The key has the limit of a string in a message (section 5.5).
 pub(in crate::eval) fn no_port<T>(pos: Pos, child: &str, key: &str) -> Res<T> {
     let key = str_text(key);
-    fail(
+    let err = fail(
         Code::S010,
         pos,
         format!("`{child}` has no public port `{key}`; select a port that `{child}` declares"),
-    )
+    );
+    #[cfg(test)]
+    if let Err(crate::eval::Stop::Error(e)) = &err {
+        crate::counters::add(crate::counters::Count::TextBytes, e.message.len() as u64);
+    }
+    err
 }
 
 /// A static family key as the typed use at `Nat` sees it: a key, a number out of range with its
@@ -126,18 +131,22 @@ impl Evaluator<'_> {
     /// The scalar port with the symbol `y` and the name `name` at `pos` of the done instantiation
     /// `inst` of the instance type `ty`. A family of the child without a key is `S010` "Family
     /// as a value", and a name that the child does not declare is "No public port" (section
-    /// 5.6).
+    /// 5.6). The base `base` of an `@field` is part of the name of the family in the text.
     pub(in crate::eval) fn port_named(
         &self,
         pos: Pos,
         (inst, ty): (usize, TyId),
         (y, name): (Option<Sym>, &str),
+        base: Option<&Expr>,
     ) -> Res<Port> {
         if let Some(port) = y.and_then(|sym| self.elab.port(inst, (sym, None))) {
             return Ok(port);
         }
         if y.is_some_and(|sym| self.has_family(inst, sym)) {
-            return family_value(pos, name);
+            return match base {
+                Some(base) => family_value(pos, &Self::family_name(base, name)),
+                None => family_value(pos, name),
+            };
         }
         no_port(pos, &self.tys.text(ty), name)
     }

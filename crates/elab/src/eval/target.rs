@@ -29,6 +29,10 @@ impl Evaluator<'_> {
     /// root has no slot, so it evaluates, and its value names it in the text of `S017`.
     pub(super) fn target_part(&mut self, e: &Expr) -> Res<Out> {
         let (root, steps) = chain(e).unwrap_or((e, Vec::new()));
+        // TODO(#344): the targets of an `@field` are step 13.
+        if let Some(step) = steps.iter().find(|s| matches!(s, Sel::Key(..))) {
+            return Self::named_placeholder(step.pos());
+        }
         if let Expr::Name { pos, id, name } = root
             && let Some(family) = self.family_of(*id)
         {
