@@ -1011,7 +1011,7 @@ fn enums_have_distinct_tags() {
 
 /// The forms of ports that a program holds, by name. A form counts at an
 /// executed declaration or call of a reached frame.
-fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 21] {
+fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 26] {
     let ports = p.ports();
     // Two keys of one family whose order as numbers differs from their order
     // as text, in the vectors of the top: `2` and `10`.
@@ -1050,13 +1050,21 @@ fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 21] {
         ("family entry", s.fam_loops + s.fam_arms + s.fam_tops > 0),
         ("as key", as_keys > 0),
         ("family in an arm that does not run", s.skipped_families > 0),
+        ("child read through a temporary", s.temp_reads > 0),
+        ("temporary tuple", s.temp_tuples > 0),
+        ("temporary array", s.temp_arrays > 0),
+        ("temporary struct literal", s.temp_records > 0),
+        ("temporary helper result", s.temp_helpers > 0),
     ]
 }
 
 /// Each form of ports occurs in at least 10% of 256 programs, a family entry
 /// in at least 40%, and an `as` key in at least 30%. The forms of the
 /// arm that does not run have their own test of mutants (`ScalarFamily`
-/// finds a family with no executed entry).
+/// finds a family with no executed entry). A read of a child through a
+/// temporary container (#368) occurs in at least 10% of the programs, and
+/// so does each container: a tuple, an array, a struct literal, and a
+/// helper result.
 #[test]
 fn programs_cover_families() {
     const TAPES: usize = 256;
@@ -1071,7 +1079,7 @@ fn programs_cover_families() {
         }
         assert_eq!(b.stats.port_lost, 0, "a name of the pool reaches no output");
     }
-    assert_eq!(with.len(), 21, "{with:?}");
+    assert_eq!(with.len(), 26, "{with:?}");
     for (form, n) in &with {
         let least = match *form {
             "family entry" => 40,
