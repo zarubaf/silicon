@@ -1,0 +1,18 @@
+// S010: `@field(r, "missing")` checks its name before the later index `key()` evaluates, so the `diagnostic` of `key()` makes no record.
+// TOP M()
+// OBSERVE-NOT: (record
+struct S {
+    a: [Nat; 1],
+}
+fn key() -> Nat {
+    diagnostic("key", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let r = S([1]);
+    // expected-error S010 @+1
+    let z = @field(r, "missing")[key()];
+    o := x;
+}

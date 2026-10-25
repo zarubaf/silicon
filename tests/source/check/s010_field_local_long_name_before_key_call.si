@@ -1,0 +1,21 @@
+// S010: the `let mut` key `s` names no field of `P`. The step pays the name and checks it before the later key `g(s)` evaluates, so `g` neither records nor changes `s` first.
+// TOP M()
+// OBSERVE-NOT: (record
+struct P {
+    a: [UInt[4]; 2],
+    b: [UInt[4]; 2],
+}
+fn g(mut v: String) -> Int {
+    diagnostic("g", v);
+    v = "b";
+    return 1;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let rs = P([1, 2], [3, 4]);
+    let mut s = "abcdefghijklmnopqrstuvwxyz";
+    // expected-error S010 @+1
+    let k = @field(@field(rs, s), g(s));
+    o := x;
+}

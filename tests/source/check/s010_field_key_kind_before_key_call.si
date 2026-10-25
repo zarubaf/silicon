@@ -1,0 +1,21 @@
+// S010: the `let mut` key `i` is an `Int`, and `@field` on a record takes a `String`. The step checks the key before the later key `gi(i)` evaluates, so `gi` neither records nor changes `i` first.
+// TOP M()
+// OBSERVE-NOT: (record
+struct P {
+    a: [UInt[4]; 2],
+    b: [UInt[4]; 2],
+}
+fn gi(mut v: Int) -> Int {
+    diagnostic("gi", v);
+    v = 1;
+    return 0;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let rs = P([1, 2], [3, 4]);
+    let mut i = 0;
+    // expected-error S010 @+1
+    let k = @field(@field(rs, i), gi(i));
+    o := x;
+}
