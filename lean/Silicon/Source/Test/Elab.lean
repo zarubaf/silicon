@@ -3703,6 +3703,9 @@ def keyFns : String :=
   "fn vk(x: UInt[8]) -> Type { let a = [1, 2]; return @TypeOf(a[x]); }\n" ++
   "fn fk(r: Reg[P]) -> Type { return @TypeOf(r.b.0); }\n"
 #guard tyRecords "  diagnostic(\"t\", fk(rg));\n" keyFns == ["(type bool)", "ok"]
+-- A field step gives the declared type of the field, also in a value without a declared type.
+#guard tyRecords ("  let q = Q((1, 2));\n" ++ tyOf "q.t") "struct Q { t: (Nat, Nat) }\n" ==
+  ["(type (tuple (nat nat)))", "ok"]
 -- The operand of `@TypeOf` is no static position, so a register in it passes pass 4.
 #guard tyRecords "  let x: UInt[data_bits(@TypeOf(rg.a))] = 0;\n  diagnostic(\"t\", x);\n" ==
   ["(uint 8 0)", "ok"]
@@ -3733,6 +3736,12 @@ evaluates under the guard `query`: a graph effect there is `S016` with its text.
   "a key of `@TypeOf` holds the register `rg`, but it takes only static values; pass the data " ++
     "through a port, or use it in the module that declares it"
 #guard tyRecords "  diagnostic(\"t\", vk(s));\n" keyFns == ["S011 11:62"]
+-- A handle as the key of a family selection of a child is "Value not static".
+def ekFn : String := "fn ek(x: Instance[C], r: Reg[P]) -> Type { return @TypeOf(x.e[r]); }\n"
+#guard tyRecords "  diagnostic(\"t\", ek(u, rg));\n" ekFn == ["S011 10:63"]
+#guard said (tyMod "  diagnostic(\"t\", ek(u, rg));\n" ekFn) ==
+  "a static position needs a static value, not a handle of `Reg[P]`; compute the value from " ++
+    "static values, for example from constants and `comptime` parameters"
 #guard said (tyMod "  diagnostic(\"t\", vk(s));\n" keyFns) ==
   "a static position needs a static value, not a value of `UInt[8]`; compute the value from " ++
     "static values, for example from constants and `comptime` parameters"
@@ -3892,6 +3901,10 @@ def plMod (body : String) : String :=
   s!"S010 10:17 {Elab.noPortText "Instance[C]" "zz"}"
 #guard plMod "  us[0].a = true;\n" == s!"S010 10:3 {Elab.familyValueText "a"}"
 #guard plMod "  us[0].a[2] = true;\n" == s!"S013 10:11 {Elab.childKeyText "Instance[C]" "a" 2}"
+-- An index with two arguments is `S010` at the index node, before the look-up of the port. A
+-- `:=` target with no public port `zz` is "No public port" at the field node.
+#guard plMod "  us[0].b[1, 2] = true;\n" == "S010 10:3 an index of a value has one argument"
+#guard plMod "  u.zz := true;\n" == s!"S010 10:3 {Elab.noPortText "Instance[C]" "zz"}"
 
 /-!
 The fix of "Port in a place" follows the direction of the port. The child drives an output, so
