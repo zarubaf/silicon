@@ -3658,11 +3658,11 @@ def tyP : String := "(type (struct root P ()))"
 def tyB : String := "(type (tuple (bool (uint 4))))"
 def tyRegP : String := "(type (reg (struct root P ())))"
 
--- The roots: a register, a wire, a memory, an instance, a child input and output, an own input,
--- an own output, and a family entry. Then the steps below them.
-#guard tyRecords (String.join (["rg", "rg.b", "rg.b.1", "w.a", "mm", "u", "u.a", "u.a.b", "u.q",
+-- The steps below a register and a wire, and the roots: a memory, an instance, a child input and
+-- output, an own input, an own output, and a family entry. Then the steps below them.
+#guard tyRecords (String.join (["rg.b", "rg.b.1", "w.a", "mm", "u", "u.a", "u.a.b", "u.q",
     "u.q.b.0", "u.e[1]", "u.r[2]", "i", "i.b", "s", "o", "o.a", "req[3]", "req[3].b"].map tyOf)) ==
-  [tyP, tyB, "(type (uint 4))", "(type (uint 8))", "(type (mem (uint 8) 4))",
+  [tyB, "(type (uint 4))", "(type (uint 8))", "(type (mem (uint 8) 4))",
     "(type (instance root C ()))", "(type (input (struct root P ())))", tyB, tyP, "(type bool)",
     "(type (input (uint 2)))", "(type (uint 3))", tyP, tyB, "(type (uint 8))", tyP,
     "(type (uint 8))", tyP, tyB, "ok"]
