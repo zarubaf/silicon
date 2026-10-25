@@ -186,6 +186,14 @@ impl Evaluator<'_> {
         self.field_number_by(parts.item()?, Some(y), name)
     }
 
+    /// The symbol of the field that the name of the step `n` names, if its key is a name.
+    pub(super) fn named_sym(&self, n: &Named<'_>) -> Option<Sym> {
+        match self.store.value(&n.key) {
+            Value::Str(name) => self.syms.find(name),
+            _ => None,
+        }
+    }
+
     /// The number of the field that the paid name of the step `n` names in the record `a`.
     pub(super) fn named_agg_field(&self, n: &Named<'_>, a: &Agg) -> Option<usize> {
         let Value::Str(name) = self.store.value(&n.key) else {
@@ -341,13 +349,8 @@ impl Evaluator<'_> {
             _ => out,
         };
         let seen = self.store.seen(&out);
-        let key = self.store.value(&n.key);
-        let plan = self.named_plan(n, At::Seen(seen), key)?;
-        if !n.paid
-            && let Some(name) = plan.name()
-        {
-            Self::pay_name(&mut self.fuel, n.kp, name)?;
-        }
+        let plan = self.named_plan(n, At::Seen(seen), self.store.value(&n.key))?;
+        Self::pay_unpaid(&mut self.fuel, n, &plan)?;
         let pick = self.named_finish(n, seen, &plan)?;
         self.named_apply(n, out, pick)
     }
@@ -375,8 +378,18 @@ impl Evaluator<'_> {
         self.key_plan(n.kp, base, key, about)
     }
 
-    /// The charge of the size of a name of a key at `kp`: 1 plus its characters. It parts the
+    /// The charge of the name of the checked step `n` with the plan `plan`, if the step did not pay
+    /// it yet. Each look-up of a key runs its kind checks (`named_plan`), then this charge, then
+    /// the look-up, so no look-up reads a name that is not paid (Lean `fieldKeyOf`). It parts the
     /// fuel from the evaluator, so the name can stay where it lies in the store.
+    pub(super) fn pay_unpaid(fuel: &mut Fuel, n: &Named<'_>, plan: &Plan<'_>) -> Res<()> {
+        match plan.name() {
+            Some(name) if !n.paid => Self::pay_name(fuel, n.kp, name),
+            _ => Ok(()),
+        }
+    }
+
+    /// The charge of the size of a name of a key at `kp`: 1 plus its characters.
     pub(super) fn pay_name(fuel: &mut Fuel, kp: Pos, name: &str) -> Res<()> {
         fuel.pay(1 + name.chars().count() as u128).map_err(at(kp))
     }

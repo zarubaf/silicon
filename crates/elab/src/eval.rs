@@ -868,7 +868,11 @@ impl Evaluator<'_> {
                 pos,
                 builtin: Builtin::TypeOf,
                 args,
-            } => self.type_of_builtin(*pos, args),
+            } => match args.as_slice() {
+                [operand] => Ok(Some(self.type_of_builtin(*pos, operand)?)),
+                // The parser fixes the arity (`S001`), so another shape has no value here.
+                _ => Ok(None),
+            },
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
                 Opnd::Static(a) if self.is_agg(&a) => fail(
                     Code::S010,

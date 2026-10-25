@@ -107,13 +107,9 @@ impl<'a> Walk<'a> {
 
 impl Evaluator<'_> {
     /// The query `@TypeOf(x)` at `pos`: the node charged 1. The result is the type as a new value.
-    pub(super) fn type_of_builtin(&mut self, pos: Pos, args: &[Expr]) -> Res<Option<super::Out>> {
-        // The parser gives `@TypeOf` its one operand.
-        let Some(operand) = args.first() else {
-            return Ok(None);
-        };
+    pub(super) fn type_of_builtin(&mut self, pos: Pos, operand: &Expr) -> Res<super::Out> {
         let ty = self.type_of_part(pos, operand)?;
-        Ok(Some(super::Out::Made(Val::Static(Value::Type(ty)))))
+        Ok(super::Out::Made(Val::Static(Value::Type(ty))))
     }
 
     /// The type of the place `x` of `@TypeOf` at `pos`. The root resolves with no charge. Its
@@ -534,13 +530,8 @@ impl Evaluator<'_> {
                     #[cfg(test)]
                     crate::counters::add(crate::counters::Count::Queried, 1);
                     let (number, field) = if let Key::Named(n) = key {
-                        let at = At::Seen(seen);
-                        let plan = self.named_plan(n, at, self.store.value(&n.key))?;
-                        if !n.paid
-                            && let Some(name) = plan.name()
-                        {
-                            Self::pay_name(&mut self.fuel, n.kp, name)?;
-                        }
+                        let plan = self.named_plan(n, At::Seen(seen), self.store.value(&n.key))?;
+                        Self::pay_unpaid(&mut self.fuel, n, &plan)?;
                         match self.named_finish(n, seen, &plan)? {
                             Pick::Field(number, ft, _) => (number, Some(ft)),
                             Pick::Index(i) => self.step_value(&Key::Index(n.pos, n.kp, i), seen)?,
@@ -737,13 +728,8 @@ impl Evaluator<'_> {
     /// `queryField`). The checks of its key charge the size of a name that the step did not pay
     /// yet, and the selection is the step of a field or an index in the type.
     fn named_ty(&mut self, n: &Named<'_>, ty: TyId) -> Res<TyId> {
-        let key = self.store.value(&n.key);
-        let plan = self.named_plan(n, At::Ty(ty), key)?;
-        if !n.paid
-            && let Some(name) = plan.name()
-        {
-            Self::pay_name(&mut self.fuel, n.kp, name)?;
-        }
+        let plan = self.named_plan(n, At::Ty(ty), self.store.value(&n.key))?;
+        Self::pay_unpaid(&mut self.fuel, n, &plan)?;
         self.named_ty_by(n, ty, &plan)
     }
 
@@ -773,13 +759,8 @@ impl Evaluator<'_> {
     /// `Instance` handle selects the port of its child.
     fn named_on_handle(&mut self, n: &Named<'_>, handle: &Handle) -> Res<(InstInfo, Port)> {
         let seen = Seen::Handle(handle);
-        let key = self.store.value(&n.key);
-        let plan = self.named_plan(n, At::Seen(seen), key)?;
-        if !n.paid
-            && let Some(name) = plan.name()
-        {
-            Self::pay_name(&mut self.fuel, n.kp, name)?;
-        }
+        let plan = self.named_plan(n, At::Seen(seen), self.store.value(&n.key))?;
+        Self::pay_unpaid(&mut self.fuel, n, &plan)?;
         match self.named_finish(n, seen, &plan)? {
             Pick::Port(info, port) => Ok((info, port)),
             // Only an `Instance` handle is a base of `@field`, and it selects a port.
