@@ -13,7 +13,7 @@
 use super::field::{At, InstInfo, Pick};
 use super::inst::{child_key, family_value, no_port};
 use super::place::{Key, Named, Sel, chain, key_pos};
-use super::{Evaluator, GuardKind, Out, Res, fail, need};
+use super::{Evaluator, GuardKind, Out, Res, at, fail, need};
 use crate::Code;
 use crate::hw::{Handle, Ref, Root, Seen};
 use crate::names::Sym;
@@ -147,9 +147,15 @@ impl Evaluator<'_> {
                 at += 2;
                 continue;
             }
-            let (out, taken) = self.target_run(cur, keys.get(at..).unwrap_or_default())?;
+            let (out, taken, unfinished) =
+                self.target_run(cur, keys.get(at..).unwrap_or_default())?;
             cur = out;
             at += taken;
+            if let (Some(pick), Some(Key::Named(n))) = (unfinished, keys.get(at)) {
+                cur = self.named_apply(n, cur, pick)?;
+                at += 1;
+                continue;
+            }
             if taken == 0 {
                 cur = self.target_step(start, cur, key)?;
                 at += 1;
@@ -159,36 +165,62 @@ impl Evaluator<'_> {
     }
 
     /// The longest run of steps of `keys` through containers of a type with the handle flag,
-    /// from the reference `base`: the reference to the part where the run ends, and the number
-    /// of steps taken. One cursor walks the path of `base` from the root, so each step takes
-    /// constant work. The checks read no node that a charge changes, so they run before the
-    /// charges of the run, and the first step that fails ends the run before it: `target_step`
-    /// gives its charge and its error.
-    fn target_run(&mut self, base: Out, keys: &[Key<'_>]) -> Res<(Out, usize)> {
+    /// from the reference `base`: the reference to the part where the run ends, the number of
+    /// steps taken, and the selection of a step that the run paid and checked but cannot take.
+    /// One cursor walks the path of `base` from the root, so each step takes constant work. The
+    /// checks of a step read no node that a charge changes, so they run before its charge, and the
+    /// first step that fails its check ends the run before it: `target_step` gives its charge and
+    /// its error. An `@field` step with a name pays the size of the name between its kind checks
+    /// and the look-up (Lean `fieldTarget`), so the run pays it here and keeps the cursor.
+    fn target_run(&mut self, base: Out, keys: &[Key<'_>]) -> Res<(Out, usize, Option<Pick>)> {
         let Out::Ref(mut r) = base else {
-            return Ok((base, 0));
+            return Ok((base, 0, None));
         };
         let mut taken = Vec::new();
         let mut cur = self.store.at(&r);
+        let mut unfinished = None;
         for key in keys {
             let Seen::Agg(a) = cur else { break };
             if !a.stored_ty().is_some_and(TyId::holds_handles) {
                 break;
             }
-            let Some((k, next)) = self.node_step(cur, key) else {
-                break;
+            let step = match key {
+                Key::Named(n) if n.charges => {
+                    let plan = self.named_plan(n, At::Seen(cur), self.store.value(&n.key))?;
+                    if let Some(name) = plan.name() {
+                        Self::pay_name(&mut self.fuel, n.kp, name)?;
+                    }
+                    let pick = self.named_finish(n, cur, &plan)?;
+                    let next = match &pick {
+                        Pick::Field(k, ..) => self.node_next(cur, *k),
+                        _ => None,
+                    };
+                    next.ok_or(pick)
+                }
+                key => {
+                    let Some(step) = self.node_step(cur, key) else {
+                        break;
+                    };
+                    if !matches!(key, Key::Index(..) | Key::Named(_)) {
+                        self.fuel.pay(1).map_err(at(key_pos(key)))?;
+                    }
+                    Ok(step)
+                }
             };
-            taken.push(k);
-            cur = next;
-        }
-        for key in keys.iter().take(taken.len()) {
-            if !matches!(key, Key::Index(..) | Key::Named(_)) {
-                self.charge(key_pos(key), 1)?;
+            match step {
+                Ok((k, next)) => {
+                    taken.push(k);
+                    cur = next;
+                }
+                Err(pick) => {
+                    unfinished = Some(pick);
+                    break;
+                }
             }
         }
         let count = taken.len();
         r.path.extend(taken);
-        Ok((Out::Ref(r), count))
+        Ok((Out::Ref(r), count, unfinished))
     }
 
     /// The text "`:=` target kind" of section 6.2 for the selected value `a`.

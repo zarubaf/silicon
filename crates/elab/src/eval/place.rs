@@ -997,17 +997,19 @@ impl Evaluator<'_> {
     /// stored root: the number of the part and the part. A step that fails its check, or that
     /// finds a reference to normalize, is no such step, so `agg_key` gives its error or its
     /// charge.
-    pub(super) fn node_step<'s>(
-        &'s self,
-        cur: Seen<'s>,
-        key: &Key<'_>,
-    ) -> Option<(usize, Seen<'s>)> {
+    pub(super) fn node_step<'s>(&self, cur: Seen<'s>, key: &Key<'_>) -> Option<(usize, Seen<'s>)> {
         let Seen::Agg(a @ (Agg::Array(..) | Agg::Tuple(..) | Agg::Record(..) | Agg::List(..))) =
             cur
         else {
             return None;
         };
         let k = self.node_key(a, key)?;
+        self.node_next(cur, k)
+    }
+
+    /// The part `k` of the container node `cur`, if the step stays inside the nodes of a stored
+    /// root: a part that is a reference to normalize is no such step.
+    pub(super) fn node_next<'s>(&self, cur: Seen<'s>, k: usize) -> Option<(usize, Seen<'s>)> {
         let next = self.store.step(cur, k);
         if let Seen::Agg(Agg::Ref(_, t)) = next
             && (self.tys.meta(*t).leaves.is_zero()
