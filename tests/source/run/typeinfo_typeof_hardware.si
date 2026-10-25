@@ -1,0 +1,17 @@
+// `@typeInfo(@TypeOf(h))` is valid for hardware: the query reads no register, no input, and no wire.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    wire w: Bool;
+    static_assert(@typeInfo(@TypeOf(x)) == TypeInfo("uint", list(FieldInfo), Unit, 0, 8, list(VariantInfo)), "input");
+    static_assert(@typeInfo(@TypeOf(r)).kind == "reg", "register");
+    static_assert(@typeInfo(@TypeOf(w)).kind == "wire", "wire");
+    w := true;
+    r := x;
+    o := read(r);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 3) out=(o 0)
+// STEP in=(clock$0rst false x 250) out=(o 3)

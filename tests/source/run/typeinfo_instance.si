@@ -1,0 +1,15 @@
+// `Instance[M]` shows no ports: the element is `Unit` and the other fields are default.
+// TOP M()
+module C() {
+    input y: UInt[8];
+    output q: UInt[8];
+    q := y;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Instance[C]) == TypeInfo("instance", list(FieldInfo), Unit, 0, 0, list(VariantInfo)), "instance");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

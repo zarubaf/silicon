@@ -1,0 +1,11 @@
+// An alias gives the metadata of the type that it names.
+// TOP M()
+type Byte = UInt[8];
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Byte) == TypeInfo("uint", list(FieldInfo), Unit, 0, 8, list(VariantInfo)), "uint");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

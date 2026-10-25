@@ -1,0 +1,10 @@
+// `@typeInfo(Nat)` gives the kind `nat`. Only the default fields stay: no fields, the element `Unit`, the length 0, and no variants.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Nat) == TypeInfo("nat", list(FieldInfo), Unit, 0, 0, list(VariantInfo)), "nat");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

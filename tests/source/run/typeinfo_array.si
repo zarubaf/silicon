@@ -1,0 +1,10 @@
+// An array type sets the element and the length. The width is 0, also for hardware data; the fields stay empty.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo([UInt[8]; 3]) == TypeInfo("array", list(FieldInfo), UInt[8], 3, 0, list(VariantInfo)), "array");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

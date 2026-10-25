@@ -1,0 +1,14 @@
+// `Reg[T]` sets the element to `T`. The width and the length are 0.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: (Bool, UInt[4]),
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Reg[P]) == TypeInfo("reg", list(FieldInfo), P, 0, 0, list(VariantInfo)), "reg");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

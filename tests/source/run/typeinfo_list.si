@@ -1,0 +1,10 @@
+// A list type sets the element. The length is 0, because the type has no length.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(List[Nat]) == TypeInfo("list", list(FieldInfo), Nat, 0, 0, list(VariantInfo)), "list");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

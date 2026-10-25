@@ -1,0 +1,10 @@
+// `Wire[T]` sets the element to `T`. The width and the length are 0.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Wire[Bool]) == TypeInfo("wire", list(FieldInfo), Bool, 0, 0, list(VariantInfo)), "wire");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

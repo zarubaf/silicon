@@ -1,0 +1,10 @@
+// `Mem[T, N]` sets the element to `T` and the length to `N`.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@typeInfo(Mem[UInt[8], 16]) == TypeInfo("mem", list(FieldInfo), UInt[8], 16, 0, list(VariantInfo)), "mem");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)
