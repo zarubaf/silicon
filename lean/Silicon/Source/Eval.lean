@@ -2425,6 +2425,87 @@ def queryField (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value)
   | .port id path iface ty y name k => return portQuery id path (← keyPort kp iface ty b y name k)
 
 /-!
+The target that the port `q` of the child number `id` with the path `path` gives, in a `:=`
+target that starts at `s` (section 5.2). An input gives its handle. An output is `S017` "Child
+output as a `:=` target".
+-/
+def targetPort (s : Pos) (id : Nat) (path : Path) (q : Port) : M Val := do
+  if q.input then return .handle (.input id path q)
+  fail .S017 s (Elab.outputText q.text)
+
+/-!
+The step `sel` of a `:=` target that starts at `s`, on the base `v`, with the index `k` of
+`targetKeys` (sections 5.2 and 9.4). The static type of the base decides. A field of an
+`Instance` handle selects the child port with no charge (`targetPort`). On a container of a type
+with the handle flag, a field and a selector charge 1, and an index step charged with its index.
+Then the step selects the part with its checks (`S010` and `S013`). Each other base, also
+another handle, is `S017` at `s`.
+-/
+def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : M Val := do
+  let (sel, key) := step
+  match v, sel with
+  | .handle (.inst k path iface ty), .field q f =>
+    match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
+    | some port => targetPort s k path port
+    | none => fail .S010 q (Elab.noPortText ty.text f.name)
+  | .agg a, sel =>
+    unless a.ty?.any (·.info.handles) do fail .S017 s Elab.partText
+    match sel, key with
+    | .index q [i], some k => return (← pickKey q i.pos v k).2
+    | .index q _, _ => fail .S010 q "an index of a value has one argument"
+    | .select q r i, _ =>
+      charge q 1
+      return (← selectKey q r i v).2
+    | .field q f, _ =>
+      charge q 1
+      return (← fieldKey q f v).2.1
+    -- TODO(#344): an `@field` step of a `:=` target (section 9.3).
+    | .key q .., _ => fail .S004 q "a builtin is not supported yet"
+  | _, _ => fail .S017 s Elab.partText
+
+/-!
+The entry of the family `f` of the child behind the `Instance` handle `v`, with the static key
+`k` at `kp`, in a `:=` target that starts at `s` (section 5.2). The key gets the type and range
+checks of a family selection (`familyKey`). A key that the child did not declare is `S013`
+"Child family key" (`childPort`). An input entry gives its handle, and an output entry is `S017`
+(`targetPort`).
+-/
+def childTarget (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) : M Val := do
+  let key ← Elab.familyKey kp k
+  let .handle (.inst id path iface ty) := v | fail .S017 s Elab.partText
+  let y := ((← read).field f.pos).getD 0
+  targetPort s id path (← childPort kp iface ty y f.name key)
+
+/-!
+One step of the walk of a `:=` target that starts at `s`, on the base `v` (section 5.2). `fam`
+holds a family of the child behind `v` that the step before named. A field that names a family
+of a child keeps it for the next step, so the walk does not start again from the root. That step
+is an index, and its key selects the entry (`childTarget`). Else it is `S010` "Family as a
+value" at `s`. Each other step selects in `targetStep`.
+-/
+def walkStep (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
+    M (Val × Option Ident) := do
+  match fam, step with
+  | some f, (.index _ [i], some k) => return (← childTarget s v f i.pos k, none)
+  | some f, _ => fail .S010 s (Elab.familyValueText f.name)
+  | none, (.field _ f, _) =>
+    if ← Elab.childFamily v f then return (v, some f) else return (← targetStep s v step, none)
+  | none, _ => return (← targetStep s v step, none)
+
+/-!
+The walk of the steps `steps` of a `:=` target that starts at `s`, from the base `v` outward,
+with a pending family `fam` of a child (`walkStep`). A family without its key at the end is
+`S010` "Family as a value" at `s`.
+-/
+def targetWalk (s : Pos) (v : Val) (fam : Option Ident) : List (Sel × Option Value) → M Val
+  | [] => match fam with
+    | some f => fail .S010 s (Elab.familyValueText f.name)
+    | none => pure v
+  | step :: rest => do
+    let (w, fam) ← walkStep s v fam step
+    targetWalk s w fam rest
+
+/-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
 charges 1, then its index evaluates by `ev` in a structural context (section 9.4) and is static
 (`S011`). Another step has no index here.
@@ -2561,7 +2642,7 @@ def familyTarget (ev : Resolve.Expr → M (Option Out)) (s rp : Pos) (x : String
     let v ← guardedBy .key do return (← need i (← ev i)).value
     let k ← selectionKey rp i.pos x v
     let keys ← targetKeys ev rest
-    Elab.targetWalk s (← entryVal i.pos x id k) none keys
+    targetWalk s (← entryVal i.pos x id k) none keys
   | sels => do
     let _ ← targetKeys ev sels
     fail .S010 rp (Elab.familyValueText x)
@@ -2569,7 +2650,7 @@ def familyTarget (ev : Resolve.Expr → M (Option Out)) (s rp : Pos) (x : String
 /-!
 The part that the `:=` target `e` selects. A root that is not a local evaluates first. Then
 the indices evaluate (`targetKeys`), and a local root gives its value after them. One walk then
-runs the steps from the root outward (`Elab.targetWalk`). Another root has no slot, and its value
+runs the steps from the root outward (`targetWalk`). Another root has no slot, and its value
 names it in the text of `S017`. The target is an identity, so it opens no window and charges
 no held root.
 -/
@@ -2583,7 +2664,7 @@ def targetPart (ev : Resolve.Expr → M (Option Out)) (e : Resolve.Expr) : M Val
   let v ← match early with
     | some v => pure v
     | none => targetRoot ev root
-  Elab.targetWalk e.pos v none keys
+  targetWalk e.pos v none keys
 
 /-!
 The target of a `:=` binding: a register, a wire, an own output, or a child input. A handle
