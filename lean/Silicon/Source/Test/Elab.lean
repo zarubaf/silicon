@@ -3688,6 +3688,9 @@ def tyWire : String := "(type (wire (struct root P ())))"
 #guard tyRecords ("  let st = (\"ab\", 1);\n" ++ tyOf "st.0[0]") == ["S010 22:27"]
 #guard tyRecords "  diagnostic(\"t\", fs(\"ab\"));\n"
     "fn fs(x: String) -> Type { return @TypeOf(x[0]); }\n" == ["S010 10:43"]
+#guard said (tyMod "  diagnostic(\"t\", fs(\"ab\"));\n"
+    "fn fs(x: String) -> Type { return @TypeOf(x[0]); }\n") == "a query cannot index a " ++
+  "string; an index of a string has the type `String`, so write `String` instead of the query"
 -- A hardware local, a container of handles, and a tuple of a handle and a static value.
 #guard tyRecords ("  let h = s +% 1;\n  let rs = [rg, rg];\n  let x = (rg, 1);\n" ++
     String.join (["h", "rs", "rs[1]", "rs[1].a", "x", "x.0", "x.0.b.1", "x.1"].map tyOf)) ==
@@ -3706,6 +3709,16 @@ def keyFns : String :=
 -- A field step gives the declared type of the field, also in a value without a declared type.
 #guard tyRecords ("  let q = Q((1, 2));\n" ++ tyOf "q.t") "struct Q { t: (Nat, Nat) }\n" ==
   ["(type (tuple (nat nat)))", "ok"]
+-- The field type is the declared one, not a type that a walk of the stored value builds: the
+-- tuple `tt` has the type `(Int, Int)`, and `q.t` still gives `(Nat, Nat)`. The statement, the node
+-- and the step charge 3 and no tuple node, no size; a static tuple `tt` builds its type for 6.
+def tyQ : String := "struct Q { t: (Nat, Nat) }\n"
+#guard tyRecords ("  let tt = (1, 2);\n  let q = Q(tt);\n" ++ tyOf "tt" ++ tyOf "q.t") tyQ ==
+  ["(type (tuple (int int)))", "(type (tuple (nat nat)))", "ok"]
+#guard elabUnits (tyMod "  let q = Q((1, 2));\n  let t = @TypeOf(q.t);\n" tyQ) "M" ==
+  elabUnits (tyMod "  let q = Q((1, 2));\n" tyQ) "M" + 3
+#guard elabUnits (tyMod "  let tt = (1, 2);\n  let t = @TypeOf(tt);\n" tyQ) "M" ==
+  elabUnits (tyMod "  let tt = (1, 2);\n" tyQ) "M" + 6
 -- The operand of `@TypeOf` is no static position, so a register in it passes pass 4.
 #guard tyRecords "  let x: UInt[data_bits(@TypeOf(rg.a))] = 0;\n  diagnostic(\"t\", x);\n" ==
   ["(uint 8 0)", "ok"]
