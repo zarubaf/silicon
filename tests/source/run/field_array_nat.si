@@ -1,0 +1,10 @@
+// `@field(a, 1)` selects an element of an array by a static `Nat`, as `a[1]` does.
+// TOP M()
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let a = [x, x +% 1, x +% 2];
+    o := @field(a, 1);
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 12) out=(o 13)

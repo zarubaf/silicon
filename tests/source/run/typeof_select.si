@@ -1,0 +1,11 @@
+// A number selects a part of a tuple. The step reads no hardware.
+// TOP M()
+module M() domains() {
+    input t: (Bool, UInt[4]);
+    output o: UInt[4];
+    static_assert(@TypeOf(t.0) == Bool, "first");
+    static_assert(@TypeOf(t.1) == UInt[4], "second");
+    o := t.1;
+}
+// STEP in=(t.0 true t.1 5) out=(o 5)
+// STEP in=(t.0 false t.1 9) out=(o 9)

@@ -1,0 +1,15 @@
+// A name that is no binding evaluates as an expression: a function gives its function type, and
+// a type gives `Type`.
+// TOP M()
+fn inc(n: Nat) -> Nat {
+    return n + 1;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@TypeOf(inc) == fn (Nat) -> Nat, "a function");
+    static_assert(@TypeOf(UInt[8]) == Type, "a type");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

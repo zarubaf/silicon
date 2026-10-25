@@ -1,0 +1,15 @@
+// `@field(r, "a")` selects a field of a record by its name, as `r.a` does.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let r = P(x, true);
+    o := @field(r, "a");
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 12) out=(o 12)

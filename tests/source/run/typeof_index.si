@@ -1,0 +1,11 @@
+// An index with a static key gives the element type.
+// TOP M()
+module M() domains() {
+    input a: [UInt[8]; 3];
+    output o: UInt[8];
+    static_assert(@TypeOf(a[1]) == UInt[8], "element");
+    static_assert(@TypeOf(a) == [UInt[8]; 3], "array");
+    o := a[2];
+}
+// STEP in=(a.0 1 a.1 2 a.2 3) out=(o 3)
+// STEP in=(a.0 4 a.1 5 a.2 250) out=(o 250)

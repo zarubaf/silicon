@@ -1,0 +1,17 @@
+// A `String` key selects a public port of an instance: `@field(u, "sum")` is `u.sum`.
+// TOP M()
+module C() domains() {
+    input a: UInt[4];
+    output sum: UInt[4];
+    sum := a +% 1;
+}
+
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    o := @field(u, "sum");
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 12) out=(o 13)

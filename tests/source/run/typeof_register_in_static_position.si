@@ -1,0 +1,19 @@
+// The operand of `@TypeOf` is no static position, so a register in it passes the static check.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg rg: P = P();
+    static_assert(data_bits(@TypeOf(rg.a)) == 8, "the width");
+    let y: UInt[data_bits(@TypeOf(rg.a))] = x;
+    rg := P(y, (true, 1));
+    o := read(rg).a;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

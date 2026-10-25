@@ -1,0 +1,18 @@
+// An own output gives its data type. The query does not read the output.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input x: UInt[8];
+    output p: P;
+    output o: UInt[8];
+    static_assert(@TypeOf(p) == P, "the output");
+    static_assert(@TypeOf(p.b) == BU, "a part");
+    p := P(x, (true, 1));
+    o := x;
+}
+// STEP in=(x 3) out=(o 3 p.a 3 p.b.0 true p.b.1 1)
+// STEP in=(x 250) out=(o 250 p.a 250 p.b.0 true p.b.1 1)

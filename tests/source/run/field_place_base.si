@@ -1,0 +1,11 @@
+// `@field` is a step of a place: it can be the base of a further step.
+// TOP M()
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let mut t = (x, [x, x]);
+    @field(@field(t, 1), 0) = x +% 3;
+    o := t.0 +% t.1[0];
+}
+// STEP in=(x 3) out=(o 9)
+// STEP in=(x 12) out=(o 11)

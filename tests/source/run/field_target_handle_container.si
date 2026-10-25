@@ -1,0 +1,15 @@
+// `@field(rs, 1) := x` writes the register of an array of registers, as `rs[1] := x` does.
+// TOP M()
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    reg r: UInt[4] = 0;
+    reg s: UInt[4] = 0;
+    let rs = [r, s];
+    @field(rs, 1) := x;
+    r := 0;
+    o := read(s);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

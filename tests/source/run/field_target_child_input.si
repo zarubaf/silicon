@@ -1,0 +1,17 @@
+// `@field(u, "a") := x` binds the child input `u.a`.
+// TOP M()
+module C() domains() {
+    input a: UInt[4];
+    output sum: UInt[4];
+    sum := a +% 1;
+}
+
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    @field(u, "a") := x;
+    o := u.sum;
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 12) out=(o 13)

@@ -1,0 +1,21 @@
+// A `let` of `@field(rp, "a")` reads the register, but `@field(rs, 0)` keeps the handle of the register.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    reg rp: P = P(0, false);
+    reg r: UInt[4] = 0;
+    let rs = [r];
+    let y = @field(rp, "a");
+    let h = @field(rs, 0);
+    rp := P(x, true);
+    h := x;
+    o := y +% read(r);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 8)

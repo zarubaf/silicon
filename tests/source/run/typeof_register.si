@@ -1,0 +1,18 @@
+// A register gives its handle type `Reg[P]`.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg rg: P = P();
+    static_assert(@TypeOf(rg) == Reg[P], "the handle");
+    rg := P(x, (true, 1));
+    o := read(rg).a;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

@@ -1,0 +1,17 @@
+// An indexed `PortKey` selects an entry of a family: `@field(u, PortKey("gnt", true, 2))` is `u.gnt[2]`.
+// TOP M()
+module C() domains() {
+    input req[2]: UInt[4];
+    output gnt[2]: UInt[4];
+    gnt[2] := req[2] +% 1;
+}
+
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.req[2] := x;
+    o := @field(u, PortKey("gnt", true, 2));
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 12) out=(o 13)

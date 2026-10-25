@@ -1,0 +1,17 @@
+// An instance handle gives `Instance[C]`.
+// TOP M()
+module C() domains() {
+    input a: UInt[8];
+    output q: UInt[8];
+    q := a;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    static_assert(@TypeOf(u) == Instance[C], "the handle");
+    u.a := x;
+    o := u.q;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)
