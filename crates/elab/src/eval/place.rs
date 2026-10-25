@@ -655,10 +655,8 @@ impl Evaluator<'_> {
                 break;
             }
             // A key with a call can change a `let mut` local that a waiting key reads, so the
-            // waiting keys take their values first. A key that cannot fails at the walk.
-            if !self.own_waiting(step, &mut keyed) {
-                break;
-            }
+            // waiting keys take their values first.
+            self.own_waiting(step, &mut keyed);
             // An index evaluates while the walk waits at the part that the earlier steps lead
             // to. At a static part the base holds the root local, as in Lean, to the end. An
             // index with no call cannot change the root, so the hold has no effect for it. For
@@ -788,40 +786,20 @@ impl Evaluator<'_> {
     }
 
     /// Before the key of `step` evaluates, gives each waiting key of `keyed` its own value if the
-    /// key of `step` has a call, as Lean reads each key at its step. The copy takes work within
-    /// the charge of the key (`owns_within_charge`). Another key fails its check at the walk, and
-    /// the run stops there: the result is false, and the caller applies the steps first. A step
-    /// with a call leaves no key waiting.
-    fn own_waiting(&mut self, step: &Sel<'_>, keyed: &mut Keyed<'_>) -> bool {
+    /// key of `step` has a call, as Lean reads each key at its step. The caller has checked every
+    /// step by its type (`checked`), so each waiting key is a paid name, and its copy takes work
+    /// within the charge of the key. A step with a call leaves no key waiting.
+    fn own_waiting(&mut self, step: &Sel<'_>, keyed: &mut Keyed<'_>) {
         if keyed.waiting.is_empty() || !self.has_call(step) {
-            return true;
+            return;
         }
         for at in keyed.waiting.drain(..) {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Waited, 1);
-            let Some(Key::Named(n)) = keyed.keys.get_mut(at) else {
-                continue;
-            };
-            if !Self::owns_within_charge(n, self.store.value(&n.key)) {
-                return false;
+            if let Some(Key::Named(n)) = keyed.keys.get_mut(at) {
+                let key = std::mem::replace(&mut n.key, Out::Made(Val::Static(Value::Unit)));
+                n.key = Out::Made(self.store.take(key));
             }
-            let key = std::mem::replace(&mut n.key, Out::Made(Val::Static(Value::Unit)));
-            n.key = Out::Made(self.store.take(key));
-        }
-        true
-    }
-
-    /// Whether a copy of the key `value` of the step `n` takes work within the charge of the key: a
-    /// number of one word, a name that its step paid, or a paid `PortKey` whose index has at most
-    /// 32 bits. Each other key fails its check at the walk.
-    fn owns_within_charge(n: &Named<'_>, value: &Value) -> bool {
-        match value {
-            Value::Int(_) => n.at.is_some(),
-            Value::Str(_) => n.paid,
-            Value::Record(_, fields) => {
-                n.paid && matches!(fields.as_slice(), [.., Value::Int(k)] if k.fits_unsigned(32))
-            }
-            _ => false,
         }
     }
 
@@ -1389,11 +1367,8 @@ impl Evaluator<'_> {
                 keyed.clear();
             }
             // A key with a call can change a `let mut` local that a waiting key reads, so the
-            // waiting keys take their values first. A key that cannot fails at the walk.
-            if !self.own_waiting(step, &mut keyed) {
-                state = self.walk(root, state, keyed.keys(), false)?;
-                keyed.clear();
-            }
+            // waiting keys take their values first.
+            self.own_waiting(step, &mut keyed);
             // A step into a reference normalizes an empty part, which charges its size. As in
             // Lean, that comes before the next step charges, so the walk catches up first.
             if aggregate
