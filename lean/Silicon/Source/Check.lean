@@ -414,7 +414,7 @@ def receiver (pos : Pos) (m : Ident) (r : Ref) (b : Option Nat) (got : Nat) :
 /-! The local of the root of a place, if the expression is a place with a local root. -/
 def root : Resolve.Expr → Option Nat
   | .name _ _ (.local id) | .name _ _ (.family id _) => some id
-  | .index _ b _ | .select _ b .. | .field _ b _ | .builtin _ .field (b :: _) => root b
+  | .index _ b _ | .select _ b .. | .field _ b _ | .atField _ b _ => root b
   | _ => none
 
 /-! Makes the local `id` pending for one more window. `release` ends the windows. -/
@@ -535,14 +535,12 @@ mutual
       let _ ← visit static false x
       for a in as do arm static a
       return none
-    | .builtin _ .typeOf xs => do
-      for x in xs do let _ ← visit false false x
+    | .typeOf _ x => do
+      let _ ← visit false false x
       return none
-    | .builtin _ .field xs => do
-      let mut k := 0
-      for x in xs do
-        let _ ← visit (static || k != 0) false x
-        k := k + 1
+    | .atField _ b k => do
+      let _ ← visit static false b
+      let _ ← visit true false k
       return none
 
   /-- An arm: the arity of its pattern, then its value. A binder is a plain local. -/
