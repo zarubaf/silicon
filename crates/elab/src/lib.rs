@@ -307,8 +307,11 @@ mod tests_fn_call;
 
 #[cfg(test)]
 mod tests_flatten;
+
 #[cfg(test)]
 mod tests_flatten_match;
+#[cfg(test)]
+mod tests_info;
 
 #[cfg(test)]
 mod tests_leaves;
@@ -365,6 +368,9 @@ mod tests_work_match;
 
 #[cfg(test)]
 mod tests_work_query;
+
+#[cfg(test)]
+mod tests_work_reflect;
 
 #[cfg(test)]
 mod tests_work_records;
