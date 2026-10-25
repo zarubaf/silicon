@@ -126,11 +126,22 @@ pub fn check_message(msg: &str, scopes: &[String]) -> Vec<String> {
 /// such a file counts, so no list of forms can drift from the harnesses.
 const ORACLE_DIRS: &[&str] = &["source", "core", "inventory"];
 
-/// True for test expectation files: snapshots and files of the shared test
-/// data directories `tests/{source,core,inventory}/`.
+/// True for the Rust files that only hold tests: `tests.rs`, `tests_*.rs`,
+/// and any `.rs` file below a `tests` directory. A test module inside a
+/// source file has no such path, so the rule cannot see it.
+fn is_rust_test_file(path: &Path) -> bool {
+    let name = path.file_name().map(|n| n.to_string_lossy());
+    path.extension().is_some_and(|e| e == "rs")
+        && (name.is_some_and(|n| n == "tests.rs" || n.starts_with("tests_"))
+            || path.iter().any(|p| p == "tests"))
+}
+
+/// True for test expectation files: snapshots, Rust test files, and files of
+/// the shared test data directories `tests/{source,core,inventory}/`.
 pub fn is_expectation(path: &Path) -> bool {
     let parts: Vec<_> = path.iter().map(|p| p.to_string_lossy()).collect();
-    parts.iter().any(|p| p == "snapshots")
+    is_rust_test_file(path)
+        || parts.iter().any(|p| p == "snapshots")
         // Three components: `tests`, the directory, and a file below it.
         || parts
             .windows(3)
@@ -401,7 +412,43 @@ mod tests {
         assert!(is_expectation(Path::new("tests/core/check/a.sil")));
         assert!(is_expectation(Path::new("tests/source/parse/c.si")));
         assert!(!is_expectation(Path::new("crates/a/src/lib.rs")));
-        assert!(!is_expectation(Path::new("crates/driver/tests/run.rs")));
+        assert!(!is_expectation(Path::new(
+            "crates/a/src/tests_not_rust.txt"
+        )));
+    }
+
+    #[test]
+    fn rust_test_files_are_expectations() {
+        for path in [
+            "crates/a/src/tests.rs",
+            "crates/a/src/build/tests.rs",
+            "crates/a/src/tests_eval.rs",
+            "crates/driver/tests/run.rs",
+            "crates/driver/tests/deep/run.rs",
+        ] {
+            assert!(is_expectation(Path::new(path)), "{path}");
+        }
+        for path in [
+            "crates/a/src/lib.rs",
+            "crates/a/src/contests.rs",
+            "crates/a/src/testsuite.rs",
+            "crates/a/src/tests",
+            "crates/driver/tests/data.txt",
+        ] {
+            assert!(!is_expectation(Path::new(path)), "{path}");
+        }
+        // A test file with a source file in one commit is flagged.
+        let mixed = [
+            PathBuf::from("crates/a/src/build/tests.rs"),
+            PathBuf::from("crates/a/src/build/mod.rs"),
+        ];
+        assert!(
+            check_paths("feat", &mixed)
+                .iter()
+                .any(|p| p.contains("commit-expectations-code"))
+        );
+        let alone = [PathBuf::from("crates/a/src/build/tests.rs")];
+        assert!(check_paths("test", &alone).is_empty());
     }
 
     #[test]
