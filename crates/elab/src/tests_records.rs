@@ -7,6 +7,7 @@
 //! `S015` of the lowering reads as `ok`.
 
 use crate::tests_elab::load;
+use crate::tests_flatten::{lowered, sil_fuel};
 use crate::{Budget, observe_with};
 
 /// The records of `src` with the top `top`, then `ok` or the code and the position of the first
@@ -1972,4 +1973,95 @@ fn an_enum_renders_as_its_tag_and_its_payload() {
             "ok",
         )],
     );
+}
+
+// The order of the steps of `@field` against the charge of a name and against a later key with a
+// call (issue #344). The expected positions and designs are those of the Lean evaluator
+// `silicon-check`, the oracle.
+
+/// A program with a module `M` that selects with `@field` in a tuple that holds the
+/// record `P` and ends with the output `o`. `line` is the statement under test, at line 13.
+fn selected(line: &str) -> String {
+    format!(
+        "struct P {{\n    a: UInt[4],\n    b: (Bool, UInt[4]),\n}}\n\
+         fn z(n: Nat) -> Nat {{ return n; }}\n\
+         module M() domains() {{\n    input x: UInt[4];\n    input pin: P;\n    \
+         output o: UInt[4];\n    let a = [P(x, (true, 1)), P(x, (false, 2))];\n    \
+         let s = (x, P(1, (true, 3)), [P(2, (true, 4)), P(3, (false, 5))]);\n    \
+         let mut m = (x, P(1, (true, 3)), [P(2, (true, 4)), P(3, (false, 5))]);\n    {line}\n}}\n"
+    )
+}
+
+/// The error of the run with the fuel `fuel`, as the code and the position.
+fn error_at(src: &str, fuel: u64) -> String {
+    match lowered(src, "M", fuel) {
+        Ok(_) => "ok".to_owned(),
+        Err(e) => e,
+    }
+}
+
+/// A name that the fuel cannot pay fails at its charge, before the look-up reads the name. The
+/// name `"b"` of the step after an index charges 2, and the look-up of its field is only after
+/// that.
+#[test]
+fn a_name_after_an_index_pays_before_its_look_up() {
+    let src = selected("o := @field(@field(s, 1), \"b\").1;");
+    for (fuel, want) in [
+        (407, "S015 13:31"),
+        (408, "S015 13:31"),
+        (409, "S015 13:5"),
+        (410, "S015 6:1"),
+    ] {
+        assert_eq!(error_at(&src, fuel), want, "with the fuel {fuel}");
+    }
+}
+
+/// A missing name pays its size first too: the error of the look-up comes only when the fuel paid
+/// the name.
+#[test]
+fn a_missing_name_pays_before_the_look_up_fails() {
+    let src = selected("let t = @field(@field(@field(s, 2), 1), \"zz\"); o := x;");
+    for (fuel, want) in [
+        (410, "S015 13:45"),
+        (412, "S015 13:45"),
+        (413, "S010 13:45"),
+    ] {
+        assert_eq!(error_at(&src, fuel), want, "with the fuel {fuel}");
+    }
+}
+/// The program of a write or a read through a key that a later key with a call changes. `key`
+/// is the key, and `change` the function that sets it to `"b"` (a `mut` formal).
+fn changed(body: &str) -> String {
+    format!(
+        "struct P {{\n    a: [UInt[4]; 1],\n    b: [UInt[4]; 1],\n}}\n\
+         fn g(mut v: String) -> Nat {{\n    v = \"b\";\n    return 0;\n}}\n\
+         module M() domains() {{\n    input x: UInt[4];\n    output o: UInt[4];\n    \
+         let mut s = \"a\";\n    let mut q = P([x], [x +% 1]);\n    {body}\n}}\n"
+    )
+}
+
+/// The key `s` is `"a"` when its step runs, even though the key of the next step changes `s`
+/// before the walk would read it. The write goes to the field `a`.
+#[test]
+fn a_write_through_a_name_that_a_later_key_changes() {
+    let src = changed("@field(@field(q, s), g(s)) = 7; o := q.a[0];");
+    let text = sil_fuel(&src, "M", 100_000);
+    assert!(text.contains("(assign o (const 4 7))"), "{text}");
+}
+
+/// The same for a read: the key `s` selects the field `a`, and the key `g(s)` changes `s` after.
+#[test]
+fn a_read_through_a_name_that_a_later_key_changes() {
+    let src = changed("let r = @field(@field(q, s), g(s)); o := r;");
+    let text = sil_fuel(&src, "M", 100_000);
+    assert!(text.contains("(let r (bits 4) q$a$0e)"), "{text}");
+}
+
+/// A write through an index with a call: the key `s` is `"a"` at its step, and the index `g(s)`
+/// changes `s` after. The write goes to the field `a`.
+#[test]
+fn a_write_through_a_name_and_an_index_that_changes_it() {
+    let src = changed("@field(q, s)[g(s)] = 7; o := q.a[0];");
+    let text = sil_fuel(&src, "M", 100_000);
+    assert!(text.contains("(assign o (const 4 7))"), "{text}");
 }
