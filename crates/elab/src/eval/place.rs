@@ -884,6 +884,7 @@ impl Evaluator<'_> {
             let mut cur = self.opnd_seen(&base);
             let mut numbers = Vec::with_capacity(rest.len());
             let mut string_step = None;
+            let mut name_step = None;
             for (at, key) in rest.iter().enumerate() {
                 let number = match key {
                     Key::Index(q, ..) if matches!(cur, Seen::Static(Value::Type(_))) => {
@@ -891,6 +892,12 @@ impl Evaluator<'_> {
                     }
                     Key::Index(..) if matches!(cur, Seen::Static(Value::Str(_))) => {
                         string_step = Some(at);
+                        break;
+                    }
+                    // A name that waits for its charge pays in `named_step`, after its checks and
+                    // before its look-up, so the run ends before it.
+                    Key::Named(n) if n.charges && !n.paid => {
+                        name_step = Some(at);
                         break;
                     }
                     Key::Named(n) => self.named_number(n, cur)?.0,
@@ -912,6 +919,12 @@ impl Evaluator<'_> {
                 out = elem(Opnd::Static(out), number);
             }
             let out = self.resolve_ref(mark, out);
+            if let Some(at) = name_step {
+                base = Opnd::of_out(out);
+                rest = rest.get(at..).unwrap_or_default();
+                mark = None;
+                continue;
+            }
             let Some(at) = string_step else {
                 return Ok(Followed::new(out, at_type, string_last));
             };
