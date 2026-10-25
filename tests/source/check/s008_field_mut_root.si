@@ -1,0 +1,13 @@
+// S008: a `mut` actual needs a root that is `let mut`, also through `@field`.
+// TOP M()
+fn bump(mut v: UInt[4]) -> UInt[4] {
+    v = v +% 1;
+    return v;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let t = (x, x);
+    // expected-error S008 @+1
+    o := bump(@field(t, 0));
+}

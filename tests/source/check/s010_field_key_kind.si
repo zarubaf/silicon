@@ -1,0 +1,9 @@
+// S010: a key of `@field` has the kind of its base. An array takes a `Nat`.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = [true, false];
+    // expected-error S010 @+2
+    // expected-message: `@field` on a value of `[Bool; 2]` takes `Nat`, not a value of `String`; give a static `Nat`
+    o := @field(a, "x");
+}

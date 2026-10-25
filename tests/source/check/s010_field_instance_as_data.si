@@ -1,0 +1,14 @@
+// S010: an instance is no data, also when `@field` selects it from an array.
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    instance v = C();
+    // expected-error S010 @+2
+    // expected-message: `u` is an instance, not data; read its outputs as `u.q`
+    o := @field([u, v], 0);
+}

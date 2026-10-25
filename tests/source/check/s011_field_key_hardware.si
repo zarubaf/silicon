@@ -1,0 +1,13 @@
+// S011: a key of `@field` is static. A function parameter carries a hardware value there.
+// TOP M()
+fn pick(x: UInt[4]) -> UInt[4] {
+    let a = [1, 2];
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[4]`; compute the value from static values, for example from constants and `comptime` parameters
+    return @field(a, x);
+}
+module M() domains() {
+    input s: UInt[4];
+    output o: UInt[4];
+    o := pick(s);
+}

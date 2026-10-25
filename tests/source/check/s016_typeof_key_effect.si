@@ -1,0 +1,10 @@
+// S016: a key of a query has no graph effect such as `diagnostic`.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = [1, 2];
+    // expected-error S016 @+2
+    // expected-message: a key of `@TypeOf` has no graph effect such as `diagnostic`; call `diagnostic` before `@TypeOf`, keep the result in a `let`, and use that name in the key
+    let t = @TypeOf(a[diagnostic("k", 0)]);
+    o := true;
+}

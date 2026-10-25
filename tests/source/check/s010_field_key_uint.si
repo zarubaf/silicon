@@ -1,0 +1,9 @@
+// S010: a key of `@field` is a `Nat`, never a `UInt`, as a family key is.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = [true, false];
+    // expected-error S010 @+2
+    // expected-message: `@field` on a value of `[Bool; 2]` takes `Nat`, not a value of `UInt[4]`; give a static `Nat`
+    o := @field(a, UInt[4](1));
+}

@@ -1,0 +1,19 @@
+// S010: a place cannot select a port of an instance: the output entry. The fix depends on the direction.
+// TOP M()
+module C() domains() {
+    input a[3]: Bool;
+    input b: Bool;
+    output q: Bool;
+    output r[1]: Bool;
+    q := true;
+    r[1] := true;
+}
+module M() domains() {
+    instance u = C();
+    u.a[3] := true;
+    u.b := true;
+    let mut us = [u];
+    // expected-error S010 @+2
+    // expected-message: a place cannot select the port `r[1]` of `Instance[C]`; the child drives the output, so read it as a value, for example `x = u.r[1]`
+    us[0].r[1] = true;
+}

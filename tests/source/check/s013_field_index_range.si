@@ -1,0 +1,9 @@
+// S013: an element key is in the range of the array.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = [true, false];
+    // expected-error S013 @+2
+    // expected-message: the index 2 is out of range for 2 element(s)
+    o := @field(a, 2);
+}

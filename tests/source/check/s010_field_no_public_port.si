@@ -1,0 +1,13 @@
+// S010: a `String` key that names no public port of the child.
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `Instance[C]` has no public port `zz`; select a port that `Instance[C]` declares
+    o := @field(u, "zz");
+}

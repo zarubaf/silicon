@@ -1,0 +1,14 @@
+// S017: an output of a child is no target, also when `@field` names it.
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S017 @+2
+    // expected-message: `q` is an output of the child, not a target; the child drives its outputs, so bind an input of the child
+    @field(u, "q") := true;
+    o := u.q;
+}

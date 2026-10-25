@@ -1,0 +1,10 @@
+// S010: a query cannot index a string. The index has the type `String`, so write `String`.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let st = "ab";
+    // expected-error S010 @+2
+    // expected-message: a query cannot index a string; an index of a string has the type `String`, so write `String` instead of the query
+    let t = @TypeOf(st[0]);
+    o := true;
+}
