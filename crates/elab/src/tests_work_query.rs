@@ -715,3 +715,81 @@ fn w7c_an_alternating_chain_of_local_name_keys_and_calls_walks_once() {
         }
     }
 }
+
+/// How the run of W7d selects and what its root holds: an `@field` step or an index, and a leaf
+/// `x` or `0`.
+#[derive(Clone, Copy)]
+struct Chain {
+    place: bool,
+    named: bool,
+    hardware: bool,
+}
+
+/// The run of a read or a place through `d` steps over the part `m.0` of a nest of arrays, or the
+/// same run without it. Each step is `[one()]`, or `@field(..., one())` if `named`, so a key with
+/// a call follows each step. The nest holds `x` if `hardware`, else `0`.
+fn call_chain_run(d: usize, c: Chain, with: bool, run_key: u64) -> Run {
+    let leaf = if c.hardware { "x" } else { "0" };
+    let nest = format!("{}{leaf}{}", "[".repeat(d), "]".repeat(d));
+    let chain = (0..d).fold("m.0".to_owned(), |inner, _| {
+        if c.named {
+            format!("@field({inner}, one())")
+        } else {
+            format!("{inner}[one()]")
+        }
+    });
+    let body = match (with, c.place) {
+        (false, _) => String::new(),
+        (true, true) => format!("    {chain} = {leaf};\n"),
+        (true, false) => format!("    let y = {chain};\n"),
+    };
+    let src = format!(
+        "fn one() -> Int {{ return 0; }}\nmodule M() {{\n    input x: UInt[8];\n    \
+         output o: UInt[8];\n    let mut m = ({nest}, list(Int), [1, 2]);\n{body}    o := x;\n}}\n"
+    );
+    passing(KEY + run_key, 100_000, &src)
+}
+
+/// W7d. A read and a place through a chain of `d` steps, where a key with a call follows each
+/// step: indices and `@field` steps, over a static nest and over a hardware aggregate root. Lean
+/// checks each step before the next key evaluates, so before each such key the step before it
+/// passes its checks by the type of its container. That check counts as work (`checked`). It goes
+/// on from the last step that it passed, and the walk takes the path once. Thus the checks, the
+/// steps, and the work at `2d` are at most about twice those at `d`. A check from the first step
+/// again, or a walk from the root before each key, grows with `d` times `d`.
+#[test]
+fn w7d_a_chain_with_a_call_after_each_step_checks_each_step_once() {
+    let mut key = 300;
+    for place in [false, true] {
+        for named in [false, true] {
+            for hardware in [false, true] {
+                let c = Chain {
+                    place,
+                    named,
+                    hardware,
+                };
+                let mut at = |d: usize| {
+                    let with = call_chain_run(d, c, true, key);
+                    let without = call_chain_run(d, c, false, key + 1);
+                    key += 2;
+                    let steps = with.counts.stepped - without.counts.stepped;
+                    (extra(&with, &without).0, with.counts.checked, steps)
+                };
+                let ((a, checked_a, steps_a), (b, checked_b, steps_b)) = (at(32), at(64));
+                let case = format!("place {place}, named {named}, hardware {hardware}");
+                assert!(
+                    checked_a >= 32 && checked_b <= 2 * checked_a,
+                    "the checks {checked_a} at d and {checked_b} at 2d ({case})"
+                );
+                assert!(
+                    steps_b <= 2 * steps_a + 16,
+                    "the steps {steps_a} at d and {steps_b} at 2d ({case})"
+                );
+                assert!(
+                    a < b && b <= 2 * a + 64,
+                    "the work {a} at d and {b} at 2d ({case})"
+                );
+            }
+        }
+    }
+}
