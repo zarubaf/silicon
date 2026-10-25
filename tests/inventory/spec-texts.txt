@@ -29,13 +29,6 @@ lean | S007 Arity of `read` | 314
 rust | S007 Arity of `read` | 314
 rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
-fix | S010 `@typeInfo` of a value | 377
-rust | S016 Mutation in a builtin argument | 345
-rust | S016 Graph effect in a builtin argument | 345
-lean | S016 Mutation in a builtin argument | 377
-rust | S016 Mutation in a builtin argument | 377
-lean | S016 Graph effect in a builtin argument | 377
-rust | S016 Graph effect in a builtin argument | 377
 lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
