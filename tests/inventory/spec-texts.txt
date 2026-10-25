@@ -34,14 +34,10 @@ pin | S010 `@typeInfo` of a value | 345
 lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
-rust | S010 No public port | 344
 fix | S010 Port in a place | 344
 rust | S010 Port in a place | 344
-rust | S010 Query without a type | 344
-rust | S010 String index in a query | 344
 rust | S010 Key of `@field` | 344
 rust | S010 Base of `@field` | 344
-rust | S010 No field | 344
 lean | S016 Mutation in a query key | 344
 rust | S016 Mutation in a query key | 344
 lean | S016 Graph effect in a query key | 344
