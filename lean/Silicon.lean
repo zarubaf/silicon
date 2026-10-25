@@ -123,6 +123,7 @@ import Silicon.Source.Eval.Basic
 import Silicon.Source.Eval.Types
 import Silicon.Source.Eval.Container
 import Silicon.Source.Eval.Inst
+import Silicon.Source.Eval.Reflect
 import Silicon.Source.Eval
 import Silicon.Source.Test.Eval
 import Silicon.Source.Elab

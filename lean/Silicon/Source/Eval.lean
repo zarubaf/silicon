@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 import Silicon.Source.Check
 import Silicon.Source.Eval.Inst
+import Silicon.Source.Eval.Reflect
 
 /-!
 The evaluator of slice 1 with the budgets and the cost model of section 5.4 of the front-end
@@ -1163,7 +1164,7 @@ def iteration (pos : Pos) (i : Binder) (v : Int) (act : M α) : M α := do
   charge pos (Value.int v).size
   let (_, fr) ← frameOf i.name.name ((← read).binder i.id) (.int v)
   inFrameOf fr do
-    bindLocal i.id ⟨some .int, false, .static (.int v)⟩
+    bindLocal i.id ⟨some .int, false, .static (.int v), true⟩
     act
 
 /-!
@@ -1365,7 +1366,7 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
         staticHandle p sp t
         pure (.static (← conform p t (← static p (← settle p t v))))
       else typedUse p t true v .value
-    bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x⟩
+    bindLocal q.name.id ⟨some t, false, ← named p q.name.id q.name.name.name x, true⟩
   | .place pl => do
     charge p pl.part.size
     if c then
@@ -1377,7 +1378,7 @@ def copyIn (p : Pos) (c : Bool) (q : Resolve.Param) (t : Ty) : Actual → M Unit
       let u := match pt with | some u => u.text | none => pl.part.text
       fail .S010 p s!"a `mut` actual has the type {u}, but its formal has {t.text}"
     let x ← if c then pure (Val.static (← static p pl.part)) else pure pl.part
-    bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x⟩
+    bindLocal q.name.id ⟨some t, true, ← named p q.name.id q.name.name.name x, true⟩
 
 /-!
 The result of the body of the function `u` in the call frame `path`. A result with a hardware
@@ -1624,7 +1625,7 @@ def bindParams (ty : Resolve.TypeExpr → M Ty) (p : Pos) (s : String) (ps : Lis
     staticHandle p s t
     let w ← conform p t (← static p (← settle p t v))
     charge p w.size
-    bindLocal q.name.id ⟨some t, false, .static w⟩
+    bindLocal q.name.id ⟨some t, false, .static w, true⟩
     return (t, w)
 
 /-!
@@ -2148,10 +2149,10 @@ def bindArm (y : Payload) (bs : List (Binder × Ty × Nat)) : M Unit := do
     | .static bits =>
       let some x := Value.unpack specs bits u.depth u off
         | fail .S010 p s!"{u.text} has no static unpack"
-      bindLocal b.id ⟨some u, false, .static x⟩
+      bindLocal b.id ⟨some u, false, .static x, true⟩
     | .hw h =>
       let a ← unpackHw specs p h u.depth u off
-      bindLocal b.id ⟨some u, false, ← named p b.id b.name.name a.val⟩
+      bindLocal b.id ⟨some u, false, ← named p b.id b.name.name a.val, true⟩
 
 /-!
 The selector leaf and the payload of the hardware scrutinee `v` of the type `t` at `pos`. They
@@ -2372,6 +2373,51 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
   return keys.toList
 
 /-!
+The key `i` of an index step of a `@TypeOf` operand (section 6.2, **`@TypeOf` order**). It
+evaluates by `ev` in a structural context of the kind `query` (`S016`). Then it is static
+(`S011`): a handle gives "Handle at a static position", and another hardware value gives "Value
+not static".
+-/
+def queryKey (ev : Resolve.Expr → M (Option Out)) (i : Resolve.Expr) : M Value := do
+  let o ← guardedBy (.query .typeOf) do need i (← ev i)
+  staticValue i.pos "a key of `@TypeOf`" o.value
+  static i.pos o.value
+
+/-!
+The steps `sels` of a `@TypeOf` operand from the part `q`, once from the root outward (section
+6.2, **`@TypeOf` order**). Each step charges 1 at its node. Then the key of an index evaluates
+(`queryKey`), and the step selects the part or its type (`queryStep`). A field of an `Instance`
+handle selects the child port with no read (`portFind`, `portQuery`). A field that names a family
+of the child takes the next index as its key. The index charges 1, and the key evaluates in a
+structural context of the kind `query`. It gets the checks of a selection key (`selectionKey`),
+and it selects the entry of the child (`childPort`).
+-/
+def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M Query
+  | q, [] => pure q
+  | .value v@(.handle (.inst id path iface ty)) _, .field fp f :: rest => do
+    charge fp 1
+    match ← Elab.childFamily v f, rest with
+    | true, .index ip ks :: rest => do
+      charge ip 1
+      let [k] := ks | fail .S010 ip "an index of a value has one argument"
+      let w ← guardedBy (.query .typeOf) do return (← need k (← ev k)).value
+      let key ← selectionKey fp k.pos f.name w
+      let y := ((← read).field f.pos).getD 0
+      queryWalk ev (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
+    | _, rest => do
+      let port ← portFind fp iface ((← read).field f.pos) f.name
+      queryWalk ev (portQuery id path port) rest
+  | q, sel :: rest => do
+    charge sel.pos 1
+    let s ← match sel with
+      | .index p [i] => do pure (QueryStep.index p i.pos (← queryKey ev i))
+      | .index p _ => fail .S010 p "an index of a value has one argument"
+      | .select p r i => pure (.select p r i)
+      | .field p f => pure (.field p f)
+    queryWalk ev (← queryStep q s) rest
+termination_by _ sels => sels.length
+
+/-!
 A step `sel` of a place from the part `cur` with the type `ty` (section 5.2). The step charges 1
 at its node before it applies. Then the index of an index step evaluates by `ev` and checks
 against `cur`. The result is the number of the part, the part, and its type.
@@ -2471,8 +2517,9 @@ def sinkValue (p : Pos) (t : Ty) : Val → M Agg
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`,
-`indexBase`, `familySel`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`, `call`,
-`hwStmt`, `entryDecl`, and `instantiate` get the bound `n` of their caller after its charge.
+`indexBase`, `familySel`, `typeOfPart`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`,
+`call`, `hwStmt`, `entryDecl`, and `instantiate` get the bound `n` of their caller after its
+charge.
 They call entry functions, `spec`, which a name of a struct item uses, and the helpers that
 `call` and `hwStmt` use.
 -/
@@ -2642,7 +2689,8 @@ mutual
         let t ← enumUse n p i
         let vs ← operands n xs fun _ o => pure o.value
         return some ⟨← variantOf p t j vs, false, none⟩
-      -- TODO(#344): evaluate `@TypeOf` and `@field` (section 9.3).
+      | .builtin p .typeOf [x] => return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
+      -- TODO(#344): evaluate `@field` (section 9.3).
       | .builtin p .. => fail .S004 p "a builtin is not supported yet"
       | .«match» p x as => do
         let v ← data x.pos (← need x (← eval n x)).value
@@ -2782,6 +2830,36 @@ mutual
   termination_by (n + 1, 0)
 
   /--
+  The type of the place `x` of `@TypeOf` at `p` (sections 5.4, 6.2, and 9.3). The node charged 1.
+  The root resolves with no charge. A local gives its slot and its declared type, if it has one.
+  Its steps then run once from the root outward (`queryWalk`). A family root with an index runs
+  the selection order. The index node and the name node charge 1 each. Then the key evaluates in
+  a structural context of the kind `query` (`selectionKey`, `entryVal`). A bare family is `S010`
+  "Family as a value". A root that names no binding evaluates the whole operand as an ordinary
+  expression, in the `raw` context and in a structural context of the kind `query`. Its value has
+  no declared type. Then the part gives its type (`queryTy`).
+  -/
+  def typeOfPart (n : Nat) (p : Pos) (x : Resolve.Expr) : M Ty := do
+    match chain x with
+    | some (.name rp y r@(.local id), sels) => do
+      let q ← match (← get).frame[id]? with
+        | some sl => pure (Query.value sl.value (if sl.declared then sl.ty else none))
+        | none => do pure (Query.value (← name n rp y r).value none)
+      queryTy p (← queryWalk (eval n) q sels)
+    | some (.name rp y (.family id _), .index q ks :: sels) => do
+      charge q 1
+      let [k] := ks | fail .S010 q "an index of a value has one argument"
+      charge rp 1
+      let v ← guardedBy (.query .typeOf) do return (← need k (← eval n k)).value
+      let e ← entryVal k.pos y id (← selectionKey rp k.pos y v)
+      queryTy p (← queryWalk (eval n) (.value e none) sels)
+    | some (.name rp y (.family ..), _) => fail .S010 rp (Elab.familyValueText y)
+    | _ => do
+      let o ← guardedBy (.query .typeOf) do need x (← eval n x)
+      queryTy p (.value o.value none)
+  termination_by (n + 1, 2)
+
+  /--
   A use of the enum item `i` at `p`, in the table of enums (`enumOf`). Its tag type, its tag
   values, and its payload types are structural contexts (section 9.4).
   -/
@@ -2804,7 +2882,7 @@ mutual
   def name (n : Nat) (p : Pos) (x : String) : Ref → M Out
     | .local id => do
       match (← get).frame[id]? with
-      | some ⟨_, _, .agg (.ref b t)⟩ =>
+      | some ⟨_, _, .agg (.ref b t), _⟩ =>
         -- An input port refers to its name. The read checks its depth (`readRef`). An empty
         -- one pays its zero, a new static value, so it is no use of the binding.
         let v ← readRef p b t
@@ -3038,7 +3116,7 @@ mutual
             known o.value
             pure o.value
         let x ← named p b.id b.name.name x
-        bindLocal b.id ⟨t <|> x.ty?, m, x⟩
+        bindLocal b.id ⟨t <|> x.ty?, m, x, t.isSome⟩
         return none
       | .assign p target v => do
         let pl ← placeAt n p .S010 target
@@ -3085,7 +3163,7 @@ mutual
         hwStmt n s
         return none
       | .alias _ x ty => do
-        bindLocal x.id ⟨some .type, false, .static (.type (← typeExpr n ty))⟩
+        bindLocal x.id ⟨some .type, false, .static (.type (← typeExpr n ty)), true⟩
         return none
   termination_by (b, 3)
 
@@ -3118,7 +3196,7 @@ mutual
     | .input p x .scalar ty | .output p x .scalar ty => do
       let t ← Elab.dataType p (← typeExpr n ty)
       let v ← Elab.port p (s matches .input ..) x.name.name ((← read).binder x.id) t none
-      bindLocal x.id ⟨some t, false, v⟩
+      bindLocal x.id ⟨some t, false, v, true⟩
     | .reg p x ty init => do
       if (← get).inst.work.body.domain.isNone then
         fail .S017 p ("a combinational module has no register; remove `domains()` from the " ++
@@ -3129,12 +3207,12 @@ mutual
       let v ← conform p t (← static p (← settle p t o.value))
       let path ← fresh x.id x.name.name
       Elab.modifyBody fun b => { b with regs := b.regs.push ⟨path, t, v, p⟩ }
-      bindLocal x.id ⟨some t, false, ← Elab.resource .reg path t p x.name.name⟩
+      bindLocal x.id ⟨some t, false, ← Elab.resource .reg path t p x.name.name, true⟩
     | .wire p x ty => do
       let t ← Elab.dataType p (← typeExpr n ty)
       let path ← fresh x.id x.name.name
       Elab.modifyBody fun b => { b with wires := b.wires.push ⟨path, t, p⟩ }
-      bindLocal x.id ⟨some t, false, ← Elab.resource .wire path t p x.name.name⟩
+      bindLocal x.id ⟨some t, false, ← Elab.resource .wire path t p x.name.name, true⟩
     | .mem p x w d => do
       if (← get).inst.work.body.domain.isNone then
         fail .S017 p ("a combinational module has no memory; remove `domains()` from the " ++
@@ -3145,7 +3223,7 @@ mutual
       let id := (← get).naming.mems.size
       let m : Mem := { name := x.name.name, path := path, word := t, depth := k, pos := p }
       modify fun s => { s with naming.mems := s.naming.mems.push m }
-      bindLocal x.id ⟨none, false, .handle (.mem id path t k)⟩
+      bindLocal x.id ⟨none, false, .handle (.mem id path t k), true⟩
     | .connect p tgt v => do
       let t ← target (eval n) tgt
       let o ← need v (← eval n v)
@@ -3167,7 +3245,7 @@ mutual
       modify fun s => { s with inst.work.bound := s.inst.work.bound.push 0 }
       -- The converted arguments paid for their sizes, so the type adds no charge.
       let t := Ty.inst i m.name (tvs.map (·.2)).toArray
-      bindLocal u.id ⟨none, false, .handle (.inst k path c t)⟩
+      bindLocal u.id ⟨none, false, .handle (.inst k path c t), true⟩
     | _ => pure ()
   termination_by (n, 5)
 
@@ -3224,9 +3302,9 @@ mutual
         inFrame none <| withTheReader Ctx (fun c =>
             { c with item := i, frame := ⟨none, 0⟩, inst := text, calls := [], call := 0 }) do
           for (q, t, v) in ps.zip tvs do
-            bindLocal q.name.id ⟨some t, false, .static v⟩
+            bindLocal q.name.id ⟨some t, false, .static v, true⟩
           for d in ds do
-            bindLocal d.id ⟨none, false, .handle (.domain d.name.name)⟩
+            bindLocal d.id ⟨none, false, .handle (.domain d.name.name), true⟩
           let _ ← block n mp body
         Elab.bindings
         let made := (← get).naming

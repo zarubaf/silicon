@@ -1989,8 +1989,8 @@ def sel (src ty : String) (base : Eval.Ctx → Ty → Eval.Val) (steps : List St
         let t ← match ← Eval.eval n te with
           | some ⟨.static (.type t), _, _⟩ => pure t
           | _ => Eval.fail .S010 ⟨0, 0⟩ "a type"
-        Eval.bindLocal 0 ⟨none, false, base (← read) t⟩
-        Eval.bindLocal 1 ⟨none, false, .hw (.mk ⟨0, 0⟩ (.uint 2) (.ref ⟨"h", []⟩) [])⟩
+        Eval.bindLocal 0 ⟨none, false, base (← read) t, true⟩
+        Eval.bindLocal 1 ⟨none, false, .hw (.mk ⟨0, 0⟩ (.uint 2) (.ref ⟨"h", []⟩) []), true⟩
         let f0 := (← get).fuel
         let o ← Eval.need e (← Eval.eval n e)
         return (s!"{describe o.value} {o.ref}", f0 - (← get).fuel)
@@ -2223,7 +2223,7 @@ def runF (src : String) (base : Ty → Eval.Val) (fuel : Nat := 1000000)
     let ((d, used), _) ← Eval.run { fuel := fuel + 1000 } checked fun n =>
       withReader (fun c => { c with item := i, ret := some .bool }) do
         let t ← Eval.typeExpr n q.ty
-        Eval.bindLocal q.name.id ⟨some t, true, base t⟩
+        Eval.bindLocal q.name.id ⟨some t, true, base t, true⟩
         let _ ← Eval.fresh q.name.id q.name.name.name
         modify fun s => { s with fuel }
         for s in ss do
@@ -3858,8 +3858,87 @@ def readText (a : String) : String :=
 #guard out "fn f() -> Int { let read = 3; return read; }" "f()" == "(int 3)"
 #guard out "fn f(read: Int) -> Int { return read; }" "f(4)" == "(int 4)"
 
-/-! The builtins evaluate in a later step of #344. Until then, each is `S004` at its `@`. -/
-#guard out "const C: Nat = 1;" "@TypeOf(C)" == "S004 1:1"
+/-! `@field` evaluates in a later step of #344. Until then, it is `S004` at its `@`. -/
 #guard out "const C: (Nat,) = (1,);" "1 + @field(C, 0)" == "S004 1:5"
+#guard out "fn f() -> Type { let t = (1,); return @TypeOf(@field(t, 0)); }" "f()" == "S004 1:47"
+
+/-!
+`@TypeOf` (sections 5.4 and 9.3). A root that names no binding evaluates the whole operand as an
+ordinary expression. A type gives `Type`, a function its function type, and a constant the type
+of its value. A `const` annotation is no declared type.
+-/
+#guard out "" "@TypeOf(UInt[8])" == "(type type)"
+#guard out "fn f(x: Nat) -> Nat { return x; }" "@TypeOf(f)" == "(type (fn (nat) nat))"
+#guard out "const C: Nat = 1;" "@TypeOf(C)" == "(type int)"
+#guard out "" "@TypeOf(len)" == "S010 1:9"
+
+/-!
+A root with a declared type gives that type, and each step its part: a parameter `comptime n:
+Nat` gives `Nat`, not `Int`. A local without a type gives the type of its value.
+-/
+def typeOfFn (b : String) : String := "fn f() -> Nat {\n" ++ b ++ "  return 0;\n}\n"
+#guard out "comptime fn f(comptime n: Nat) -> Type { return @TypeOf(n); }" "f(3)" == "(type nat)"
+#guard out "fn f(n: Nat) -> Type { let m = n; return @TypeOf(m); }" "f(3)" == "(type int)"
+#guard out "fn f() -> Type { let t: (Nat,) = (1,); return @TypeOf(t); }" "f()" ==
+  "(type (tuple (nat)))"
+#guard out "fn f() -> Type { let t: (Nat,) = (1,); return @TypeOf(t.0); }" "f()" == "(type nat)"
+
+/-!
+The charges (section 5.4): the node 1 and each step 1, the root nothing. A declared type and a
+part of a container type refer to their type, so they charge nothing more. The statement `let y`
+charges 1 more.
+-/
+#guard cost (typeOfFn "  let t: (Nat,) = (1,);\n") "f()" == 30
+#guard exact (typeOfFn "  let t: (Nat,) = (1,);\n  let y = @TypeOf(t);\n") "f()" 32
+#guard exact (typeOfFn "  let t: (Nat,) = (1,);\n  let y = @TypeOf(t.0);\n") "f()" 33
+#guard cost (typeOfFn "  let t = [(1, 2)];\n") "f()" == 22
+-- The index `0` charges its node and its size.
+#guard exact (typeOfFn "  let t = [(1, 2)];\n  let y = @TypeOf(t[0]);\n") "f()" 27
+
+/-!
+A static tuple without a declared type builds its type. Each tuple node of the selected part
+charges 1, then the size of the type term charges. `(Int,)` has the size 2, and
+`((Int, Int), Int)` 5.
+-/
+#guard cost (typeOfFn "  let t = (1,);\n") "f()" == 14
+#guard exact (typeOfFn "  let t = (1,);\n  let y = @TypeOf(t);\n") "f()" (14 + 2 + 1 + 2)
+#guard exact (typeOfFn "  let t = (1,);\n  let y = @TypeOf(t.0);\n") "f()" (14 + 3)
+#guard cost (typeOfFn "  let t = ((1, 2), 3);\n") "f()" == 25
+#guard exact (typeOfFn "  let t = ((1, 2), 3);\n  let y = @TypeOf(t);\n") "f()" (25 + 2 + 2 + 5)
+#guard exact (typeOfFn "  let t = ((1, 2), 3);\n  let y = @TypeOf(t.0);\n") "f()" (25 + 3 + 1 + 3)
+#guard out "fn f() -> Type { let t = ((1, 2), 3); return @TypeOf(t); }" "f()" ==
+  "(type (tuple ((tuple (int int)) int)))"
+
+/-! A `const` tuple has no declared type here, so it pays the build after its ordinary charges. -/
+def constTuple : String := "const C: (Nat, (Int,)) = (1, (2,));"
+#guard cost constTuple "C" == 51
+#guard exact constTuple "@TypeOf(C)" (51 + 1 + 2 + 4)
+#guard out constTuple "@TypeOf(C)" == "(type (tuple (int (tuple (int)))))"
+-- `C.1` charges its select node, then the build of `(Int,)`.
+#guard exact constTuple "@TypeOf(C.1)" (51 + 1 + 1 + 1 + 2)
+
+/-!
+The steps check as the steps of a place: the range of an index (`S013`) at the index, and the
+kind of a base (`S010`). A list in a value checks the index against its own length.
+-/
+#guard out "fn f() -> Type { let t = [1, 2]; return @TypeOf(t[5]); }" "f()" == "S013 1:51"
+#guard out "fn f() -> Type { let mut t = list(Nat); push(t, 4); return @TypeOf(t[0]); }" "f()" ==
+  "(type nat)"
+#guard out "fn f() -> Type { let mut t = list(Nat); push(t, 4); return @TypeOf(t[1]); }" "f()" ==
+  "S013 1:70"
+#guard out "fn f() -> Type { let t = 1; return @TypeOf(t.a); }" "f()" == "S010 1:44"
+
+/-!
+A key of a query operand evaluates under the guard `query` (section 9.4). A mutation of an
+earlier binding there is `S016`, and so is a graph effect. Their texts name the builtin.
+-/
+#guard msg ("fn f() -> Nat { let mut t = [1, 2]; let y = @TypeOf(t[g(t)]); return 0; }\n" ++
+    "fn g(mut x: [Int; 2]) -> Nat { return 0; }") "f()" ==
+  "a key of `@TypeOf` cannot change `t`; change `t` before `@TypeOf`, keep the result in a " ++
+    "`let`, and use that name in the key"
+#guard msg "fn f() -> Nat { let t = [1, 2]; let y = @TypeOf(t[diagnostic(\"a\", 0)]); return 0; }"
+    "f()" ==
+  "a key of `@TypeOf` has no graph effect such as `diagnostic`; call `diagnostic` before " ++
+    "`@TypeOf`, keep the result in a `let`, and use that name in the key"
 
 end Silicon.Source.Test.Eval
