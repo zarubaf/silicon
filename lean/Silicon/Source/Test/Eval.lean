@@ -4027,9 +4027,4 @@ earlier binding there is `S016`, and so is a graph effect. Their texts name the 
   "a key of `@TypeOf` has no graph effect such as `diagnostic`; call `diagnostic` before " ++
     "`@TypeOf`, keep the result in a `let`, and use that name in the key"
 
-/-! `@typeInfo` evaluates in a later step of #380. Until then, it is `S004` at its `@`. -/
-#guard out "" "@typeInfo(Nat)" == "S004 1:1"
-#guard out "" "1 + @typeInfo(Nat).width" == "S004 1:5"
-#guard msg "" "@typeInfo(Nat)" == "a builtin is not supported yet"
-
 end Silicon.Source.Test.Eval

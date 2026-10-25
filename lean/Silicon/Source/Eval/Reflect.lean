@@ -17,6 +17,11 @@ The result refers to an existing type, so it charges nothing more. A static tupl
 declared type stores no type, so the walk builds its type at the end (`builtTy`). Each tuple
 node charges 1 before the walk visits its elements, then the size of the built type charges.
 Only then the result exists.
+
+`@typeInfo(T)` builds its `TypeInfo` record here (`typeInfo`), after its argument and the use of
+`TypeInfo` (section 6.2, **`@typeInfo` order**). It reads the stored parts of the type: the
+fields of a struct entry and the variants of an enum entry. It charges them and the size of the
+result before the record exists.
 -/
 namespace Silicon.Source.Eval
 
@@ -195,5 +200,114 @@ def queryTy (p : Pos) : Query → M Ty
     | some t => pure t
     | none => fail .S010 p (s!"`@TypeOf` takes a part with a type, not {v.about}; pass a value, " ++
         "a port, or a resource")
+
+/-!
+The kind tag of the type `t` in the field `kind` of `TypeInfo` (section 9.3). Each struct type is
+a `record`, also a prelude struct.
+-/
+def kindTag : Ty → String
+  | .bool => "bool"
+  | .uint _ => "uint"
+  | .sint _ => "sint"
+  | .unit => "unit"
+  | .array .. => "array"
+  | .tuple _ => "tuple"
+  | .struct .. => "record"
+  | .int => "int"
+  | .nat => "nat"
+  | .string => "string"
+  | .type => "type"
+  | .fn .. => "function"
+  | .list _ => "list"
+  | .reg _ => "reg"
+  | .wire _ => "wire"
+  | .mem .. => "mem"
+  | .input _ => "input"
+  | .inst .. => "instance"
+  | .enum .. => "enum"
+
+/-!
+The parts of a `TypeInfo` record before it exists (section 9.3). These are the kind tag, the
+fields, the element type, the length, the width, and the variants. A field has its name and its
+type. A variant has its name, its tag, and its payload types. A part that the kind does not use
+keeps its default.
+-/
+structure Info where
+  kind : String
+  fields : Array (String × Ty) := #[]
+  element : Ty := .unit
+  length : Nat := 0
+  width : Nat := 0
+  variants : Array (String × Nat × Array Ty) := #[]
+
+/-!
+The parts of `@typeInfo(t)` at the node `p` (section 9.3). A struct type reads the fields of its
+done entry, so a struct with parameters gives the field types of its specialization. An enum
+reads its done entry and the variant names of its item. A tuple names its fields `0`, `1`, and
+so on. Each read takes the stored parts, so it never enters a field type or a payload type.
+-/
+def infoOf (p : Pos) (t : Ty) : M Info := do
+  let k := kindTag t
+  match t with
+  | .bool => return { kind := k, width := 1 }
+  | .uint w | .sint w => return { kind := k, width := w }
+  | .array e n => return { kind := k, element := e, length := n }
+  | .tuple ⟨ts⟩ =>
+    return { kind := k, fields := (ts.mapIdx fun i u => (toString i, u)).toArray,
+             length := ts.length }
+  | .struct .. => do
+    let some fs := (← get).specs.parts t | fail .S010 p s!"{t.text} has no entry"
+    return { kind := k, fields := fs, length := fs.size }
+  | .list e | .reg e | .wire e | .input e => return { kind := k, element := e }
+  | .mem e n => return { kind := k, element := e, length := n }
+  | .enum i _ m => do
+    let some (.done _ w _ vs _) := (← get).specs.enums[i]?
+      | fail .S010 p s!"{t.text} has no entry"
+    let some (.enum _ _ _ items) := (← read).items[i]?
+      | fail .S010 p "the enum item is missing"
+    let names := items.toArray.map (·.name.name)
+    return { kind := k, element := .uint w, width := m.width,
+             variants := vs.mapIdx fun j (tag, ps) => (names.getD j "", tag, ps) }
+  | _ => return { kind := k }
+
+/-!
+The `TypeInfo` record of the parts `info`. `ti`, `fi`, and `vi` are the struct types `TypeInfo`,
+`FieldInfo`, and `VariantInfo`. A `Nat` is an integer value.
+-/
+def Info.value (info : Info) (ti fi vi : Ty) : Value :=
+  .record ti #[.str info.kind,
+    .list fi (info.fields.map fun (x, u) => .record fi #[.str x, .type u]),
+    .type info.element, .int info.length, .int info.width,
+    .list vi (info.variants.map fun (x, tag, ps) =>
+      .record vi #[.str x, .int tag, .list .type (ps.map .type)])]
+
+/-!
+The argument of `@typeInfo` at the node `pos` after it evaluated (section 6.2, **`@typeInfo`
+order**, step 3). A value that is not a `Type` is `S010`, with no copy charge.
+-/
+def typeInfoArg (pos : Pos) : Val → M Ty
+  | .static (.type t) => pure t
+  | v => fail .S010 pos (s!"`@typeInfo` takes a type, not {v.about}; bind the value with " ++
+      "`let x = ...;` and use `@typeInfo(@TypeOf(x))`")
+
+/-!
+`@typeInfo(t)` at the node `p`, after the use of `TypeInfo` gave `ti` (section 6.2, **`@typeInfo`
+order**, steps 5 to 8). The field types of `TypeInfo` give `FieldInfo` and `VariantInfo`. The
+call charges 1 for each field and for each variant. Then it adds the payload counts of the
+variants and charges 1 for each payload type. Then the result gets its depth check (`S015`), and
+its recursive size charges. This size counts each field type, each payload type, and each name as
+a string. Only then the record exists.
+-/
+def typeInfo (p : Pos) (ti t : Ty) : M Value := do
+  let (some (_, Ty.list fi), some (_, Ty.list vi)) :=
+      (((← get).specs.parts ti).bind (·[1]?), ((← get).specs.parts ti).bind (·[5]?))
+    | fail .S010 p s!"{ti.text} has no entry"
+  let info ← infoOf p t
+  charge p (info.fields.size + info.variants.size)
+  charge p (info.variants.foldl (fun n (_, _, ps) => n + ps.size) 0)
+  let v := info.value ti fi vi
+  bounded p v.depth
+  charge p v.size
+  return v
 
 end Silicon.Source.Eval

@@ -645,7 +645,8 @@ structure Syms where
 /-!
 The kind of a guard (section 9.4): a hardware arm or a structural context. Some structural
 contexts have their own texts: a family key (`key`), an index of a `:=` target (`index`), and an
-`as` key (`name`). A key of the operand of the builtin `q` (`query`) has its own texts too.
+`as` key (`name`). A key of the operand of the builtin `q` (`query`) and the argument of the
+builtin `q` (`arg`) have their own texts too.
 -/
 inductive GuardKind where
   | arm
@@ -654,6 +655,7 @@ inductive GuardKind where
   | index
   | name
   | query (q : Builtin)
+  | arg (q : Builtin)
   deriving DecidableEq, BEq
 
 /-!
@@ -683,6 +685,8 @@ def Guard.change (g : Guard) (x : String) : String :=
     "result in a `let`, and use that name in the key"
   | .query q => s!"a key of `@{q.name}` cannot change `{x}`; change `{x}` before `@{q.name}`, " ++
     "keep the result in a `let`, and use that name in the key"
+  | .arg q => s!"an argument of `@{q.name}` cannot change `{x}`; change `{x}` before " ++
+    s!"`@{q.name}`, keep the result in a `let`, and use that name in the argument"
 
 def Guard.effect (g : Guard) (f : String) : String :=
   match g.kind with
@@ -698,6 +702,8 @@ def Guard.effect (g : Guard) (f : String) : String :=
     "statement, keep the result in a `let`, and use that name in the key"
   | .query q => s!"a key of `@{q.name}` has no graph effect such as `{f}`; call `{f}` before " ++
     s!"`@{q.name}`, keep the result in a `let`, and use that name in the key"
+  | .arg q => s!"an argument of `@{q.name}` has no graph effect such as `{f}`; call `{f}` " ++
+    s!"before `@{q.name}`, keep the result in a `let`, and use that name in the argument"
 
 /-!
 The static mode (section 9.4): the `eval` command, or the item of the outermost `comptime fn`
@@ -707,24 +713,34 @@ inductive Mode where
   | eval
   | static (i : Nat)
 
+/-!
+The record of an open argument of `@typeInfo` (section 9.4). Under it, a node with a hardware
+value is `S011`. `place` marks the root and the steps of a place that is the whole argument:
+they read no value, so the check skips them. Each other node of the argument is `node`.
+-/
+inductive ArgRec where
+  | node
+  | place
+  deriving DecidableEq, BEq
+
 /-! The source name of an item. -/
 def itemName : Resolve.Item → String
   | .const _ n .. | .fn _ _ n .. | .module _ n .. | .struct _ n .. | .alias _ n ..
   | .enum _ n .. => n.name
 
 /-!
-The items, the depth limit, the current depth, and the return type of the current call. The
-item whose body runs, its symbols, and the current frame name the hardware. `binding` holds
-the struct items whose parameter types evaluate now. `guard` is the innermost guard
-(section 9.4). `mode` is the static mode, else `none` (section 9.4). A call sets it in O(1),
-and the name renders only in an error. `site` is the name of a function value while its
-signature evaluates: each depth check there reports at it. `inst` is the emitted name of the
+The items, the depth limit, the current depth, and the return type of the current call. The item
+whose body runs, its symbols, and the current frame name the hardware. `binding` holds the
+struct items whose parameter types evaluate now. `guard` is the innermost guard (section 9.4).
+`mode` is the static mode, else `none` (section 9.4). A call sets it in O(1), and the name
+renders only in an error. `arg` is the record of an open builtin argument (`ArgRec`). Each
+context and each call inside the argument keeps it. `site` is the name of a function value while
+its signature evaluates: each depth check there reports at it. `inst` is the emitted name of the
 current instantiation, else `-`. `calls` holds the call frames from the module body, innermost
-first (section 8.2). A frame is the item name of the callee and the position of its call. A
-call adds its frame in one step, and the records share the list. `call` is the number of the
-frame of the current call, and a module body has 0. It tells two calls of one function apart
-(section 6.2). `digest` makes the digest of an emitted name (section 7.1), so a test can replace
-it.
+first (section 8.2). A frame is the item name of the callee and the position of its call. A call
+adds its frame in one step, and the records share the list. `call` is the number of the frame of
+the current call, and a module body has 0. It tells two calls of one function apart (section
+6.2). `digest` makes the digest of an emitted name (section 7.1), so a test can replace it.
 -/
 structure Ctx where
   items : Array Resolve.Item
@@ -737,6 +753,7 @@ structure Ctx where
   binding : List Nat
   guard : Option Guard
   mode : Option Mode
+  arg : Option ArgRec
   site : Option Pos
   inst : String
   calls : List (String × Pos)
