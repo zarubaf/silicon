@@ -3805,10 +3805,10 @@ of a family selection in a query operand is this `S011` too. Without the argumen
 #guard tyRecords "  let t = @typeInfo(rg.a);\n" == ["S010 21:21"]
 #guard said (tyMod "  let t = @typeInfo(rg.a);\n") == "`@typeInfo` takes a type, not a value " ++
   "of `UInt[8]`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
--- A domain has no type, so the fix names no `@TypeOf`.
+-- A domain has no type, so the fix removes the `@typeInfo`.
 #guard tyRecords "  let t = @typeInfo(clk);\n" == ["S010 21:21"]
-#guard said (tyMod "  let t = @typeInfo(clk);\n") ==
-  "`@typeInfo` takes a type, not the domain `clk`; a domain has no type"
+#guard said (tyMod "  let t = @typeInfo(clk);\n") == "`@typeInfo` takes a type, not the " ++
+  "domain `clk`; a domain has no type, so remove the `@typeInfo`"
 #guard tyRecords "  let t = @typeInfo(if (rg.b.0) { Bool } else { Bool });\n" == ["S011 21:25"]
 #guard said (tyMod "  let t = @typeInfo(if (rg.b.0) { Bool } else { Bool });\n") ==
   "a static position needs a static value, not a value of `(Bool, UInt[4])`; compute the " ++

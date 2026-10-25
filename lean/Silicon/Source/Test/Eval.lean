@@ -4084,8 +4084,8 @@ def tiSrc : String :=
 
 /-!
 A value that is not a `Type` is `S010` "`@typeInfo` of a value" at the argument. The text tells
-the user to bind it and use `@TypeOf`. A tuple of types gets the fix to name its tuple type, and
-a tuple with another element keeps the fix of a value.
+the user to bind it and use `@TypeOf`. A tuple or an array with only type leaves gets the fix to
+name its type, also when it nests. A tuple with another leaf keeps the fix of a value.
 -/
 #guard out "" "@typeInfo(3)" == "S010 1:11"
 #guard msg "" "@typeInfo(3)" == "`@typeInfo` takes a type, not a value of `Int`; bind the " ++
@@ -4095,6 +4095,16 @@ a tuple with another element keeps the fix of a value.
   "`(Type, Type)`; name the tuple type with `type T = (A, B);` and use `@typeInfo(T)`"
 #guard msg "" "@typeInfo((Bool, 3))" == "`@typeInfo` takes a type, not a value of " ++
   "`(Type, Int)`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+#guard msg "" "@typeInfo(((Bool, Bool), UInt[8]))" == "`@typeInfo` takes a type, not a " ++
+  "value of `((Type, Type), Type)`; name the tuple type with `type T = (A, B);` and use " ++
+  "`@typeInfo(T)`"
+#guard msg "" "@typeInfo(((Bool, 3), UInt[8]))" == "`@typeInfo` takes a type, not a value " ++
+  "of `((Type, Int), Type)`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+#guard msg "" "@typeInfo([Bool, Bool])" == "`@typeInfo` takes a type, not a value of " ++
+  "`[Type; 2]`; name the array type with `type T = [A; N];` and use `@typeInfo(T)`"
+#guard msg "" "@typeInfo([(Bool, Bool), (Bool, Bool)])" == "`@typeInfo` takes a type, not a " ++
+  "value of `[(Type, Type); 2]`; name the array type with `type T = [A; N];` and use " ++
+  "`@typeInfo(T)`"
 
 /-!
 The argument has the guard kind `arg`: a mutation of an earlier binding and a graph effect are
