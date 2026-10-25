@@ -30,6 +30,16 @@ lean | S001 Query operand | 377
 lean | S010 `@typeInfo` of a value | 345
 rust | S010 `@typeInfo` of a value | 345
 pin | S010 `@typeInfo` of a value | 345
+lean | S016 Mutation in a builtin argument | 345
+rust | S016 Mutation in a builtin argument | 345
+pin | S016 Mutation in a builtin argument | 345
+lean | S016 Graph effect in a builtin argument | 345
+rust | S016 Graph effect in a builtin argument | 345
+pin | S016 Graph effect in a builtin argument | 345
+lean | S016 Mutation in a builtin argument | 377
+rust | S016 Mutation in a builtin argument | 377
+lean | S016 Graph effect in a builtin argument | 377
+rust | S016 Graph effect in a builtin argument | 377
 lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
