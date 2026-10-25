@@ -3868,22 +3868,39 @@ def plMod (body : String) : String :=
   failure ("module C() domains() {\n  input a[3]: Bool;\n  input b: Bool;\n}\n" ++
     "module M() domains() {\n  instance u = C();\n  u.a[3] := true;\n  u.b := true;\n" ++
     "  let mut us = [u];\n" ++ body ++ "}\n") 100000000
-#guard plMod "  us[0].b = true;\n" == s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "b"}"
+#guard plMod "  us[0].b = true;\n" == s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "b" true}"
 #guard plMod "  us[0].b = true;\n" == "S010 10:3 a place cannot select the port `b` of " ++
   "`Instance[C]`; bind the input with a `:=` target, for example `u.b := e`"
 #guard plMod "  us[0].a[3] = true;\n" ==
-  s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "a[3]"}"
+  s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "a[3]" true}"
 #guard plMod "  @field(us[0], PortKey(\"a\", true, 3)) = true;\n" ==
-  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "a[3]"}"
+  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "a[3]" true}"
 #guard plMod "  @field(us[0], \"b\") = true;\n" ==
-  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "b"}"
+  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "b" true}"
 #guard plMod "  let mut x = u;\n  x.b = true;\n" ==
-  s!"S010 11:3 {Elab.portPlaceText "Instance[C]" "b"}"
+  s!"S010 11:3 {Elab.portPlaceText "Instance[C]" "b" true}"
 #guard plMod "  us[0].zz = true;\n" == s!"S010 10:3 {Elab.noPortText "Instance[C]" "zz"}"
 #guard plMod "  @field(us[0], \"zz\") = true;\n" ==
   s!"S010 10:17 {Elab.noPortText "Instance[C]" "zz"}"
 #guard plMod "  us[0].a = true;\n" == s!"S010 10:3 {Elab.familyValueText "a"}"
 #guard plMod "  us[0].a[2] = true;\n" == s!"S013 10:11 {Elab.childKeyText "Instance[C]" "a" 2}"
+
+/-!
+The fix of "Port in a place" follows the direction of the port. The child drives an output, so
+the fix reads the output as a value. An entry keeps its full public name.
+-/
+def poMod (body : String) : String :=
+  failure ("module C() domains() {\n  output q: Bool;\n  output r[1]: Bool;\n  q := true;\n" ++
+    "  r[1] := true;\n}\nmodule M() domains() {\n  instance u = C();\n  let mut us = [u];\n" ++
+    body ++ "}\n") 100000000
+#guard poMod "  us[0].q = true;\n" == "S010 10:3 a place cannot select the port `q` of " ++
+  "`Instance[C]`; the child drives the output, so read it as a value, for example `x = u.q`"
+#guard poMod "  us[0].r[1] = true;\n" ==
+  s!"S010 10:3 {Elab.portPlaceText "Instance[C]" "r[1]" false}"
+#guard poMod "  @field(us[0], \"q\") = true;\n" ==
+  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "q" false}"
+#guard poMod "  @field(us[0], PortKey(\"r\", true, 1)) = true;\n" ==
+  s!"S010 10:17 {Elab.portPlaceText "Instance[C]" "r[1]" false}"
 
 /-!
 The charges (section 5.4). `@field(u, "sum")` costs 9 more than `u.sum`: the key node 1, its size

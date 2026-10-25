@@ -2658,7 +2658,7 @@ def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty
         pure (j, w, some ft)
       | .port _ _ iface t y name k => do
         let port ← keyPort i.pos iface t b y name k
-        fail .S010 i.pos (Elab.portPlaceText t.text port.text)
+        fail .S010 i.pos (Elab.portPlaceText t.text port.text port.input)
   let ty := match ft, ty with
     | some t, _ => some t
     | none, some t => partTy t k
@@ -2688,7 +2688,7 @@ def placePort (ev : Resolve.Expr → M (Option Out)) (v : Val) (iface : Iface) (
     | _ => do
       charge fp 1
       portFind fp iface t ((← read).field f.pos) f.name
-  fail .S010 fp (Elab.portPlaceText t.text port.text)
+  fail .S010 fp (Elab.portPlaceText t.text port.text port.input)
 
 /-! A list, static or a node. -/
 def Val.isList : Val → Bool
