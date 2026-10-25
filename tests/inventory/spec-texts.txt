@@ -38,6 +38,25 @@ pin | S010 `@ports` of a non-instance | 346
 lean | S010 No public port | 344
 rust | S010 No public port | 344
 pin | S010 No public port | 344
+lean | S001 Not a builtin | 344
+rust | S001 Not a builtin | 344
+pin | S001 Not a builtin | 344
+lean | S010 Key of `@field` | 344
+rust | S010 Key of `@field` | 344
+pin | S010 Key of `@field` | 344
+lean | S010 Base of `@field` | 344
+rust | S010 Base of `@field` | 344
+pin | S010 Base of `@field` | 344
+lean | S010 No field | 344
+rust | S010 No field | 344
+pin | S010 No field | 344
+lean | S016 Mutation in a query key | 344
+rust | S016 Mutation in a query key | 344
+pin | S016 Mutation in a query key | 344
+lean | S016 Graph effect in a query key | 344
+rust | S016 Graph effect in a query key | 344
+pin | S016 Graph effect in a query key | 344
+pin | S001 Builtin arity | 344
 lean | S022 Second field name | 345
 rust | S022 Second field name | 345
 pin | S022 Second field name | 345
