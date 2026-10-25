@@ -95,11 +95,12 @@ pub enum UnOp {
     Neg,
 }
 
-/// A builtin of slice 4: `@TypeOf` and `@field`. `@typeInfo`, `@Struct`, and `@ports` are not
+/// A builtin of slice 4: `@TypeOf`, `@typeInfo`, and `@field`. `@Struct` and `@ports` are not
 /// names here until their phases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Builtin {
     TypeOf,
+    TypeInfo,
     Field,
 }
 
@@ -109,6 +110,7 @@ impl Builtin {
     pub fn name(self) -> &'static str {
         match self {
             Builtin::TypeOf => "TypeOf",
+            Builtin::TypeInfo => "typeInfo",
             Builtin::Field => "field",
         }
     }
@@ -122,6 +124,7 @@ impl Builtin {
     pub(crate) fn of_name(name: &str) -> Option<Builtin> {
         match name {
             "TypeOf" => Some(Builtin::TypeOf),
+            "typeInfo" => Some(Builtin::TypeInfo),
             "field" => Some(Builtin::Field),
             _ => None,
         }
@@ -130,7 +133,7 @@ impl Builtin {
     /// The number of operands: 2 for `@field`, 1 for each other builtin.
     pub(crate) fn arity(self) -> usize {
         match self {
-            Builtin::TypeOf => 1,
+            Builtin::TypeOf | Builtin::TypeInfo => 1,
             Builtin::Field => 2,
         }
     }
@@ -139,6 +142,7 @@ impl Builtin {
     pub(crate) fn form(self) -> &'static str {
         match self {
             Builtin::TypeOf => "@TypeOf(x)",
+            Builtin::TypeInfo => "@typeInfo(T)",
             Builtin::Field => "@field(x, k)",
         }
     }

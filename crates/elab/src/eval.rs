@@ -850,6 +850,8 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(v))))
     }
 
+    // TODO(#380): the arm of `@typeInfo` goes into `reflect.rs` with its evaluation.
+    #[allow(clippy::too_many_lines)]
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
         match e {
@@ -873,6 +875,16 @@ impl Evaluator<'_> {
                 // The parser fixes the arity (`S001`), so another shape has no value here.
                 _ => Ok(None),
             },
+            // TODO(#380): evaluate `@typeInfo` (design section 9.3).
+            Expr::Builtin {
+                pos,
+                builtin: Builtin::TypeInfo,
+                ..
+            } => fail(
+                Code::S004,
+                *pos,
+                "a builtin is not supported yet".to_owned(),
+            ),
             Expr::Unary { pos, op, arg } => match self.operand(*pos, arg)? {
                 Opnd::Static(a) if self.is_agg(&a) => fail(
                     Code::S010,
