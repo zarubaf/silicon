@@ -28,6 +28,7 @@ mod data;
 mod field;
 mod handle;
 mod hwops;
+mod info;
 mod inst;
 mod list;
 mod matching;
@@ -238,8 +239,9 @@ struct Evaluator<'a> {
 }
 
 /// The kind of a guard (section 9.4): a hardware arm or a structural context. A family key
-/// (`Key`), an index of a `:=` target (`Index`), an `as` key (`Name`), and a key of the operand
-/// of the builtin `q` (`Query`) are structural contexts with their own texts.
+/// (`Key`), an index of a `:=` target (`Index`), an `as` key (`Name`), a key of the operand of
+/// the builtin `q` (`Query`), and the argument of the builtin `q` (`Arg`) are structural contexts
+/// with their own texts.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GuardKind {
     Arm,
@@ -248,6 +250,8 @@ pub(crate) enum GuardKind {
     Index,
     Name,
     Query(Builtin),
+    /// The argument of the builtin `q` (`@typeInfo`, section 9.4).
+    Arg(Builtin),
 }
 
 /// The innermost guard: its kind, the nesting depth at its start, and `callee`. The `callee` is
@@ -298,6 +302,11 @@ impl Guard {
                  in a `let`, and use that name in the key",
                 q = q.name()
             ),
+            GuardKind::Arg(q) => format!(
+                "an argument of `@{q}` cannot change `{x}`; change `{x}` before `@{q}`, keep the \
+                 result in a `let`, and use that name in the argument",
+                q = q.name()
+            ),
         }
     }
 
@@ -326,6 +335,11 @@ impl Guard {
             GuardKind::Query(q) => format!(
                 "a key of `@{q}` has no graph effect such as `{g}`; call `{g}` before `@{q}`, \
                  keep the result in a `let`, and use that name in the key",
+                q = q.name()
+            ),
+            GuardKind::Arg(q) => format!(
+                "an argument of `@{q}` has no graph effect such as `{g}`; call `{g}` before \
+                 `@{q}`, keep the result in a `let`, and use that name in the argument",
                 q = q.name()
             ),
         }
@@ -912,16 +926,14 @@ impl Evaluator<'_> {
                 // The parser fixes the arity (`S001`), so another shape has no value here.
                 _ => Ok(None),
             },
-            // TODO(#380): evaluate `@typeInfo` (design section 9.3).
             Expr::Builtin {
                 pos,
                 builtin: Builtin::TypeInfo,
-                ..
-            } => fail(
-                Code::S004,
-                *pos,
-                "a builtin is not supported yet".to_owned(),
-            ),
+                args,
+            } => match args.as_slice() {
+                [arg] => Ok(Some(self.type_info(*pos, arg)?)),
+                _ => Ok(None),
+            },
             Expr::Unary { pos, op, arg } => self.unary_expr(*pos, *op, arg),
             Expr::Binary {
                 pos,

@@ -122,6 +122,9 @@ pub(crate) struct Counts {
     pub waited: u64,
     /// The steps that the check before a key with a call decided by the type of their container.
     pub checked: u64,
+    /// The fields, the variants, and the payload types that the shape and the build of the
+    /// result of a `@typeInfo` visited.
+    pub reflected: u64,
 }
 
 impl Counts {
@@ -179,6 +182,7 @@ impl Counts {
             queried,
             waited,
             checked,
+            reflected,
         } = *self;
         [
             scanned,
@@ -230,6 +234,7 @@ impl Counts {
             queried,
             waited,
             checked,
+            reflected,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -288,6 +293,7 @@ pub(crate) enum Count {
     Queried,
     Waited,
     Checked,
+    Reflected,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -375,6 +381,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Queried => &mut c.queried,
             Count::Waited => &mut c.waited,
             Count::Checked => &mut c.checked,
+            Count::Reflected => &mut c.reflected,
         };
         *field += n;
     }
