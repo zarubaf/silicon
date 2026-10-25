@@ -1,0 +1,12 @@
+// `@field` charges its node, then its key, and the size of a `String` key for the look-up. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 194
+// TOP M()
+module C() {
+    output sum: UInt[4];
+    sum := 1;
+}
+module M() {
+    output o: UInt[4];
+    instance u = C();
+    o := @field(u, "sum");
+}

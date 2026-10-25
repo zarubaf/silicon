@@ -1,0 +1,14 @@
+// `@TypeOf` charges its node and one unit for each step. The root charges nothing, and the query reads no register. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 226
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: (Bool, UInt[4]),
+}
+module M() {
+    output o: UInt[4];
+    reg rg: P = P();
+    let t = @TypeOf(rg.b.1);
+    rg := P();
+    o := 0;
+}
