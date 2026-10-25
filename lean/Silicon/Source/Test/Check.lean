@@ -761,4 +761,16 @@ def mutFns (s : String) : String :=
 #guard message (mutFns "let r = g(@field(f(p), 0));") == "a `mut` actual is a place"
 #guard fails (mutFns "let r = g(@TypeOf(p));") .S008 4 11
 
+/-!
+The argument of `@typeInfo` is no static position, also in a static position (ADR 0031, G3), so a
+register there is no `S005`. The index rule still holds for an index in it, also in a query
+operand in it.
+-/
+#guard ok (modBody "reg r: Bool = false;\nlet t = @typeInfo(r);")
+#guard ok (modBody "reg r: Bool = false;\ncomptime if (@typeInfo(r).width == 1) {}")
+#guard fails (modBody ("reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\n" ++
+  "let t = @typeInfo(rs[w]);")) .S005 4 22
+#guard fails (modBody ("reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\n" ++
+  "let t = @typeInfo(@TypeOf(rs[w]));")) .S005 4 30
+
 end Silicon.Source.Test.Check
