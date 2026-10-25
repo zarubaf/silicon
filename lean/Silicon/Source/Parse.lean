@@ -3,7 +3,7 @@ import Silicon.Source.Lex
 import Silicon.Source.Print
 
 /-!
-The parser of slices 1 to 3. It reads the tokens of `Source.Lex`. It gives the items of the
+The parser of slices 1 to 4. It reads the tokens of `Source.Lex`. It gives the items of the
 file, or the first error in position order. `S001` is a token that the grammar does not accept.
 `S004` is the syntax of a later slice or of a later phase of slice 3.
 
@@ -15,7 +15,8 @@ if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item.
   `in`, `with`, and `conforms` after their forms.
-- The opening token: `@` of one of the five builtins.
+- The opening token: `@` of `@typeInfo`, `@Struct`, and `@ports`, and `@` of each builtin in
+  a type (#345).
 - A later token of the construct: the `::` of a package path. The `(` after a type, which is a
   type function call. The second name in a `domains` clause. The `(` after the name of an enum,
   which is an enum with parameters.
@@ -34,7 +35,15 @@ The parse is linear in the number of tokens. Before the parse, one pass finds th
 bracket of each opening bracket. It also records if a `,` or a `;` comes directly in that
 bracket. Thus each look ahead takes constant time.
 
-`@` followed by another name than a builtin is `S001` at that name: no slice has that syntax.
+`@` followed by another name than a builtin is `S001` "Not a builtin" at that name: no slice
+has that syntax.
+
+A builtin `@TypeOf(x)` or `@field(x, k)` is a primary (section 9.3). The parser reads all its
+operands, then it checks their number: another number is `S001` "Builtin arity" at the name
+after `@`. Then the operand of `@TypeOf` must be a place (`Expr.place`), else `S001` "Query
+operand" at the first token of the operand, also if that token is a `(`. These two checks come
+after the operands, so a syntax error in an operand wins over them. An `@field` selection of a
+place is a place, so it can be a target, and a statement can start with `@`.
 A module parameter or a struct parameter without `comptime` is `S001` at its name. With `mut`,
 it is `S001` at `mut`. The v0.1 grammar has only `comptime` module parameters, and the front-end
 spec keeps this rule for a struct (section 5.6). A function parameter has at most one mark,
@@ -71,8 +80,9 @@ These rules settle the open points of the grammar:
 - `(a)` groups, `(a,)` is a tuple of one element, and `()` is the unit value. The same holds
   for a type: `(T)` groups, `(T,)` is a tuple type, and `()` is the unit type. A type suffix
   can follow each type form.
-- A place is a name, or a field, an index, or a selector `.N` of a place. The parser accepts
-  an index with more than one argument as a place. The type rules reject it.
+- A place is a name, or a field, an index, a selector `.N`, or an `@field` selection of a
+  place. The parser accepts an index with more than one argument as a place. The type rules
+  reject it.
 - `x.m(args)` is a receiver call: a `method` node at the position of `x`. `t.0(x)` is a call of
   the element `t.0`, not a receiver call: a selector is no method name. `(x.m)(args)` calls the
   field `x.m`.
@@ -222,12 +232,41 @@ def path : P Ident := do
   let t ← peek
   if isSym "::" t then packagePath t else return n
 
-/-! `@` at `t`: `S004` for a builtin, else `S001` at the name. -/
-def builtin (t : Token) : P α := do
-  let u ← peekAt 1
+/-! The `S001` text "Not a builtin" of section 6.2 for the name `x` after `@`. -/
+def notBuiltinText (x : String) : String :=
+  s!"`@{strText x}` is not a builtin; use `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, or " ++
+    "`@ports`"
+
+/-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
+def builtinArityText (b : Builtin) (m : Nat) : String :=
+  s!"`@{b.name}` takes {b.arity} argument(s), but it has {m}; write `{b.form}`"
+
+/-! The `S001` text "Query operand" of section 6.2 for the builtin `b`. -/
+def queryOperandText (b : Builtin) : String :=
+  s!"`@{b.name}` takes a name or a selection of a name; bind the value with `let` and pass " ++
+    "the name"
+
+/-!
+`@` at `t` with the name token `u` after it, where no builtin node can stand. One of the five
+builtins is `S004`. Another name is `S001` "Not a builtin" at the name. A token after `@` that is
+no name is `S001` too.
+-/
+def laterBuiltin (t u : Token) : P α :=
   match u.kind with
-  | .ident n => if builtins.contains n then later t "a builtin" else unexpected u "a builtin name"
+  | .ident n =>
+    if builtins.contains n then later t "a builtin" else throw ⟨.S001, u.pos, notBuiltinText n⟩
   | _ => unexpected u "a builtin name"
+
+/-! `@` at `t` in a type: a builtin in a type position is `S004` (#345). -/
+def builtin (t : Token) : P α := do laterBuiltin t (← peekAt 1)
+
+/-!
+The checks of the builtin `b` after its operands `xs` (section 9.3). First the number of the
+operands, at the name `u`. Then the form of the operand of `@TypeOf`, at its first token `o`.
+-/
+def builtinCheck (u : Token) (b : Builtin) (o : Pos) (xs : List Expr) : P Unit := do
+  if xs.length != b.arity then throw ⟨.S001, u.pos, builtinArityText b xs.length⟩
+  unless b.operandsOk xs do throw ⟨.S001, o, queryOperandText b⟩
 
 def noDomain : P Unit := do
   let t ← peek
@@ -448,8 +487,8 @@ mutual
         return ops.foldl (fun a (p, op) => ⟨.unary p op a.expr, a.height + 1⟩) a
 
   /--
-  A postfix form, and whether it is a place: a name, or a field, an index, or a selector of a
-  place.
+  A postfix form, and whether it is a place: a name, or a field, an index, a selector, or an
+  `@field` selection of a place.
   -/
   def postfixExpr : Nat → P (Node × Bool)
     | 0 => exhausted
@@ -531,7 +570,19 @@ mutual
           bump
           let xs ← args f "]" true false
           return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
-      | .symbol "@" => builtin t
+      | .symbol "@" =>
+        let u ← peekAt 1
+        let .ident n := u.kind | laterBuiltin t u
+        let some b := Builtin.ofName n | laterBuiltin t u
+        bump
+        bump
+        sym "("
+        let o := (← peek).pos
+        let xs ← args f ")" true false
+        let ys := xs.map (·.expr)
+        builtinCheck u b o ys
+        let e := Expr.builtin t.pos b ys
+        return (⟨e, height (xs.map (·.height))⟩, e.place)
       | _ => unexpected t "an expression"
 
   /--
@@ -834,7 +885,7 @@ mutual
         else unexpected u "`if` or `for`"
       | .keyword "type" => aliasDecl f t.pos .alias
       | .symbol "{" => return .block t.pos (← block f)
-      | .ident _ =>
+      | .ident _ | .symbol "@" =>
         let (e, place) ← postfixExpr f
         placeStmt f t.pos e place
       | _ =>

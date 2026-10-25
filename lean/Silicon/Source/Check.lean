@@ -37,6 +37,12 @@ at the name. These are the static positions:
    static parts, also in a branch that a static condition does not select.
 11. From slice 4 on, the key of an indexed `input` or `output` (section 5.6). The key of a family
    selection `req[k]` is an index argument, so rule 1 holds for it.
+12. From slice 4 on, the key of `@field(x, k)`. Its base `x` takes the position of the
+   `@field`, as the base of a field does.
+
+The operand of `@TypeOf` is no static position, also in a static position, so
+`UInt[data_bits(@TypeOf(r))]` names `r` without `S005`. Rule 1 and rule 12 still hold for its
+indices and its keys (section 9.2).
 
 A port family names ports, so its name in a static position is `S005`, also before its first
 declaration. A family is no mutable root, so a `mut` actual with a family root is `S008`.
@@ -91,7 +97,8 @@ rule of this check either, and its arguments are not static positions. A functio
 is a name like another. `Elab` checks that it is not generic and not a builtin (`S010`).
 
 `S008` follows section 9.1. A mutable root is a `let mut` local or a `mut` parameter. A place is
-a name, or an index, a selector `.N`, or a field of a place. Its root is that name. An index of a
+a name, or an index, a selector `.N`, a field, or an `@field` selection of a place. Its root is
+that name. An index of a
 place is a static position, so `Elab` checks that it is static (`S011`). A `mut` actual is an
 argument at a `mut` parameter of a `fn` item, of `push`, or of `pop`, also the receiver of a
 receiver call:
@@ -407,7 +414,7 @@ def receiver (pos : Pos) (m : Ident) (r : Ref) (b : Option Nat) (got : Nat) :
 /-! The local of the root of a place, if the expression is a place with a local root. -/
 def root : Resolve.Expr → Option Nat
   | .name _ _ (.local id) | .name _ _ (.family id _) => some id
-  | .index _ b _ | .select _ b .. | .field _ b _ => root b
+  | .index _ b _ | .select _ b .. | .field _ b _ | .builtin _ .field (b :: _) => root b
   | _ => none
 
 /-! Makes the local `id` pending for one more window. `release` ends the windows. -/
@@ -527,6 +534,15 @@ mutual
     | .«match» _ x as => do
       let _ ← visit static false x
       for a in as do arm static a
+      return none
+    | .builtin _ .typeOf xs => do
+      for x in xs do let _ ← visit false false x
+      return none
+    | .builtin _ .field xs => do
+      let mut k := 0
+      for x in xs do
+        let _ ← visit (static || k != 0) false x
+        k := k + 1
       return none
 
   /-- An arm: the arity of its pattern, then its value. A binder is a plain local. -/

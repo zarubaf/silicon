@@ -404,4 +404,20 @@ def keyed : List Item :=
 #guard (Parse.parseSource Lex.defaultSyntaxDepth (Print.print keyed)).toOption.map Print.dump ==
   some (Print.dump keyed)
 
+/-!
+A builtin (slice 4) dumps its name after `@` and its operands. It prints as a primary, so it
+takes each suffix without parentheses.
+-/
+def bi (b : Builtin) (xs : List Expr) : Expr := .builtin p b xs
+#guard exprDump (bi .typeOf [v "x"]) == "(builtin TypeOf ((name \"x\")))"
+#guard exprDump (bi .field [v "x", .str p "a"]) == "(builtin field ((name \"x\") (str \"a\")))"
+#guard exprDump (bi .typeOf []) == "(builtin TypeOf ())"
+#guard exprText (bi .typeOf [.field p (v "x") (nm "f")]) == "@TypeOf(x.f)"
+#guard exprText (bi .field [v "x", .str p "a"]) == "@field(x, \"a\")"
+#guard exprText (.field p (bi .field [v "x", n 0]) (nm "b")) == "@field(x, 0).b"
+#guard exprText (.call p (bi .field [v "x", n 0]) [n 1]) == "@field(x, 0)(1)"
+#guard exprText (bin .mul (bi .typeOf [v "x"]) (bin .add (v "a") (n 1))) == "@TypeOf(x) * (a + 1)"
+#guard stmtDump (.assign p (bi .field [v "x", n 0]) (n 1)) ==
+  "(assign (builtin field ((name \"x\") (num 0))) (num 1))"
+
 end Silicon.Source.Test.Print

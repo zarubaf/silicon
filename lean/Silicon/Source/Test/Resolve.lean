@@ -890,4 +890,15 @@ family with the name of the binder is the ordinary `S002`.
   "`req` is already declared in this scope"
 #guard fails (fnBody "input req[0]: Bool;\noutput req: Bool as \"x\";\nreturn p;") .S002 3 8
 
+/-! The operands of a builtin resolve as expressions: an unknown name in one is `S003`. -/
+#guard ok (fnBody "let x = 1;\nlet t = @TypeOf(x);\nlet y = @field(x, \"a\");\nreturn p;")
+#guard fails (fnBody "let t = @TypeOf(q);\nreturn p;") .S003 2 17
+#guard fails (fnBody "let y = @field(p, k);\nreturn p;") .S003 2 19
+#guard match run "fn f(x: Nat) -> Nat { return @field(x, 0); }" with
+  | .ok items => match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ _
+        [.ret _ (some (.builtin _ .field [.name _ "x" (.local _), .num _ 0]))]) => true
+    | _ => false
+  | .error _ => false
+
 end Silicon.Source.Test.Resolve

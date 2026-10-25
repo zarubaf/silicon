@@ -200,4 +200,29 @@ example : ¬ Printable [.const p (nm "X") (t "T")
 example : ¬ Printable [.const p (nm "X") (t "T") (.str p "\x01")] := by decide
 example : ¬ Printable [.const p (nm "X") (t "T") (.num p (2 ^ 65536))] := by decide +kernel
 
+/-!
+The builtins (slice 4): each operand form of `@TypeOf`, `@field` with any base, and an `@field`
+selection of a place as a target.
+-/
+example : Printable [.const p (nm "X") (t "T") (.tuple p [.builtin p .typeOf [v "a"],
+    .builtin p .typeOf [.index p (.field p (v "a") (nm "b")) [.num p 0]],
+    .builtin p .typeOf [.select p (.builtin p .field [v "a", .str p "f"]) p 1],
+    .builtin p .field [.call p (v "g") [], .num p 0],
+    .field p (.builtin p .field [v "a", .num p 0]) (nm "c")])] := by decide +kernel
+example : Printable [.fn p false (nm "f") [] (t "T")
+    [.assign p (.builtin p .field [.field p (v "a") (nm "b"), .num p 0]) (v "x"),
+     .expr p (.builtin p .typeOf [v "a"])]] := by decide +kernel
+
+/-!
+A builtin with another number of operands, and an operand of `@TypeOf` that is not a place. Also
+an `@field` selection of a value that is not a place, as a target.
+-/
+example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .field [v "a"])] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .typeOf [])] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .typeOf [.num p 1])] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T")
+    (.builtin p .typeOf [.builtin p .typeOf [v "a"]])] := by decide
+example : ¬ Printable [.fn p false (nm "f") [] (t "T")
+    [.assign p (.builtin p .field [.call p (v "g") [], .num p 0]) (v "x")]] := by decide
+
 end Silicon.Source.ParsePrint

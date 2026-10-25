@@ -43,6 +43,11 @@ theorem Runs.peek_bind {β : Type} {k : Token → P β} {ctx : Ctx} {i l : Nat} 
     (hk : Runs (k (tokenAt ctx.input i)) ctx i l R) : Runs (Parse.peek >>= k) ctx i l R :=
   Runs.bind (Q := (· = tokenAt ctx.input i)) (fun _ => ⟨_, rfl, rfl⟩) fun _ h => h ▸ hk
 
+theorem Runs.peekAt_bind {β : Type} {k : Token → P β} {ctx : Ctx} {i l n : Nat} {R : β → Prop}
+    (hk : Runs (k (tokenAt ctx.input (i + n))) ctx i l R) :
+    Runs (Parse.peekAt n >>= k) ctx i l R :=
+  Runs.bind (Q := (· = tokenAt ctx.input (i + n))) (fun _ => ⟨_, rfl, rfl⟩) fun _ h => h ▸ hk
+
 theorem Runs.bump {ctx : Ctx} {i : Nat} : Runs bump ctx i (i + 1) (fun _ => True) :=
   fun _ => ⟨(), rfl, trivial⟩
 
@@ -156,7 +161,7 @@ theorem opAt_text {op : BinOp} {t : Token} (h : t.kind = .symbol op.text) :
 def PStart : Kind → Bool
   | .ident _ | .number _ | .string _ => true
   | .keyword w => w == "true" || w == "false"
-  | .symbol s => s == "(" || s == "["
+  | .symbol s => s == "(" || s == "[" || s == "@"
   | .eof | .error _ => false
 
 theorem unOp_pstart {t : Token} (h : PStart t.kind) : unOp t = none := by
@@ -165,6 +170,7 @@ theorem unOp_pstart {t : Token} (h : PStart t.kind) : unOp t = none := by
   all_goals first
     | rfl
     | (rcases h with rfl | rfl <;> rfl)
+    | (rcases h with (rfl | rfl) | rfl <;> rfl)
     | simp at h
 
 theorem isKw_pstart {t : Token} (h : PStart t.kind) : isKw "fn" t = false := by
@@ -173,6 +179,7 @@ theorem isKw_pstart {t : Token} (h : PStart t.kind) : isKw "fn" t = false := by
   all_goals first
     | rfl
     | (rcases h with rfl | rfl <;> rfl)
+    | (rcases h with (rfl | rfl) | rfl <;> rfl)
     | simp at h
 
 theorem unOp_text {t : Token} {op : UnOp} (h : t.kind = .symbol op.text) : unOp t = some op := by
@@ -217,6 +224,7 @@ theorem Expr.toks_head11 (e : Expr) : ∃ k, (e.toks 11).head? = some k ∧ PSta
     exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
   | case11 | case12 => exact ⟨.symbol "(", by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
   | case13 | case15 => exact ⟨.symbol "[", by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
+  | case20 => exact ⟨.symbol "@", by simp [Expr.toks, Expr.level, postfixLevel], rfl⟩
   | case14 p b q i ihb =>
     obtain ⟨k, h, hk⟩ := ihb
     exact ⟨k, by simp [Expr.toks, Expr.level, postfixLevel, List.head?_append, h], hk⟩
