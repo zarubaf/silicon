@@ -13,6 +13,7 @@ use crate::agg::Agg;
 use crate::hw::{Seen, Val};
 use crate::int::BitBuf;
 use crate::limit;
+use crate::names::Sym;
 use crate::ops::int_text;
 use crate::types::{Ty, TyId};
 use crate::value::{Value, int_size, width_size};
@@ -273,35 +274,47 @@ impl Evaluator<'_> {
         )
     }
 
-    /// The number of the field `f` in the struct item `item`.
-    pub(super) fn field_number(&self, item: usize, f: &Ident) -> Option<usize> {
-        match self.names {
-            Names::File => {
-                let sym = self.syms.fields.get(&f.id)?;
-                self.syms.struct_fields.get(item)?.get(sym).copied()
-            }
-            // The top expression has no symbols for its fields. It runs once, so a search by
-            // name stays within its size.
-            Names::Top => match self.file.ast().get(item)? {
-                Item::Struct { fields, .. } => fields.iter().position(|d| d.name.name == f.name),
+    /// The number of the field with the symbol `y` and the name `name` in the struct item `item`.
+    /// No symbol is a name that the scan did not intern, and the top expression has no symbols
+    /// for its fields. It runs once, so a search by name stays within its size.
+    pub(super) fn field_number_by(&self, item: usize, y: Option<Sym>, name: &str) -> Option<usize> {
+        match (y, self.names) {
+            (Some(sym), _) => self.syms.struct_fields.get(item)?.get(&sym).copied(),
+            (None, Names::File) => None,
+            (None, Names::Top) => match self.file.ast().get(item)? {
+                Item::Struct { fields, .. } => fields.iter().position(|d| d.name.name == name),
                 _ => None,
             },
         }
     }
 
-    /// The number of the field `f` of the record that `cur` finds, and its type. A field
-    /// selection refers to the field, so it charges no size. A missing field is `S010`.
-    pub(super) fn field_at(&self, pos: Pos, f: &Ident, cur: Seen<'_>) -> Res<(usize, TyId)> {
-        self.no_enum_field(pos, &f.name, cur)?;
+    /// The number of the field `f` in the struct item `item`, by the symbol of its name.
+    pub(super) fn field_number(&self, item: usize, f: &Ident) -> Option<usize> {
+        self.field_number_by(item, self.port_sym(f), &f.name)
+    }
+
+    /// The number of the field with the symbol `y` and the name `name` of the record that `cur`
+    /// finds, and its type. A field selection refers to the field, so it charges no size. A
+    /// missing field is `S010`.
+    pub(super) fn field_at_by(
+        &self,
+        pos: Pos,
+        (y, name): (Option<Sym>, &str),
+        cur: Seen<'_>,
+    ) -> Res<(usize, TyId)> {
+        self.no_enum_field(pos, name, cur)?;
         let missing = || {
             fail(
                 Code::S010,
                 pos,
-                format!("{} has no field `{}`", self.text(cur), f.name),
+                format!("{} has no field `{name}`", self.text(cur)),
             )
         };
         if let Seen::Agg(a) = cur {
-            return self.agg_field_at(a, f).ok_or(()).or_else(|()| missing());
+            return self
+                .agg_field_at_by(a, y, name)
+                .ok_or(())
+                .or_else(|()| missing());
         }
         let Seen::Static(Value::Record(t, _)) = cur else {
             return missing();
@@ -312,12 +325,18 @@ impl Evaluator<'_> {
         let types = parts.types;
         match parts
             .item()
-            .and_then(|item| self.field_number(item, f))
+            .and_then(|item| self.field_number_by(item, y, name))
             .and_then(|k| types.get(k).map(|ft| (k, *ft)))
         {
             Some(found) => Ok(found),
             None => missing(),
         }
+    }
+
+    /// The number of the field `f` of the record that `cur` finds, and its type
+    /// (`field_at_by`), by the symbol of its name.
+    pub(super) fn field_at(&self, pos: Pos, f: &Ident, cur: Seen<'_>) -> Res<(usize, TyId)> {
+        self.field_at_by(pos, (self.port_sym(f), &f.name), cur)
     }
 
     /// The field `.f` of a record: a reference to the field.

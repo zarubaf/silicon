@@ -344,12 +344,23 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The number of the field `f` of the aggregate `a` and its type, if `a` is a record or a
-    /// reference to one with that field.
-    pub(super) fn agg_field_at(&self, a: &Agg, f: &Ident) -> Option<(usize, TyId)> {
+    /// The number of the field with the symbol `y` and the name `name` of the aggregate `a` and
+    /// its type, if `a` is a record or a reference to one with that field.
+    pub(super) fn agg_field_at_by(
+        &self,
+        a: &Agg,
+        y: Option<Sym>,
+        name: &str,
+    ) -> Option<(usize, TyId)> {
         let parts = self.tys.parts(self.record_ty(a)?)?;
-        let k = self.field_number(parts.item()?, f)?;
+        let k = self.field_number_by(parts.item()?, y, name)?;
         Some((k, parts.types.get(k).copied()?))
+    }
+
+    /// The number of the field `f` of the aggregate `a` and its type (`agg_field_at_by`), by the
+    /// symbol of its name.
+    pub(super) fn agg_field_at(&self, a: &Agg, f: &Ident) -> Option<(usize, TyId)> {
+        self.agg_field_at_by(a, self.port_sym(f), &f.name)
     }
 
     /// The field `f` of the aggregate `out`, a result of the field at `pos`. A reference to a
