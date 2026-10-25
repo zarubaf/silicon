@@ -365,8 +365,7 @@ impl Evaluator<'_> {
     /// base `b`, with the field node at `q` (section 6.2). The index node and the field node
     /// charged 1, and `u` evaluated once. The base is an `Instance` handle whose module has the
     /// family `f` (`child_family`). The key evaluates in a structural context, gets the checks of
-    /// a selection key with `S010` at `q`, and selects the entry of the child. A key that the
-    /// child did not declare is `S013` "Child family key".
+    /// a selection key with `S010` at `q`, and selects the entry of the child (`child_entry`).
     pub(in crate::eval) fn child_sel(
         &mut self,
         (p, q): (Pos, Pos),
@@ -381,9 +380,27 @@ impl Evaluator<'_> {
         let out = self.key_out(key)?;
         let number = self.selection_key(q, key.pos(), &f.name, &out)?;
         let sym = self.port_sym(f).unwrap_or(0);
+        self.child_entry(
+            (p, key.pos()),
+            (id, path),
+            (inst, ty),
+            (sym, &f.name, number),
+        )
+    }
+
+    /// The entry `number` at `p` of the family with the symbol `sym` and the name `name` of the
+    /// child number `id` with the path `path`, the instantiation `inst`, and the type `ty`. A key
+    /// that the child did not declare is `S013` "Child family key" at the key `kp`.
+    pub(in crate::eval) fn child_entry(
+        &mut self,
+        (p, kp): (Pos, Pos),
+        (id, path): (usize, PathId),
+        (inst, ty): (usize, TyId),
+        (sym, name, number): (Sym, &str, u32),
+    ) -> Res<Out> {
         match self.elab.port(inst, (sym, Some(number))) {
             Some(port) => self.port_out(p, (id, path), port),
-            None => child_key(key.pos(), &self.tys.text(ty), &f.name, number),
+            None => child_key(kp, &self.tys.text(ty), name, number),
         }
     }
 }
