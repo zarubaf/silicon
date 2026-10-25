@@ -8,7 +8,9 @@
 //! (`Evaluator::key_plan`), and a `String` key and the name of a `PortKey` charge their size
 //! before a look-up reads them (`Evaluator::name_sym`). The look-up adds no name. The selection is
 //! then the ordinary one that the key names: a field, an index, or a public port of a child. A
-//! key never copies its string: the step reads it where it lies in the store.
+//! key copies its string only when it waits in a `let mut` local and a later key with a call could
+//! change the local (`Evaluator::own_waiting`): the copy follows the charge of the name. Another
+//! step reads the string where it lies in the store.
 
 use super::inst::{child_key, no_port};
 use super::place::{Index, Key, Named, elem};
