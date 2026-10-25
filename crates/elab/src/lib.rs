@@ -307,9 +307,9 @@ mod tests_fn_call;
 
 #[cfg(test)]
 mod tests_flatten;
-
 #[cfg(test)]
 mod tests_flatten_match;
+
 #[cfg(test)]
 mod tests_info;
 
