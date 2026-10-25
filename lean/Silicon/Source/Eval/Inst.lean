@@ -393,38 +393,6 @@ def outputText (f : String) : String :=
     "input of the child"
 
 /-!
-The step `sel` of a `:=` target that starts at `s`, on the base `v`, with the index `k` of
-`targetKeys` (sections 5.2 and 9.4). The static type of the base decides. A field of an
-`Instance` handle selects the child port with no charge, and an output there is `S017`. On a
-container of a type with the handle flag, a field and a selector charge 1, and an index step
-charged with its index. Then the step selects the part with its checks (`S010` and `S013`).
-Each other base, also another handle, is `S017` at `s`.
--/
-def targetStep (s : Pos) (v : Val) (step : Sel × Option Value) : Eval.M Val := do
-  let (sel, key) := step
-  match v, sel with
-  | .handle (.inst k path iface ty), .field q f =>
-    match (← read).field f.pos >>= fun y => iface.ports[((y, none) : PortId)]? with
-    | some port =>
-      if port.input then return .handle (.input k path port)
-      else fail .S017 s (outputText port.text)
-    | none => fail .S010 q (noPortText ty.text f.name)
-  | .agg a, sel =>
-    unless a.ty?.any (·.info.handles) do fail .S017 s partText
-    match sel, key with
-    | .index q [i], some k => return (← pickKey q i.pos v k).2
-    | .index q _, _ => fail .S010 q "an index of a value has one argument"
-    | .select q r i, _ =>
-      charge q 1
-      return (← selectKey q r i v).2
-    | .field q f, _ =>
-      charge q 1
-      return (← fieldKey q f v).2.1
-    -- TODO(#344): an `@field` step of a `:=` target (section 9.3).
-    | .key q .., _ => fail .S004 q "a builtin is not supported yet"
-  | _, _ => fail .S017 s partText
-
-/-!
 The family of the child that the field `f` of the base `v` names, when `v` is an `Instance`
 handle (section 5.6). The interface of the child holds its families.
 -/
@@ -433,52 +401,6 @@ def childFamily (v : Val) (f : Ident) : Eval.M Bool := do
   match (← read).field f.pos with
   | some y => return iface.families.contains y
   | none => return false
-
-/-!
-The entry of the family `f` of the child behind the `Instance` handle `v`, with the static key
-`k` at `kp`, in a `:=` target that starts at `s` (section 5.2). The key gets the type and range
-checks of a family selection (`familyKey`). A key that the child did not declare is `S013`
-"Child family key". An input entry gives its handle, and an output entry is `S017`.
--/
-def childTarget (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) : Eval.M Val := do
-  let key ← familyKey kp k
-  let .handle (.inst id path iface ty) := v | fail .S017 s partText
-  let y := ((← read).field f.pos).getD 0
-  match iface.ports[((y, some key) : PortId)]? with
-  | some port =>
-    if port.input then return .handle (.input id path port)
-    else fail .S017 s (outputText port.text)
-  | none => fail .S013 kp (childKeyText ty.text f.name key)
-
-/-!
-One step of the walk of a `:=` target that starts at `s`, on the base `v` (section 5.2). `fam`
-holds a family of the child behind `v` that the step before named. A field that names a family
-of a child keeps it for the next step, so the walk does not start again from the root. That step
-is an index, and its key selects the entry (`childTarget`). Else it is `S010` "Family as a
-value" at `s`. Each other step selects in `targetStep`.
--/
-def walkStep (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
-    Eval.M (Val × Option Ident) := do
-  match fam, step with
-  | some f, (.index _ [i], some k) => return (← childTarget s v f i.pos k, none)
-  | some f, _ => fail .S010 s (familyValueText f.name)
-  | none, (.field _ f, _) =>
-    if ← childFamily v f then return (v, some f) else return (← targetStep s v step, none)
-  | none, _ => return (← targetStep s v step, none)
-
-/-!
-The walk of the steps `steps` of a `:=` target that starts at `s`, from the base `v` outward,
-with a pending family `fam` of a child (`walkStep`). A family without its key at the end is
-`S010` "Family as a value" at `s`.
--/
-def targetWalk (s : Pos) (v : Val) (fam : Option Ident) :
-    List (Sel × Option Value) → Eval.M Val
-  | [] => match fam with
-    | some f => fail .S010 s (familyValueText f.name)
-    | none => pure v
-  | step :: rest => do
-    let (w, fam) ← walkStep s v fam step
-    targetWalk s w fam rest
 
 /-! Records the `S018` data `x` at `p`. The first by position wins (section 6.2). -/
 def breach (p : Pos) (x : Breach) : Eval.M Unit :=

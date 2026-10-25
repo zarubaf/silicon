@@ -91,29 +91,33 @@ theorem serialize_f (p : Pos) (m : String) (vs : List Value) :
     Follows cap (Elab.serialize p m vs) (Elab.serialize p m vs) := by
   unfold Elab.serialize; follows
 
+theorem targetPort_f (s : Pos) (id : Nat) (path : Names.Path) (q : Port) :
+    Follows cap (targetPort s id path q) (targetPort s id path q) := by
+  unfold targetPort; follows
+
 theorem targetStep_f (s : Pos) (v : Val) (step : Sel × Option Value) :
-    Follows cap (Elab.targetStep s v step) (Elab.targetStep s v step) := by
-  unfold Elab.targetStep; follows [pickKey_f, selectKey_f, fieldKey_f]
+    Follows cap (targetStep s v step) (targetStep s v step) := by
+  unfold targetStep; follows [pickKey_f, selectKey_f, fieldKey_f, targetPort_f]
 
 theorem childFamily_f (v : Val) (f : Ident) :
     Follows cap (Elab.childFamily v f) (Elab.childFamily v f) := by
   unfold Elab.childFamily; follows
 
 theorem childTarget_f (s : Pos) (v : Val) (f : Ident) (kp : Pos) (k : Value) :
-    Follows cap (Elab.childTarget s v f kp k) (Elab.childTarget s v f kp k) := by
-  unfold Elab.childTarget; follows [familyKey_f]
+    Follows cap (childTarget s v f kp k) (childTarget s v f kp k) := by
+  unfold childTarget; follows [familyKey_f, childPort_f, targetPort_f]
 
 theorem walkStep_f (s : Pos) (v : Val) (fam : Option Ident) (step : Sel × Option Value) :
-    Follows cap (Elab.walkStep s v fam step) (Elab.walkStep s v fam step) := by
-  unfold Elab.walkStep; follows [targetStep_f, childFamily_f, childTarget_f]
+    Follows cap (walkStep s v fam step) (walkStep s v fam step) := by
+  unfold walkStep; follows [targetStep_f, childFamily_f, childTarget_f]
 
 theorem targetWalk_f (s : Pos) :
     ∀ (v : Val) (fam : Option Ident) (steps : List (Sel × Option Value)),
-      Follows cap (Elab.targetWalk s v fam steps) (Elab.targetWalk s v fam steps)
-  | v, none, [] => by rw [Elab.targetWalk]; follows
-  | v, some f, [] => by rw [Elab.targetWalk]; follows
+      Follows cap (targetWalk s v fam steps) (targetWalk s v fam steps)
+  | v, none, [] => by rw [targetWalk]; follows
+  | v, some f, [] => by rw [targetWalk]; follows
   | v, fam, step :: rest => by
-    rw [Elab.targetWalk]
+    rw [targetWalk]
     exact Follows.bind (walkStep_f s v fam step) fun (w, g) => targetWalk_f s w g rest
 
 theorem sinkValue_f (p : Pos) (t : Ty) (v : Val) :
