@@ -11,6 +11,9 @@
 # A line that starts with `#` is a comment. An entry with no issue, or for a row that is not in
 # the spec, is an error.
 #
+# A placeholder that a note of section 6.2 closes with `Values of `{p}`: ...` needs no line here.
+# The rule expands the row over the values, and a hole of a front-end literal can stand for a value.
+#
 # Two modes. `cargo xtask check` (and `just check`) reports every finding of the rule as a
 # warning: a gap that no line names, a missing fix, a missing pin, a stale line, and a malformed
 # line. So the `docs` commit that adds a row can pass before the `test` commit that adds its lines.
@@ -26,7 +29,6 @@ lean | S007 Arity of `read` | 314
 rust | S007 Arity of `read` | 314
 rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
-lean | S001 Query operand | 377
 fix | S010 `@typeInfo` of a value | 377
 rust | S016 Mutation in a builtin argument | 345
 rust | S016 Graph effect in a builtin argument | 345
@@ -37,11 +39,6 @@ rust | S016 Graph effect in a builtin argument | 377
 lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
-fix | S010 Port in a place | 377
-lean | S016 Mutation in a query key | 377
-rust | S016 Mutation in a query key | 377
-lean | S016 Graph effect in a query key | 377
-rust | S016 Graph effect in a query key | 377
 lean | S022 Second field name | 345
 rust | S022 Second field name | 345
 pin | S022 Second field name | 345
