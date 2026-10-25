@@ -35,7 +35,6 @@ lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
 fix | S010 Port in a place | 344
-rust | S010 Port in a place | 344
 lean | S016 Mutation in a query key | 344
 rust | S016 Mutation in a query key | 344
 lean | S016 Graph effect in a query key | 344
@@ -196,7 +195,6 @@ unlisted | S010 the element of a list is a type, not {} | 354
 unlisted | S010 the elements of an array have no common type | 354
 unlisted | S010 the enum item is missing | 354
 unlisted | S010 the field `{}` has no symbol | 354
-unlisted | S010 the instance has no port `{}` | 354
 unlisted | S010 the length of an array is a static Nat, not {} | 354
 unlisted | S010 the literal has no value | 354
 unlisted | S010 the message of `{}` is a String, not `[]` withou | 354
@@ -331,4 +329,3 @@ unlisted | S021 the `match` has no arm {} | 354
 unlisted | S001 brackets nest deeper than {} levels; raise --syn | 354
 unlisted | S001 invalid character in string | 354
 unlisted | S022 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
-unlisted | S004 a builtin is not supported yet | 344
