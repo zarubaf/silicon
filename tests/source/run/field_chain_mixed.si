@@ -1,0 +1,14 @@
+// A chain of `@field` steps with a `Nat` key, a `String` key, and a `Nat` key selects as `a[1].c[2]` does.
+// TOP M()
+struct P {
+    a: UInt[4],
+    c: [UInt[4]; 3],
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let a = [P(x, [x, x +% 1, x +% 2]), P(x +% 3, [x +% 4, x +% 5, x +% 6])];
+    o := @field(@field(@field(a, 1), "c"), 2);
+}
+// STEP in=(x 3) out=(o 9)
+// STEP in=(x 12) out=(o 2)
