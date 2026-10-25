@@ -2029,6 +2029,7 @@ fn a_missing_name_pays_before_the_look_up_fails() {
         assert_eq!(error_at(&src, fuel), want, "with the fuel {fuel}");
     }
 }
+
 /// The program of a write or a read through a key that a later key with a call changes. `key`
 /// is the key, and `change` the function that sets it to `"b"` (a `mut` formal).
 fn changed(body: &str) -> String {
