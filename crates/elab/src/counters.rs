@@ -120,6 +120,8 @@ pub(crate) struct Counts {
     pub queried: u64,
     /// The waiting keys of a walk that the check before a key with a call visited.
     pub waited: u64,
+    /// The steps that the check before a key with a call decided by the type of their container.
+    pub checked: u64,
 }
 
 impl Counts {
@@ -176,6 +178,7 @@ impl Counts {
             named,
             queried,
             waited,
+            checked,
         } = *self;
         [
             scanned,
@@ -226,6 +229,7 @@ impl Counts {
             named,
             queried,
             waited,
+            checked,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -283,6 +287,7 @@ pub(crate) enum Count {
     Named,
     Queried,
     Waited,
+    Checked,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -369,6 +374,7 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Named => &mut c.named,
             Count::Queried => &mut c.queried,
             Count::Waited => &mut c.waited,
+            Count::Checked => &mut c.checked,
         };
         *field += n;
     }
