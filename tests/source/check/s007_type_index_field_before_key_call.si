@@ -1,0 +1,15 @@
+// S007: the base `a.0[1]` is a type, and a complete type takes no index. The step fails before the key `f()` evaluates, so `f` records nothing.
+// TOP M()
+// OBSERVE-NOT: (record
+fn f() -> Int {
+    diagnostic("f", 0);
+    return 0;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let a = ([UInt[8], UInt[4]], 1);
+    // expected-error S007 @+1
+    let z = a.0[1][f()];
+    o := x;
+}
