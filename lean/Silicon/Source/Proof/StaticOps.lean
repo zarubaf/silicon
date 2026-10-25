@@ -1579,7 +1579,7 @@ theorem static_pack_enum_agrees : PackEnumAgrees := by
     revert hr
     simp [recast, bind, ReaderT.bind, StateT.bind, get, getThe, MonadStateOf.get, StateT.get,
       Except.bind, hw, pure, Except.pure, ReaderT.pure, StateT.pure, liftM, monadLift,
-      MonadLift.monadLift, Val.ty?, Value.ty?, Ty.same, Ty.cmp]
+      MonadLift.monadLift, Val.ty?, Value.ty?, Value.ty, Ty.same, Ty.cmp]
     split
     · simp
     · simp only [Except.ok.injEq, Prod.mk.injEq, Val.static.injEq]

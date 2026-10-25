@@ -444,11 +444,8 @@ mutual
     | v@(.array e ⟨xs⟩) =>
       if e.info.handles then .mkArray e (Agg.ofStaticAll xs).toArray else .static v
     | v@(.tuple ⟨xs⟩) =>
-      match Value.tyAll? xs with
-      | some ts =>
-        if (Ty.tuple ts.toArray).info.handles then .mkTuple ts.toArray (Agg.ofStaticAll xs).toArray
-        else .static v
-      | none => .static v
+      let ts := (Value.tyAll xs).toArray
+      if (Ty.tuple ts).info.handles then .mkTuple ts (Agg.ofStaticAll xs).toArray else .static v
     | v@(.record t ⟨xs⟩) =>
       if t.info.handles then .mkRecord t (Agg.ofStaticAll xs).toArray else .static v
     | v@(.list e ⟨xs⟩) =>
