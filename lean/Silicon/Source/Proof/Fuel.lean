@@ -635,9 +635,13 @@ theorem pick_f (p q : Pos) (v : Val) (i : Value) :
 theorem lenOf_f (p : Pos) (vs : List Val) : Follows cap (lenOf p vs) (lenOf p vs) := by
   unfold lenOf; follows [baseData_f, chargeScan_f]
 
+theorem fieldBy_f (p : Pos) (y : Option Nat) (n : String) (t : Ty) (x : String) :
+    Follows cap (fieldBy p y n t x) (fieldBy p y n t x) := by
+  unfold fieldBy; follows
+
 theorem fieldOf_f (p : Pos) (f : Ident) (t : Ty) (x : String) :
     Follows cap (fieldOf p f t x) (fieldOf p f t x) := by
-  unfold fieldOf; follows
+  unfold fieldOf; follows [fieldBy_f]
 
 theorem fieldAt_f (p : Pos) (f : Ident) (v : Val) :
     Follows cap (fieldAt p f v) (fieldAt p f v) := by
@@ -1016,13 +1020,27 @@ theorem portPart_f (p : Pos) (id : Nat) (path : Names.Path) (q : Port) :
     Follows cap (portPart p id path q) (portPart p id path q) := by
   unfold portPart; follows [readRef_f]
 
+theorem portOf_f (p : Pos) (id : Nat) (path : Names.Path) (i : Iface) (y : Option Nat)
+    (n : String) : Follows cap (portOf p id path i y n) (portOf p id path i y n) := by
+  unfold portOf; follows [portPart_f]
+
+theorem childEntry_f (p kp : Pos) (id : Nat) (path : Names.Path) (i : Iface) (t : Ty) (y : Nat)
+    (n : String) (key : Nat) :
+    Follows cap (childEntry p kp id path i t y n key) (childEntry p kp id path i t y n key) := by
+  unfold childEntry; follows [portPart_f]
+
 theorem fieldPart_f (p : Pos) (o : Out) (f : Ident) :
     Follows cap (fieldPart p o f) (fieldPart p o f) := by
-  unfold fieldPart; follows [portPart_f, baseData_f, field_f]
+  unfold fieldPart; follows [portOf_f, baseData_f, field_f]
 
 theorem portCall_f {u u' : Ty → M Ty} (h : ∀ t, Follows cap (u t) (u' t)) (p : Pos) (g : String)
     (f : PrimFn) (vs : List Val) : Follows cap (portCall p g f vs u) (portCall p g f vs u') := by
   unfold portCall; follows [h, requestPart_f, bounded_f, again_f, breach_f]
+
+theorem placeStep_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (v : Val) (t : Option Ty) (s : Sel) :
+    Follows cap (placeStep ev v t s) (placeStep ev' v t s) := by
+  unfold placeStep; follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f]
 
 end helpers
 
@@ -1074,7 +1092,7 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
   rw [placeAt.eq_def k, placeAt.eq_def m]
-  follows [he, place_f, pend_f, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f]
+  follows [place_f, pend_f, placeStep_f he]
 
 theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
     (xs : List Resolve.Expr) : Follows m (args k b xs) (args m b xs) := by

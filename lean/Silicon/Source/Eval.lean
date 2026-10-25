@@ -2249,19 +2249,25 @@ def portPart (p : Pos) (id : Nat) (path : Path) (q : Port) : M Out := do
   return ⟨r, !(r matches .static _), none⟩
 
 /-!
+The port with the symbol `y` and the name `name` at `p` of the child number `id` with the path
+`path` and the interface `iface` (`portPart`). A family of the child without a key is `S010`
+"Family as a value" (section 5.6). No symbol is no port.
+-/
+def portOf (p : Pos) (id : Nat) (path : Path) (iface : Iface) (y : Option Nat) (name : String) :
+    M Out := do
+  match y >>= fun y => iface.ports[((y, none) : PortId)]? with
+  | some q => portPart p id path q
+  | none =>
+    if y.any iface.families.contains then fail .S010 p (Elab.familyValueText name)
+    fail .S010 p s!"the instance has no port `{name}`"
+
+/-!
 The part that the field `f` at `p` selects from the base `o`. On an `Instance` handle it is the
-child port (`portPart`). A family of the child without a key is `S010` "Family as a value"
-(section 5.6). Another base gives its data field.
+child port (`portOf`). Another base gives its data field.
 -/
 def fieldPart (p : Pos) (o : Out) (f : Ident) : M Out := do
   match o.value with
-  | .handle (.inst id path iface _) =>
-    let y := (← read).field f.pos
-    match y >>= fun y => iface.ports[((y, none) : PortId)]? with
-    | some q => portPart p id path q
-    | none =>
-      if y.any iface.families.contains then fail .S010 p (Elab.familyValueText f.name)
-      fail .S010 p s!"the instance has no port `{f.name}`"
+  | .handle (.inst id path iface _) => portOf p id path iface ((← read).field f.pos) f.name
   | v => do
     -- A data field selection is a data context (section 9.2), so an input handle is S017.
     let w ← if v matches .handle (.res ..) | .handle (.input ..) then baseData p v
@@ -2302,12 +2308,23 @@ def entryAt (p kp : Pos) (x : String) (id k : Nat) : M Out := do
   | v => return ⟨v, true, none⟩
 
 /-!
+The entry `key` at `p` of the family with the symbol `y` and the name `name` of the child number
+`id` with the path `path`, the interface `iface`, and the type `ty` (`portPart`). A key that the
+child did not declare is `S013` "Child family key" at the key `kp`.
+-/
+def childEntry (p kp : Pos) (id : Nat) (path : Path) (iface : Iface) (ty : Ty) (y : Nat)
+    (name : String) (key : Nat) : M Out := do
+  match iface.ports[((y, some key) : PortId)]? with
+  | some port => portPart p id path port
+  | none => fail .S013 kp (Elab.childKeyText ty.text name key)
+
+/-!
 The selection `u.f[k]` at the index node `p` of the family `f` of the child behind the base `o`,
 with the field node at `q` (section 6.2). The index node and the field node charged 1, and `u`
 evaluated once. The result is `none` when `o` is no `Instance` handle or its interface holds no
 family `f`. Else the key evaluates by `ev` in a structural context, gets the checks of a
-selection key (`selectionKey`) with `S010` at `q`, and selects the entry of the child. A key that
-the child did not declare is `S013` "Child family key".
+selection key (`selectionKey`) with `S010` at `q`, and selects the entry of the child
+(`childEntry`).
 -/
 def childSel (ev : Resolve.Expr → M (Option Out)) (p q : Pos) (o : Out) (f : Ident)
     (k : Resolve.Expr) : M (Option Out) := do
@@ -2316,9 +2333,7 @@ def childSel (ev : Resolve.Expr → M (Option Out)) (p q : Pos) (o : Out) (f : I
   let v ← guardedBy .key do return (← need k (← ev k)).value
   let key ← selectionKey q k.pos f.name v
   let y := ((← read).field f.pos).getD 0
-  match iface.ports[((y, some key) : PortId)]? with
-  | some port => return some (← portPart p id path port)
-  | none => fail .S013 k.pos (Elab.childKeyText ty.text f.name key)
+  return some (← childEntry p k.pos id path iface ty y f.name key)
 
 /-!
 The index of each step of `sels` of a `:=` target, in source order (section 5.2). An index step
@@ -2339,6 +2354,31 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
       fail .S010 q "an index of a value has one argument"
     | _ => keys := keys.push (sel, none)
   return keys.toList
+
+/-!
+A step `sel` of a place from the part `cur` with the type `ty` (section 5.2). The step charges 1
+at its node before it applies. Then the index of an index step evaluates by `ev` and checks
+against `cur`. The result is the number of the part, the part, and its type.
+-/
+def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty) (sel : Sel) :
+    M (Nat × Val × Option Ty) := do
+  charge sel.pos 1
+  let (k, w, ft) ← match sel with
+    | .index q [i] => do
+      let (k, w) ← pickKey q i.pos cur (← static i.pos (← need i (← ev i)).value)
+      pure (k, w, none)
+    | .index q _ => fail .S010 q "an index of a value has one argument"
+    | .select q r i => do
+      let (k, w) ← selectKey q r i cur
+      pure (k, w, none)
+    | .field q f => do
+      let (k, w, ft) ← fieldKey q f cur
+      pure (k, w, some ft)
+  let ty := match ft, ty with
+    | some t, _ => some t
+    | none, some t => partTy t k
+    | none, none => w.ty?
+  return (k, w, ty)
 
 /-! The value of the root `root` of a `:=` target. A local gives its value with no charge. -/
 def targetRoot (ev : Resolve.Expr → M (Option Out)) (root : Resolve.Expr) : M Val := do
@@ -2785,8 +2825,8 @@ mutual
   /--
   The place `target` at `p` (section 5.2). Its root is a `let mut` local, else it is `code` at
   `p`. The place then opens a window of its root (`pend`), and the caller closes it (`shut`).
-  Each step charges 1 before it applies. Then the index of an index step evaluates and checks
-  against the live value of the root.
+  Each step runs by `placeStep` and charges 1 before it applies. Then the index of an index step
+  evaluates and checks against the live value of the root.
   -/
   def placeAt (n : Nat) (p : Pos) (code : ErrorCode) (target : Resolve.Expr) : M Place := do
     let some (root, sels) := chain target
@@ -2799,22 +2839,8 @@ mutual
     let mut keys : Array Nat := #[]
     let mut inList := false
     for sel in sels do
-      charge sel.pos 1
-      let (k, w, ft) ← match sel with
-        | .index q [i] => do
-          let (k, w) ← pickKey q i.pos cur (← static i.pos (← need i (← eval n i)).value)
-          pure (k, w, none)
-        | .index q _ => fail .S010 q "an index of a value has one argument"
-        | .select q r i => do
-          let (k, w) ← selectKey q r i cur
-          pure (k, w, none)
-        | .field q f => do
-          let (k, w, ft) ← fieldKey q f cur
-          pure (k, w, some ft)
-      ty := match ft, ty with
-        | some t, _ => some t
-        | none, some t => partTy t k
-        | none, none => w.ty?
+      let (k, w, t) ← placeStep (eval n) cur ty sel
+      ty := t
       inList := inList || cur matches .static (.list ..) | .agg (.list ..)
       cur := w
       keys := keys.push k

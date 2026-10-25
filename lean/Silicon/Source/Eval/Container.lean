@@ -707,11 +707,13 @@ def Agg.set (ex : Base → Ty → Option Agg) (y : Agg) : Agg → List Nat → O
     | _, _ => none
 
 /-!
-The number and the type of the field `f` of the struct type `t` at `pos`. `text` names the
-value. The record type holds the number of its specialization, and the symbol of `f` finds the
-number of the field, so the selection compares no name.
+The number and the type of the field with the symbol `y` and the name `name` of the struct type
+`t` at `pos`. `text` names the value. The record type holds the number of its specialization,
+and the symbol finds the number of the field, so the selection compares no name. No symbol is
+no field.
 -/
-def fieldOf (pos : Pos) (f : Ident) (t : Ty) (text : String) : M (Nat × Ty) := do
+def fieldBy (pos : Pos) (y : Option Nat) (name : String) (t : Ty) (text : String) :
+    M (Nat × Ty) := do
   let specs := (← get).specs
   let (some i, some fs) := (specs.item t, specs.parts t)
     | fail .S010 pos s!"{text} has no specialization"
@@ -719,11 +721,15 @@ def fieldOf (pos : Pos) (f : Ident) (t : Ty) (text : String) : M (Nat × Ty) := 
     | fail .S010 pos s!"{text} has no struct item"
   let c ← read
   let found := do
-    let k ← c.field f.pos >>= fun x => c.syms.members[i]? >>= (·[x]?)
+    let k ← y >>= fun x => c.syms.members[i]? >>= (·[x]?)
     return (k, ← fs[k]?.map (·.2))
   match found with
   | some r => return r
-  | none => fail .S010 pos s!"{text} has no field `{f.name}`"
+  | none => fail .S010 pos s!"{text} has no field `{name}`"
+
+/-! The field `f` of the struct type `t` at `pos` (`fieldBy`), by the symbol of its name. -/
+def fieldOf (pos : Pos) (f : Ident) (t : Ty) (text : String) : M (Nat × Ty) := do
+  fieldBy pos ((← read).field f.pos) f.name t text
 
 /-!
 The field `f` of a record at `pos`. The result is the number of the field, its value, and its
