@@ -477,7 +477,7 @@ fn predictions_are_frequent() {
     );
     assert_eq!(
         codes.into_iter().collect::<Vec<_>>(),
-        ["S002", "S003", "S007", "S018"]
+        ["S002", "S003", "S007", "S018", "S019"]
     );
 }
 
@@ -1733,26 +1733,35 @@ fn mutation_cases() -> Vec<(Program, u32, u32)> {
 
 /// A deleted binding of a resource that its own helper declares leaves the
 /// resource unbound at the declaration, where a front end can report it at
-/// the wrong place. The mutants of the seeds 1 to 100 of the CI hold at
-/// least three of them, so a fault in that position is in reach.
+/// the wrong place. The 100 programs of the CI seeds hold sites of them in
+/// reach: the test counts each site of `Delete`, not the one draw of the
+/// seed.
 #[test]
 fn the_ci_seeds_delete_bindings_of_helper_declared_resources() {
     let mut found = 0;
-    for (p, kind, site) in mutation_cases() {
-        let m = mutate(&p, kind, site);
-        if !m.what.starts_with("delete statement") || !m.what.contains(" of H") {
-            continue;
-        }
+    for (p, _, _) in mutation_cases() {
         let text = p.text();
-        let Some(line) = removed(&text, &m) else {
-            continue;
-        };
-        let at = text.lines().position(|l| l == line).unwrap_or(0);
-        if bound_name(&line).is_some_and(|n| declared_in_helper(&text, at, &n)) {
-            found += 1;
+        let mut seen = std::collections::BTreeSet::new();
+        for m in all(&p, Kind::Delete) {
+            if !m.what.starts_with("delete statement")
+                || !m.what.contains(" of H")
+                || !seen.insert(m.what.clone())
+            {
+                continue;
+            }
+            let Some(line) = removed(&text, &m) else {
+                continue;
+            };
+            let at = text.lines().position(|l| l == line).unwrap_or(0);
+            if bound_name(&line).is_some_and(|n| declared_in_helper(&text, at, &n)) {
+                found += 1;
+            }
         }
     }
-    assert!(found >= 3, "{found} deleted bindings of declared resources");
+    assert!(
+        found >= 60,
+        "{found} deleted bindings of declared resources"
+    );
 }
 
 fn port(output: bool, n: &str, key: Option<SExpr>, public: Option<SExpr>) -> Stmt {

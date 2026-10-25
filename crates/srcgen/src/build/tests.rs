@@ -1011,7 +1011,7 @@ fn enums_have_distinct_tags() {
 
 /// The forms of ports that a program holds, by name. A form counts at an
 /// executed declaration or call of a reached frame.
-fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 26] {
+fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 32] {
     let ports = p.ports();
     // Two keys of one family whose order as numbers differs from their order
     // as text, in the vectors of the top: `2` and `10`.
@@ -1055,6 +1055,15 @@ fn port_forms(p: &Program, s: &Stats) -> [(&'static str, bool); 26] {
         ("temporary array", s.temp_arrays > 0),
         ("temporary struct literal", s.temp_records > 0),
         ("temporary helper result", s.temp_helpers > 0),
+        ("child write through a local", s.temp_writes > 0),
+        ("local tuple of instances", s.write_tuples > 0),
+        ("local array of instances", s.write_arrays > 0),
+        ("local struct of instances", s.write_records > 0),
+        ("container with another instance", s.mixed_slots > 0),
+        (
+            "two reads through containers of one child",
+            s.temp_pairs > 0,
+        ),
     ]
 }
 
@@ -1079,7 +1088,7 @@ fn programs_cover_families() {
         }
         assert_eq!(b.stats.port_lost, 0, "a name of the pool reaches no output");
     }
-    assert_eq!(with.len(), 26, "{with:?}");
+    assert_eq!(with.len(), 32, "{with:?}");
     for (form, n) in &with {
         let least = match *form {
             "family entry" => 40,
