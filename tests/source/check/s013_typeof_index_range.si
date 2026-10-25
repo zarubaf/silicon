@@ -1,0 +1,10 @@
+// S013: an index in a query is in the range of the array type.
+// TOP M()
+module M() domains() {
+    input a: [UInt[8]; 2];
+    output o: Bool;
+    // expected-error S013 @+2
+    // expected-message: the index 2 is out of range for 2 element(s)
+    let t = @TypeOf(a[2]);
+    o := true;
+}

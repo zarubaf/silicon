@@ -1,0 +1,9 @@
+// S010: a domain has no type, so `@TypeOf(clk)` has no answer.
+// TOP M()
+module M() domains(clk) {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@TypeOf` takes a part with a type, not the domain `clk`; pass a value, a port, or a resource
+    let t = @TypeOf(clk);
+    o := true;
+}

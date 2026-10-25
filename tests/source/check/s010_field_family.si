@@ -1,0 +1,13 @@
+// S010: a `String` key that names a family is "Family as a value". Select one port with `u.req[k]`.
+// TOP M()
+module C() domains() {
+    input req[1]: Bool;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    u.req[1] := true;
+    // expected-error S010 @+2
+    // expected-message: `u.req` is a port family, not a value; select one port with `u.req[k]`
+    o := @field(u, "req");
+}

@@ -1,0 +1,14 @@
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+
+// S010: `@field` names a field that the struct declares, as `r.c` does.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let r = P(1, true);
+    // expected-error S010 @+2
+    // expected-message: `P` has no field `c`; select a field that `P` declares
+    o := @field(r, "c");
+}

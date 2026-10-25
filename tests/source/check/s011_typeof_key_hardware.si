@@ -1,0 +1,14 @@
+// S011: a key of a query is static. A function parameter carries a hardware value there.
+// TOP M()
+fn pick(x: UInt[4]) -> Type {
+    let a = [1, 2];
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[4]`; compute the value from static values, for example from constants and `comptime` parameters
+    return @TypeOf(a[x]);
+}
+module M() domains() {
+    input s: UInt[4];
+    output o: Bool;
+    let t = pick(s);
+    o := true;
+}

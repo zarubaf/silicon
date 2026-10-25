@@ -1,0 +1,12 @@
+// S016: a key of a query cannot change a binding.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = [1, 2];
+    let mut l = list(Nat);
+    push(l, 0);
+    // expected-error S016 @+2
+    // expected-message: a key of `@TypeOf` cannot change `l`; change `l` before `@TypeOf`, keep the result in a `let`, and use that name in the key
+    let t = @TypeOf(a[pop(l)]);
+    o := true;
+}

@@ -1,0 +1,12 @@
+// S010: a `:=` target through `u.zz` gives the "No public port" text at the field node.
+// TOP M()
+module C() domains() {
+    input b: Bool;
+}
+module M() domains() {
+    instance u = C();
+    u.b := true;
+    // expected-error S010 @+2
+    // expected-message: `Instance[C]` has no public port `zz`; select a port that `Instance[C]` declares
+    u.zz := true;
+}

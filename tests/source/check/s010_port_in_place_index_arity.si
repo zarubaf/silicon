@@ -1,0 +1,13 @@
+// S010: an index with two arguments is rejected at the index node, before the look-up of the port.
+// TOP M()
+module C() domains() {
+    input b: Bool;
+}
+module M() domains() {
+    instance u = C();
+    u.b := true;
+    let mut us = [u];
+    // expected-error S010 @+2
+    // expected-message: an index of a value has one argument
+    us[0].b[1, 2] = true;
+}

@@ -1,0 +1,8 @@
+// S010: a memory has no index in a query, as it has none in a value.
+// TOP M()
+module M() {
+    mem m: [UInt[8]; 4];
+    // expected-error S010 @+2
+    // expected-message: an index needs an array, a list, or a tuple, not a memory
+    let t = @TypeOf(m[0]);
+}

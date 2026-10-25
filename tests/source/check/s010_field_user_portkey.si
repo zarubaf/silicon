@@ -1,0 +1,18 @@
+// S010: a user struct named `PortKey` is another type, so it is no key of an instance.
+// TOP M()
+struct PortKey {
+    name: String,
+    indexed: Bool,
+    index: Nat,
+}
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `@field` on a handle of `Instance[C]` takes `String` or `PortKey`, not a value of `crate::PortKey`; give a static `String` or `PortKey`
+    o := @field(u, PortKey("q", false, 0));
+}

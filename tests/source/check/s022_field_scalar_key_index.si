@@ -1,0 +1,16 @@
+module C() domains() {
+    input req[1]: Bool;
+    output sum: Bool;
+    sum := req[1];
+}
+
+// S022: a scalar `PortKey` has the index 0.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    u.req[1] := true;
+    // expected-error S022 @+2
+    // expected-message: a scalar `PortKey` has the index 0, but it has 1; set `indexed` to `true`, or the index to 0
+    o := @field(u, PortKey("sum", false, 1));
+}

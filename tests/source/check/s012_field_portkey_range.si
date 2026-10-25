@@ -1,0 +1,16 @@
+module C() domains() {
+    input req[1]: Bool;
+    output sum: Bool;
+    sum := req[1];
+}
+
+// S012: a family key is below 2^32.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    u.req[1] := true;
+    // expected-error S012 @+2
+    // expected-message: a family key is 0 to 4294967295, not 4294967296; use a key in this range
+    o := @field(u, PortKey("req", true, 4294967296));
+}

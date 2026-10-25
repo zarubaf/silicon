@@ -1,0 +1,10 @@
+// S010: a port family is no value, so it has no type. `@TypeOf(req)` names the family without a key.
+// TOP M()
+module M() domains() {
+    input req[1]: Bool;
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `req` is a port family, not a value; select one port with `req[k]`
+    let t = @TypeOf(req);
+    o := req[1];
+}

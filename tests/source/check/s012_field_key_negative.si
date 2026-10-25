@@ -1,0 +1,9 @@
+// S012: a negative key is no `Nat`.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let a = [true, false];
+    // expected-error S012 @+2
+    // expected-message: -1 is not a Nat
+    o := @field(a, 0 - 1);
+}

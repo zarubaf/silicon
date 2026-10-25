@@ -1,0 +1,13 @@
+// S010: a key longer than the limit of a string is cut in the text.
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    // expected-error S010 @+2
+    // expected-message: `Instance[C]` has no public port `zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz... (70 characters)`; select a port that `Instance[C]` declares
+    o := @field(u, "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz");
+}

@@ -1,0 +1,10 @@
+// S010: an enum has no field. A payload is read with `match`.
+// TOP M()
+enum Mode: UInt[2] { Idle = 0, Run = 1 }
+module M() domains() {
+    output o: Bool;
+    let m = Mode::Run;
+    // expected-error S010 @+2
+    // expected-message: `Mode` is an enum and has no field `tag`; read a payload with `match`, or the bits with `reinterpret(UInt[2], e)`
+    o := @field(m, "tag");
+}

@@ -1,0 +1,10 @@
+// S005: the key of `@field` is a static position, so a register there is rejected by the static check.
+// TOP M()
+module M() {
+    output o: Bool;
+    reg r: UInt[1] = 0;
+    r := 0;
+    // expected-error S005 @+2
+    // expected-message: `r` is a register; a static position needs a static value
+    o := @field([true, false], r);
+}

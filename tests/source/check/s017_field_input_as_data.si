@@ -1,0 +1,13 @@
+// S017: an input of a child is a target only, so `@field` cannot read it as data.
+// TOP M()
+module C() domains() {
+    input a: Bool;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    u.a := true;
+    // expected-error S017 @+2
+    // expected-message: the input `a` of `u` is a target only; read the value that you bind to it
+    o := @field(u, "a");
+}

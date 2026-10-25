@@ -1,0 +1,12 @@
+// S017: `@field` of a register is a part, not a `:=` target.
+// TOP M()
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    reg r: UInt[4] = 0;
+    // expected-error S017 @+2
+    // expected-message: a `:=` target is a whole resource, not a part of a value; bind the whole resource, for example `r := P(a, b);`
+    @field(r, "a") := x;
+    r := x;
+    o := read(r);
+}

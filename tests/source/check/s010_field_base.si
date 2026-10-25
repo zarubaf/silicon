@@ -1,0 +1,9 @@
+// S010: the base of `@field` is a record, an array, a list, a tuple, or an instance.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let b = true;
+    // expected-error S010 @+2
+    // expected-message: `@field` selects in a record, an array, a list, a tuple, or an instance, not a value of `Bool`; select from such a value
+    o := @field(b, "a");
+}

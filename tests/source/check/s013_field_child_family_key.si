@@ -1,0 +1,16 @@
+module C() domains() {
+    input req[1]: Bool;
+    output sum: Bool;
+    sum := req[1];
+}
+
+// S013: the child declares no entry with this key of the family.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    u.req[1] := true;
+    // expected-error S013 @+2
+    // expected-message: the child `Instance[C]` has no entry `req[5]`; select a key that `Instance[C]` declares
+    o := @field(u, PortKey("req", true, 5));
+}
