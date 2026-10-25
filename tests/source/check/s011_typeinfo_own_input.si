@@ -1,0 +1,13 @@
+// S011: the name of an own input is a hardware value, so the error is at the name `s`, not at the call.
+// TOP M()
+fn tu(x: UInt[8]) -> Type {
+    return Bool;
+}
+module M() domains() {
+    input s: UInt[8];
+    output o: Bool;
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[8]`; compute the value from static values, for example from constants and `comptime` parameters
+    let t = @typeInfo(tu(s));
+    o := true;
+}

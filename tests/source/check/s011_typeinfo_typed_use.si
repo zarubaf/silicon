@@ -1,0 +1,17 @@
+// S011: a typed use reads a handle, so the error is at the call `tq(rg)`.
+// TOP M()
+struct P {
+    a: UInt[8],
+}
+fn tq(x: P) -> Type {
+    return Bool;
+}
+module M() {
+    output o: Bool;
+    reg rg: P = P();
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `P`; compute the value from static values, for example from constants and `comptime` parameters
+    let t = @typeInfo(tq(rg));
+    rg := P();
+    o := true;
+}

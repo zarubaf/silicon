@@ -1,0 +1,10 @@
+// S011: a hardware key of a family selection in the argument is "Value not static", not "Family as a value".
+// TOP M()
+module M() {
+    input req[0]: Bool;
+    input a: UInt[2];
+    let h = a +% 1;
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[2]`; compute the value from static values, for example from constants and `comptime` parameters
+    let t = @typeInfo(@TypeOf(req[h]));
+}

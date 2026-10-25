@@ -1,0 +1,13 @@
+// S016: an argument of `@typeInfo` has no graph effect such as `diagnostic`. The error is at the effect inside the call.
+// TOP M()
+fn note() -> Type {
+    // expected-error S016 @+2
+    // expected-message: an argument of `@typeInfo` has no graph effect such as `diagnostic`; call `diagnostic` before `@typeInfo`, keep the result in a `let`, and use that name in the argument
+    diagnostic("k", 0);
+    return Bool;
+}
+module M() domains() {
+    output o: Bool;
+    let t = @typeInfo(note());
+    o := true;
+}

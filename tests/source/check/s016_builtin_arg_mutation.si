@@ -1,0 +1,14 @@
+// S016: an argument of `@typeInfo` cannot change a binding from before.
+// TOP M()
+fn grab(mut l: List[Nat]) -> Type {
+    push(l, 1);
+    return Bool;
+}
+module M() domains() {
+    output o: Bool;
+    let mut l = list(Nat);
+    // expected-error S016 @+2
+    // expected-message: an argument of `@typeInfo` cannot change `l`; change `l` before `@typeInfo`, keep the result in a `let`, and use that name in the argument
+    let t = @typeInfo(grab(l));
+    o := true;
+}

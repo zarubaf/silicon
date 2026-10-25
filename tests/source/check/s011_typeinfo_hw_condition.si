@@ -1,0 +1,11 @@
+// S011: the argument of `@typeInfo` reads no hardware. The hardware condition `r` is the first node with a hardware value.
+// TOP M()
+module M() {
+    output o: Bool;
+    reg r: Bool = false;
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `Bool`; compute the value from static values, for example from constants and `comptime` parameters
+    let t = @typeInfo(if (r) { Bool } else { Bool });
+    r := true;
+    o := true;
+}

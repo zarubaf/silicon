@@ -1,0 +1,14 @@
+// S010: a field of a register is a place too, so `@typeInfo(r.a)` is a kind error.
+// TOP M()
+struct P {
+    a: UInt[8],
+}
+module M() {
+    output o: UInt[8];
+    reg r: P = P();
+    // expected-error S010 @+2
+    // expected-message: `@typeInfo` takes a type, not a value of `UInt[8]`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`
+    let t = @typeInfo(r.a);
+    r := P();
+    o := 0;
+}
