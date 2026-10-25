@@ -850,7 +850,6 @@ impl Evaluator<'_> {
         Ok(Some(Out::Made(Val::Static(v))))
     }
 
-    #[allow(clippy::too_many_lines)]
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
         match e {
@@ -925,27 +924,7 @@ impl Evaluator<'_> {
                 name,
                 args,
             } => self.method(*pos, *id, recv, name, args),
-            Expr::Index { pos, base, args } => {
-                if let Expr::Name { pos: bp, id, .. } = &**base
-                    && let Some(Target::Prelude(k)) = self.target(*id)
-                    && k.is_type()
-                {
-                    self.charge(*bp, 1)?;
-                    let t = self.index(*pos, k, args)?;
-                    return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
-                }
-                if let Expr::Name { pos: bp, id, .. } = &**base
-                    && let Some(i) = self.struct_item(*id)
-                {
-                    self.charge(*bp, 1)?;
-                    let t = self.spec(*pos, i, args)?;
-                    return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
-                }
-                if let Some(out) = self.family_selection(*pos, base, args)? {
-                    return Ok(Some(out));
-                }
-                self.read(e)
-            }
+            Expr::Index { pos, base, args } => self.index_expr(e, *pos, base, args),
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
             Expr::Select { .. }
             | Expr::Field { .. }
@@ -963,6 +942,30 @@ impl Evaluator<'_> {
             }
             Expr::Path { pos, ty, .. } => self.variant(*pos, ty, &[]),
         }
+    }
+
+    /// The index expression `e` at `pos` with the base `base`: the specialization of a type or a
+    /// struct, the selection of an entry of a family, or the read of a part.
+    fn index_expr(&mut self, e: &Expr, pos: Pos, base: &Expr, args: &[Expr]) -> Res<Option<Out>> {
+        if let Expr::Name { pos: bp, id, .. } = base
+            && let Some(Target::Prelude(k)) = self.target(*id)
+            && k.is_type()
+        {
+            self.charge(*bp, 1)?;
+            let t = self.index(pos, k, args)?;
+            return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
+        }
+        if let Expr::Name { pos: bp, id, .. } = base
+            && let Some(i) = self.struct_item(*id)
+        {
+            self.charge(*bp, 1)?;
+            let t = self.spec(pos, i, args)?;
+            return Ok(Some(Out::Made(Val::Static(Value::Type(t)))));
+        }
+        if let Some(out) = self.family_selection(pos, base, args)? {
+            return Ok(Some(out));
+        }
+        self.read(e)
     }
 
     /// An `if` expression. A static condition selects an arm, and a hardware condition makes
