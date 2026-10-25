@@ -1,6 +1,6 @@
 # 28. The builtins are a closed set of static queries
 
-- Status: accepted
+- Status: accepted, partly superseded by ADR 0030
 - Date: 2026-10-19
 
 ## Context
