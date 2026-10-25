@@ -546,7 +546,7 @@ def chain (e : Resolve.Expr) (acc : List Sel := []) : Option (Resolve.Expr × Li
   | .index p b xs => chain b (.index p xs :: acc)
   | .select p b q i => chain b (.select p q i :: acc)
   | .field p b f => chain b (.field p f :: acc)
-  | .builtin p .field [b, k] => chain b (.key p b k :: acc)
+  | .atField p b k => chain b (.key p b k :: acc)
   | .name .. => some (e, acc)
   | _ => none
 

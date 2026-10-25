@@ -228,7 +228,9 @@ forms. A `call` and a `method` hold their call site. The `fn` of a `method` is a
 a prelude function, and its `param` is the parameter that the receiver binds to. A type name
 refers to a prelude type, a `struct` item, a `type` item, or a local. A local holds a value of
 type `Type`, which `Elab` checks. A function type keeps its form, with the `mut` mark of each
-parameter type. A `match` holds its scrutinee and its arms. A `builtin` holds its operands.
+parameter type. A `match` holds its scrutinee and its arms. The parser checked the operands
+of a builtin, so each builtin has its own form. `typeOf` holds the place of `@TypeOf`, and
+`atField` holds the base and the key of `@field`.
 -/
 mutual
   inductive Expr where
@@ -253,7 +255,8 @@ mutual
     | variant (pos : Pos) (ty variant : Ident) (item index : Nat) (args : List Expr)
         (called : Bool)
     | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
-    | builtin (pos : Pos) (b : Builtin) (args : List Expr)
+    | typeOf (pos : Pos) (place : Expr)
+    | atField (pos : Pos) (base key : Expr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -305,7 +308,8 @@ mutual
     | .variant p t v _ _ xs called =>
       if called then .call p (.path p t v) (xs.map Expr.source) else .path p t v
     | .«match» p x as => .«match» p x.source (as.map Arm.source)
-    | .builtin p b xs => .builtin p b (xs.map Expr.source)
+    | .typeOf p x => .builtin p .typeOf [x.source]
+    | .atField p b k => .builtin p .field [b.source, k.source]
 
   def TypeExpr.source : TypeExpr → Source.TypeExpr
     | .name p x _ => .name p x
@@ -385,7 +389,7 @@ def Expr.pos : Expr → Pos
   | .num p _ | .bool p _ | .str p _ | .name p .. | .unary p .. | .binary p ..
   | .cond p .. | .call p .. | .index p .. | .field p .. | .unit p | .tuple p ..
   | .array p .. | .select p .. | .arrayType p .. | .method p .. | .fnType p .. | .variant p ..
-  | .«match» p .. | .builtin p .. => p
+  | .«match» p .. | .typeOf p .. | .atField p .. => p
 
 def TypeExpr.pos : TypeExpr → Pos
   | .name p .. | .index p .. | .unit p | .tuple p .. | .array p .. | .fn p .. => p
@@ -419,7 +423,8 @@ mutual
     | .fnType _ qs r => FnParam.anyLocal ps qs || r.namesLocal ps
     | .variant _ _ _ _ _ xs _ => Expr.anyLocal ps xs
     | .«match» _ x as => x.namesLocal ps || Arm.anyLocal ps as
-    | .builtin _ _ xs => Expr.anyLocal ps xs
+    | .typeOf _ x => x.namesLocal ps
+    | .atField _ b k => b.namesLocal ps || k.namesLocal ps
 
   def Expr.anyLocal (ps : Ids) : List Expr → Bool
     | [] => false
@@ -830,7 +835,13 @@ mutual
     | .«match» p x as => do
       let x ← expr x
       return .«match» p x (← as.mapM arm)
-    | .builtin p b xs => return .builtin p b (← xs.mapM expr)
+    | .builtin p .typeOf [x] => return .typeOf p (← expr x)
+    | .builtin p .field [b, k] => return .atField p (← expr b) (← expr k)
+    | .builtin p b xs => do
+      -- The parser checks the number of operands (`Parse.builtinCheck`), so only a tree that
+      -- the parser did not make reaches this case.
+      recordUnknown ⟨.S001, p, b.arityText xs.length⟩
+      return .unit p
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do

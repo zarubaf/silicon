@@ -897,7 +897,7 @@ family with the name of the binder is the ordinary `S002`.
 #guard match run "fn f(x: Nat) -> Nat { return @field(x, 0); }" with
   | .ok items => match items[0]? with
     | some (Resolve.Item.fn _ _ _ _ _
-        [.ret _ (some (.builtin _ .field [.name _ "x" (.local _), .num _ 0]))]) => true
+        [.ret _ (some (.atField _ (.name _ "x" (.local _)) (.num _ 0)))]) => true
     | _ => false
   | .error _ => false
 
