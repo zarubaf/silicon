@@ -77,7 +77,8 @@ impl Builder {
         let child = self.declare_child(ctx, m, j, out)?;
         self.bind_child_inputs(ctx, &child, None, DEPTH, out)?;
         self.expose_child_outputs(ctx, &child)?;
-        self.read_child_ports(ctx, m, &child, out)
+        self.read_child_ports(ctx, m, &child, out)?;
+        self.temp_reads(ctx, &child)
     }
 
     /// `instance u = M<j>(args);`

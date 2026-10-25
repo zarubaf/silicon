@@ -435,6 +435,9 @@ pub(crate) enum HExpr {
     /// An output entry `base.fam[key]` of a child. The base is the child
     /// itself, or a container of handles that holds it.
     ChildEntry(Box<HExpr>, String, SExpr),
+    /// `base.f`: an output `f` of the child that `base` holds, or a field
+    /// of a struct of handles. The base is a container of handles.
+    Member(Box<HExpr>, String),
 }
 
 /// The target of `:=`.
@@ -1317,6 +1320,7 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
         HExpr::Read(h) => format!("read({})", hexpr(h)),
         HExpr::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
         HExpr::ChildEntry(u, fam, k) => format!("{}.{fam}[{}]", hexpr(u), sexpr(k)),
+        HExpr::Member(b, f) => format!("{}.{f}", hexpr(b)),
     }
 }
 

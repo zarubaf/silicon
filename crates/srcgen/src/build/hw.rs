@@ -379,6 +379,7 @@ pub(super) fn reads_name(e: &HExpr) -> bool {
         | HExpr::ReadPort { .. }
         | HExpr::Index(..)
         | HExpr::Select(..)
+        | HExpr::Member(..)
         | HExpr::Read(_)
         | HExpr::Entry(..)
         | HExpr::ChildEntry(..) => true,

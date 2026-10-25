@@ -825,6 +825,7 @@ impl Writer<'_> {
                 panic!("a literal of handles reads as data: {e:?}")
             }
             HExpr::Entry(fam, k) => HExpr::Name(self.entry(fam, k, fr)),
+            HExpr::Member(b, q) => HExpr::Field(self.instance_of(b, fr), q.clone()),
             HExpr::ChildEntry(u, fam, k) => {
                 HExpr::Field(self.instance_of(u, fr), self.entry(fam, k, fr))
             }
@@ -851,6 +852,23 @@ impl Writer<'_> {
                 ),
                 _ => HVal::Port(fr.name(u), f.clone()),
             },
+            HExpr::Member(b, f) => match self.handle(b, fr) {
+                HVal::Rec(fields) => fields.into_iter().find(|(n, _)| n == f).map_or_else(
+                    || panic!("a field of the builder is missing: {e:?}"),
+                    |(_, h)| h,
+                ),
+                _ => panic!("a member of the builder is on no struct: {e:?}"),
+            },
+            HExpr::Call(g, args) => {
+                let Some((params, _, _, result)) = helper_of(self.items, g) else {
+                    panic!("a call of the builder names no helper: {e:?}");
+                };
+                let mut inner = Frame::default();
+                for ((n, _), a) in params.iter().zip(args) {
+                    inner.handles.insert(n.clone(), self.handle(a, fr));
+                }
+                self.handle(result, &inner)
+            }
             HExpr::Select(b, k) => seq(b)
                 .get(*k as usize)
                 .cloned()
@@ -1288,6 +1306,7 @@ fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
         HExpr::Record(s, xs) => HExpr::Record(s.clone(), all(xs)),
         HExpr::Index(b, i) => HExpr::Index(sub(b), i.clone()),
         HExpr::Select(b, k) => HExpr::Select(sub(b), *k),
+        HExpr::Member(b, f) => HExpr::Member(sub(b), f.clone()),
         HExpr::Read(h) => HExpr::Read(sub(h)),
         HExpr::Unary(op, a) => HExpr::Unary(*op, sub(a)),
         HExpr::Binary(op, a, b) => HExpr::Binary(*op, sub(a), sub(b)),
@@ -1922,6 +1941,7 @@ mod tests {
             | HExpr::Reinterpret(_, a)
             | HExpr::Index(a, _)
             | HExpr::Select(a, _)
+            | HExpr::Member(a, _)
             | HExpr::Read(a) => read_names(a, out),
             HExpr::Binary(_, a, b) => {
                 read_names(a, out);
