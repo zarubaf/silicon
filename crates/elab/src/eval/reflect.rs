@@ -6,8 +6,8 @@
 //! The walk goes once from the root outward. A step charges 1 at its node, and the key of an
 //! index evaluates in a structural context of the kind `Query`. The checks of a step charge
 //! nothing, so the walk keeps the evaluated steps (`pending`) and applies them in one pass along
-//! the part (`settle`), as a read does. A failed check comes before a charge or an error of a
-//! later step, so `settle` also runs before an error returns. Only a field of an `Instance`
+//! the part (`settle_walk`), as a read does. A failed check comes before a charge or an error of a
+//! later step, so `settle_walk` also runs before an error returns. Only a field of an `Instance`
 //! handle changes the order of the charges: an index after it charges first (section 6.2,
 //! **Selection order**). The walk therefore applies the pending steps before such a field, unless
 //! the type of the part rules out an `Instance` handle (`Known`).
@@ -322,7 +322,7 @@ impl Evaluator<'_> {
 
     /// The steps `steps` of a `@TypeOf` operand from the part of `w`, once from the root outward
     /// (section 6.2, **`@TypeOf` order**). A step charges 1 at its node, then the key of an index
-    /// evaluates, and the step waits for the pass of `settle`. An error first applies the steps
+    /// evaluates, and the step waits for the pass of `settle_walk`. An error first applies the steps
     /// that wait, so a failed check wins over a later error.
     fn query_walk<'a>(&mut self, mut walk: Walk<'a>, steps: &[Sel<'a>]) -> Res<Walk<'a>> {
         let mut at = 0;
