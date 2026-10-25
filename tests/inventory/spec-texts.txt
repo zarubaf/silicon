@@ -36,8 +36,6 @@ rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
 fix | S010 Port in a place | 344
 rust | S010 Port in a place | 344
-rust | S010 Key of `@field` | 344
-rust | S010 Base of `@field` | 344
 lean | S016 Mutation in a query key | 344
 rust | S016 Mutation in a query key | 344
 lean | S016 Graph effect in a query key | 344
@@ -276,6 +274,7 @@ unlisted | S012 the length {} is not a Nat | 354
 unlisted | S012 the payload of `{}` has {} bits, above 65536; us | 354
 unlisted | S012 the payload of `{}` has {} bits, above {}; use s | 354
 unlisted | S012 the width {} is not 1 to 65536 | 354
+unlisted | S012 unscannable crates/elab/src/eval/field.rs | 344
 unlisted | S012 unscannable crates/elab/src/eval/matching.rs | 354
 unlisted | S012 unscannable crates/elab/src/ops/container.rs | 354
 unlisted | S012 unscannable lean/Silicon/Source/Eval.lean | 354

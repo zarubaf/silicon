@@ -1,0 +1,15 @@
+// S010: the text of a port family names the base of `@field` as the source form writes it. A `match` base has parentheses.
+// TOP M()
+module C() domains() {
+    input req[1]: Bool;
+}
+module M() domains() {
+    output o: Bool;
+    instance u = C();
+    instance v = C();
+    u.req[1] := true;
+    v.req[1] := true;
+    // expected-error S010 @+2
+    // expected-message: `(match (true) { true => u, _ => v, }).req` is a port family, not a value; select one port with `(match (true) { true => u, _ => v, }).req[k]`
+    o := @field(match (true) { true => u, _ => v }, "req");
+}
