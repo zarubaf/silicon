@@ -346,17 +346,18 @@ def typeOf (p : Pos) (x : String) : Val → M Ty
 /-!
 A use at `p` of the item `i` with the name `x` in the table of constants: a `const` or a `type`
 item. The first use evaluates `body` one level deeper, in the scope of the item, so the field
-names of `body` have their symbols. A use in progress is `S019`.
+names of `body` have their symbols. The result is the value and the type of its annotation. A
+use in progress is `S019`.
 -/
-def constant (p : Pos) (x : String) (i : Nat) (body : M Value) : M Value := do
+def constant (p : Pos) (x : String) (i : Nat) (body : M (Value × Ty)) : M (Value × Ty) := do
   match (← get).consts[i]? with
-  | some (.done c) => return c
+  | some (.done c t) => return (c, t)
   | some .inProgress => fail .S019 p s!"`{x}` depends on itself"
   | _ => structural <| nested p do
     setConst i .inProgress
-    let c ← inFrame none <| withReader (fun c => { c with item := i }) body
-    setConst i (.done c)
-    return c
+    let (c, t) ← inFrame none <| withReader (fun c => { c with item := i }) body
+    setConst i (.done c t)
+    return (c, t)
 
 /-!
 A use at `p` of the struct item `i` with the name `x`, the prelude flag `pre`, and the

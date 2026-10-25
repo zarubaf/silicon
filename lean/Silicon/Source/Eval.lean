@@ -2837,6 +2837,8 @@ def hwCheck (p : Pos) (s : Resolve.Stmt) : M Unit := do
   | some .eval => fail .S011 p (evalHardware (stmtKind s) (c.itemName c.item))
   | none => pure ()
 
+-- The code generator needs more than the default heartbeats for the cases of this block.
+set_option maxHeartbeats 400000 in
 mutual
   def eval (b : Nat) (e : Resolve.Expr) : M (Option Out) :=
     match b with
@@ -3151,6 +3153,22 @@ mutual
   termination_by (n + 1, 0)
 
   /--
+  The use at `p` of the `const` item `i` with the name `x`, declared at `cp` with the annotation
+  `ty` and the value `v` (section 5.6). The first use evaluates it in the table of constants
+  (`constant`). The result is the value and the type of the annotation.
+  -/
+  def constItem (n : Nat) (p cp : Pos) (x : String) (i : Nat) (ty : Resolve.TypeExpr)
+      (v : Resolve.Expr) : M (Value × Ty) :=
+    constant p x i do
+      let t ← typeExpr n ty
+      let o ← need v (← eval n v)
+      copy cp o
+      staticValue cp "a const" o.value
+      staticHandle cp "a const" t
+      return (← conform cp t (← static cp (← settle cp t o.value)), t)
+  termination_by (n + 1, 0)
+
+  /--
   A name. A constant and a `type` item evaluate at their first use, in the table of constants.
   A struct item is a use of its specialization without arguments, and an enum item a use of the
   enum (`enumUse`). A function item gives a function value. Its signature evaluates in the
@@ -3175,16 +3193,10 @@ mutual
     | .item i => do
       match (← read).items[i]? with
       | some (.const cp _ ty v) => do
-        let c ← constant p x i do
-          let t ← typeExpr n ty
-          let o ← need v (← eval n v)
-          copy cp o
-          staticValue cp "a const" o.value
-          staticHandle cp "a const" t
-          conform cp t (← static cp (← settle cp t o.value))
-        return ⟨.static c, true, none⟩
+        return ⟨.static (← constItem n p cp x i ty v).1, true, none⟩
       | some (.alias _ _ ty) => do
-        return ⟨.static (← constant p x i do return .type (← typeExpr n ty)), true, none⟩
+        let (c, _) ← constant p x i do return (.type (← typeExpr n ty), .type)
+        return ⟨.static c, true, none⟩
       | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
       | some (.enum ..) => do return ⟨.static (.type (← enumUse n p i)), true, none⟩
       | some (.fn _ _ u ps ret _) => do

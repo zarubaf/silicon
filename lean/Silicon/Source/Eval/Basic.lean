@@ -22,11 +22,14 @@ structure Budget where
   depth : Nat := 1000
   deriving Repr, Inhabited
 
-/-! The state of a constant in the table of constants. -/
+/-!
+The state of a constant in the table of constants. A done entry holds the value and the type of
+its annotation: the type of a `const` item, and `Type` for a `type` item.
+-/
 inductive Entry where
   | notStarted
   | inProgress
-  | done (value : Value)
+  | done (value : Value) (ty : Ty)
   deriving Repr, Inhabited
 
 /-!
