@@ -3,8 +3,8 @@
 //! tree that does not have the shape that the parser builds.
 
 use crate::ast::{
-    Arm, BinOp, Expr, FnParam, Ident, Item, Nat, NodeId, Param, ParamMode, Pattern, PortForm, Pos,
-    Stmt, StructField, TypeExpr, UnOp, Variant,
+    Arm, BinOp, Builtin, Expr, FnParam, Ident, Item, Nat, NodeId, Param, ParamMode, Pattern,
+    PortForm, Pos, Stmt, StructField, TypeExpr, UnOp, Variant,
 };
 use crate::error::LineIndex;
 use rowan::NodeOrToken;
@@ -540,6 +540,11 @@ impl<'a> Lower<'a> {
                 pos,
                 elems: self.args(node)?,
             }),
+            BuiltinExpr => Some(Expr::Builtin {
+                pos,
+                builtin: Builtin::of_name(token(node, Ident)?.text())?,
+                args: self.args(node)?,
+            }),
             ArrayTypeExpr => Some(Expr::ArrayType {
                 pos,
                 elem: Box::new(self.type_expr(&node.children().find(is_type)?)?),
@@ -675,6 +680,7 @@ fn is_expr(node: &SyntaxNode) -> bool {
             | UnitExpr
             | TupleExpr
             | ArrayExpr
+            | BuiltinExpr
             | ArrayTypeExpr
             | FnTypeExpr
     )

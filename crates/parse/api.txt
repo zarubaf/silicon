@@ -3,6 +3,7 @@ const parse::MAX_SYNTAX_DEPTH
 enum parse::Code
 enum parse::DepthError
 enum parse::ast::BinOp
+enum parse::ast::Builtin
 enum parse::ast::Expr
 enum parse::ast::Item
 enum parse::ast::ParamMode
@@ -27,6 +28,7 @@ method parse::Parse::into_ast
 method parse::ParsedExpr::depth
 method parse::ParsedExpr::expr
 method parse::ParsedExpr::into_parts
+method parse::ast::Builtin::name
 method parse::ast::Expr::pos
 method parse::ast::Item::name
 method parse::ast::Nat::as_str

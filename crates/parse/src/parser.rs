@@ -51,6 +51,10 @@ pub(crate) struct Parser<'a> {
     /// Whether the last postfix form is a place: a name, or a field, an index, or a selector
     /// of a place.
     pub place: bool,
+    /// Whether the last expression is a place of the AST (`Expr.place` in Lean): a name, or a
+    /// field, an index, a selector, or an `@field` selection of a place. A group is
+    /// transparent here, unlike in `place`.
+    pub ast_place: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -73,6 +77,7 @@ impl<'a> Parser<'a> {
             semi,
             height: 0,
             place: false,
+            ast_place: false,
         }
     }
 

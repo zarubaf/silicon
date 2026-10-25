@@ -623,7 +623,12 @@ impl Walker {
 
     fn expr(&mut self, expr: &Expr) {
         match expr {
-            Expr::Num { .. } | Expr::Bool { .. } | Expr::Str { .. } | Expr::Unit { .. } => {}
+            // TODO(#344): walk the operands of a builtin.
+            Expr::Num { .. }
+            | Expr::Bool { .. }
+            | Expr::Str { .. }
+            | Expr::Unit { .. }
+            | Expr::Builtin { .. } => {}
             Expr::Name { pos, id, name } => self.value_name(*pos, *id, name),
             Expr::Unary { arg, .. } => self.expr(arg),
             Expr::Binary { lhs, rhs, .. } => {

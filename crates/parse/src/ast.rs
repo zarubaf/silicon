@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The source AST of slices 1 to 3. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
+//! The source AST of slices 1 to 4. It mirrors `Silicon.Source.Syntax` in Lean: the same types,
 //! the same constructors, and the same field order. Only the `NodeId` of a node is not in
 //! Lean. The Lean name of a constructor is the lowercase name of the variant here, so the
 //! AST dump can print both with one rule.
@@ -93,6 +93,55 @@ pub enum UnOp {
     Not,
     Inv,
     Neg,
+}
+
+/// A builtin of slice 4: `@TypeOf` and `@field`. `@typeInfo`, `@Struct`, and `@ports` are not
+/// names here until their phases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Builtin {
+    TypeOf,
+    Field,
+}
+
+impl Builtin {
+    /// The name after the `@`.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Builtin::TypeOf => "TypeOf",
+            Builtin::Field => "field",
+        }
+    }
+
+    /// The name with its `@`, as a message writes it.
+    pub(crate) fn at_name(self) -> String {
+        format!("@{}", self.name())
+    }
+
+    /// The builtin of a name after the `@`, if the current phase has it.
+    pub(crate) fn of_name(name: &str) -> Option<Builtin> {
+        match name {
+            "TypeOf" => Some(Builtin::TypeOf),
+            "field" => Some(Builtin::Field),
+            _ => None,
+        }
+    }
+
+    /// The number of operands: 2 for `@field`, 1 for each other builtin.
+    pub(crate) fn arity(self) -> usize {
+        match self {
+            Builtin::TypeOf => 1,
+            Builtin::Field => 2,
+        }
+    }
+
+    /// The form of the builtin, for the fix of the arity error.
+    pub(crate) fn form(self) -> &'static str {
+        match self {
+            Builtin::TypeOf => "@TypeOf(x)",
+            Builtin::Field => "@field(x, k)",
+        }
+    }
 }
 
 /// The infix operators. A name ending in `w` is the wrapping form: `+%`, `-%`, `*%`.
@@ -215,6 +264,12 @@ pub enum Expr {
         pos: Pos,
         scrut: Box<Expr>,
         arms: Vec<Arm>,
+    },
+    /// The builtin `@name(args)` at the position of its `@`, with the operands in source order.
+    Builtin {
+        pos: Pos,
+        builtin: Builtin,
+        args: Vec<Expr>,
     },
     /// The array type `[T; N]` in an expression.
     ArrayType {
@@ -563,6 +618,7 @@ impl Expr {
             | Expr::Select { pos, .. }
             | Expr::Path { pos, .. }
             | Expr::Match { pos, .. }
+            | Expr::Builtin { pos, .. }
             | Expr::ArrayType { pos, .. }
             | Expr::FnType { pos, .. } => *pos,
         }
@@ -601,6 +657,7 @@ impl Expr {
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => take_expr(base, work),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => take_exprs(elems, work),
+            Expr::Builtin { args, .. } => take_exprs(args, work),
             Expr::Match { scrut, arms, .. } => {
                 take_expr(scrut, work);
                 work.extend(arms.drain(..).map(|arm| Pending::Expr(arm.value)));
