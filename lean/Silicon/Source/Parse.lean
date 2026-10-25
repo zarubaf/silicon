@@ -15,7 +15,7 @@ if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item.
   `in`, `with`, and `conforms` after their forms.
-- The opening token: `@` of `@Struct` and `@ports`, and `@` of each builtin in a type (#345).
+- The opening token: `@` of `@ports` (#346).
 - A later token of the construct: the `::` of a package path. The `(` after a type, which is a
   type function call. The second name in a `domains` clause. The `(` after the name of an enum,
   which is an enum with parameters.
@@ -37,13 +37,17 @@ bracket. Thus each look ahead takes constant time.
 `@` followed by another name than a builtin is `S001` "Not a builtin" at that name: no slice
 has that syntax.
 
-A builtin `@TypeOf(x)`, `@typeInfo(T)`, or `@field(x, k)` is a primary (section 9.3). The
-parser reads all its operands, then it checks their number: another number is `S001` "Builtin
-arity" at the name after `@`. Then the operand of `@TypeOf` must be a place (`Expr.place`), else
-`S001` "Query operand" at the first token of the operand, also if that token is a `(`. These two
-checks come after the operands, so a syntax error in an operand wins over them. The operand of
-`@typeInfo` can be any expression. An `@field` selection of a
-place is a place, so it can be a target, and a statement can start with `@`.
+A builtin `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, or `@field(x, k)` is a primary (section
+9.3). The parser reads all its operands, then it checks their number: another number is `S001`
+"Builtin arity" at the name after `@`. Then the operand of `@TypeOf` must be a place
+(`Expr.place`), else `S001` "Query operand" at the first token of the operand, also if that token
+is a `(`. These two checks come after the operands, so a syntax error in an operand wins over
+them. The operand of `@typeInfo` and of `@Struct` can be any expression. An `@field` selection of
+a place is a place, so it can be a target, and a statement can start with `@`.
+
+A builtin can also stand in a type position (F39): `@` starts a type too. The parser reads it as
+in an expression, then the suffixes of a type. Thus `@TypeOf(x)[8]` parses as an index of the
+builtin, and pass 4 rejects it with `S007`.
 A module parameter or a struct parameter without `comptime` is `S001` at its name. With `mut`,
 it is `S001` at `mut`. The v0.1 grammar has only `comptime` module parameters, and the front-end
 spec keeps this rule for a struct (section 5.6). A function parameter has at most one mark,
@@ -253,8 +257,18 @@ def laterBuiltin (t u : Token) : P α :=
     if builtins.contains n then later t "a builtin" else throw ⟨.S001, u.pos, notBuiltinText n⟩
   | _ => unexpected u "a builtin name"
 
-/-! `@` at `t` in a type: a builtin in a type position is `S004` (#345). -/
-def builtin (t : Token) : P α := do laterBuiltin t (← peekAt 1)
+/-!
+The head `@name(` of a builtin at the `@` token `t`: the name token and its builtin. A name of a
+later phase or another token is the error of `laterBuiltin`.
+-/
+def builtinHead (t : Token) : P (Token × Builtin) := do
+  let u ← peekAt 1
+  let .ident n := u.kind | laterBuiltin t u
+  let some b := Builtin.ofName n | laterBuiltin t u
+  bump
+  bump
+  sym "("
+  return (u, b)
 
 /-!
 The checks of the builtin `b` after its operands `xs` (section 9.3). First the number of the
@@ -567,12 +581,7 @@ mutual
           let xs ← args f "]" true false
           return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
       | .symbol "@" =>
-        let u ← peekAt 1
-        let .ident n := u.kind | laterBuiltin t u
-        let some b := Builtin.ofName n | laterBuiltin t u
-        bump
-        bump
-        sym "("
+        let (u, b) ← builtinHead t
         let o := (← peek).pos
         let xs ← args f ")" true false
         let ys := xs.map (·.expr)
@@ -643,7 +652,13 @@ mutual
         let n ← expr f
         sym "]"
         typeSuffix f t.pos (.array t.pos ty n.expr, height [h, n.height])
-      | .symbol "@" => builtin t
+      | .symbol "@" =>
+        let (u, b) ← builtinHead t
+        let o := (← peek).pos
+        let xs ← args f ")" true false
+        let ys := xs.map (·.expr)
+        builtinCheck u b o ys
+        typeSuffix f t.pos (.builtin t.pos b ys, height (xs.map (·.height)))
       | _ => unexpected t "a type"
 
   /-- The element types of a tuple type up to `)`. A `,` can end the list. -/

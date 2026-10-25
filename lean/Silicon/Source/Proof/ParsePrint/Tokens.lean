@@ -87,6 +87,9 @@ mutual
     | .fn _ ps r =>
       [.keyword "fn", .symbol "("] ++ argToks (ps.map FnParam.toks) ++ [.symbol ")", .symbol "->"]
         ++ r.toks
+    | .builtin _ b xs =>
+      [.symbol "@", .ident b.name, .symbol "("] ++ argToks (xs.map (Expr.toks 0)) ++
+        [.symbol ")"]
 
   def FnParam.toks : FnParam → List Kind
     | .mk m t => (if m then [.keyword "mut"] else []) ++ t.toks

@@ -434,6 +434,18 @@ private theorem lexes_all (D : Nat) :
       List.all_eq_true] at h
     rw [TypeExpr.print, TypeExpr.toks]
     exact hfn ps r (fun x hx => ih x hx (h.1 x hx)) (ihr h.2)
+  case case29 =>
+    intro p b xs ihx h
+    simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
+      List.all_eq_true] at h
+    rw [TypeExpr.print, TypeExpr.toks]
+    have hn : validName b.name = true := by cases b <;> decide
+    have ha := Lexes.argsClose (D := D) xs (fun x hx => ihx x hx (h.2 x hx) 0) hcl hcs
+    have hm := (Lexes.name (D := D) hn).append (hop.append ha (Starts.any _))
+      (Starts.glue "(" (by decide) _)
+    have hat : Lexes D .any "@".toList [.symbol "@"] := Lexes.glue (by decide)
+    have := hat.append hm (Starts.any _)
+    simpa using Lexes.any (f := .sep) this
   case case20 =>
     intro p b xs ihx h; apply Lexes.wrap
     simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at h
