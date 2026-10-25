@@ -1,0 +1,20 @@
+// T3 of the work-counter tests of `@field` (issue #344). A struct has N fields, and the parent selects each field by the
+// `String` key of its name. A key charges its size, and the look-up of its symbol is one look-up by the symbol of the
+// name. A scan of the fields for each key, or a copy of the key for each use, makes N more work for each use, and the
+// work escapes the bound.
+// SCALE field_string_keys 16 32 64 128 256
+// TOP M()
+struct P {
+// REPEAT i {N}
+    f{i}: UInt[8],
+// END
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let p = P();
+// REPEAT i {N}
+    let a{i} = @field(p, "f{i}");
+// END
+    o := x;
+}
