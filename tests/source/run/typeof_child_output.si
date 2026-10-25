@@ -1,0 +1,23 @@
+// An output of a child gives its data type.
+// TOP M()
+type BU = (Bool, UInt[4]);
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+module C() domains() {
+    input a: P;
+    output q: P;
+    q := a;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    static_assert(@TypeOf(u.q) == P, "the child output");
+    static_assert(@TypeOf(u.q.b.1) == UInt[4], "a part");
+    u.a := P(x, (true, 1));
+    o := u.q.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

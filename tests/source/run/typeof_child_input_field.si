@@ -1,0 +1,23 @@
+// A step below a child input selects in the data type.
+// TOP M()
+type BU = (Bool, UInt[4]);
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+module C() domains() {
+    input a: P;
+    output q: P;
+    q := a;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    static_assert(@TypeOf(u.a.a) == UInt[8], "a field");
+    static_assert(@TypeOf(u.a.b) == BU, "a tuple field");
+    u.a := P(x, (true, 1));
+    o := u.q.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

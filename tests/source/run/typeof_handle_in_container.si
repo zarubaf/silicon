@@ -1,0 +1,17 @@
+// A handle in an array keeps its handle type.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    reg s: UInt[8] = 0;
+    let rs = [r, s];
+    static_assert(@TypeOf(rs) == [Reg[UInt[8]]; 2], "the array");
+    static_assert(@TypeOf(rs[1]) == Reg[UInt[8]], "an element");
+    r := x;
+    s := x;
+    o := read(rs[0]);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

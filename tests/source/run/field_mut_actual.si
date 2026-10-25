@@ -1,0 +1,15 @@
+// A `mut` actual can pass an `@field` place, and the callee changes the part of the root.
+// TOP M()
+fn bump(mut v: UInt[4]) -> UInt[4] {
+    v = v +% 1;
+    return v;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let mut t = (x, [x, x]);
+    let n = bump(@field(@field(t, 1), 0));
+    o := t.1[0] +% n;
+}
+// STEP in=(x 3) out=(o 8)
+// STEP in=(x 12) out=(o 10)

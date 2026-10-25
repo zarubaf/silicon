@@ -1,0 +1,11 @@
+// A name in parentheses is the same place as the name.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@TypeOf((x)) == UInt[8], "parentheses");
+    static_assert(@TypeOf(((x))) == @TypeOf(x), "nested parentheses");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

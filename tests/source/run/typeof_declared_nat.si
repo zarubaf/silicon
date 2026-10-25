@@ -1,0 +1,10 @@
+// A `comptime` parameter with a declared type gives that type, here `Nat`, not `Int`.
+// TOP M(3)
+module M(comptime n: Nat) domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@TypeOf(n) == Nat, "the parameter");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

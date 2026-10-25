@@ -1,0 +1,14 @@
+// A static tuple has no stored type. `@TypeOf` builds the type from its parts.
+// TOP M()
+type BS = (Bool, String);
+type IBS = (Int, BS);
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let t = (1, (true, "a"));
+    static_assert(@TypeOf(t) == IBS, "the built type");
+    static_assert(@TypeOf(t.1) == BS, "a part");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

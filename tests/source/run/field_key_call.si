@@ -1,0 +1,13 @@
+// The key can hold a call of a function. It evaluates once, before the step.
+// TOP M()
+fn one() -> Nat {
+    return 1;
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let a = [x, x +% 1, x +% 2];
+    o := @field(a, one() + 1);
+}
+// STEP in=(x 3) out=(o 5)
+// STEP in=(x 12) out=(o 14)

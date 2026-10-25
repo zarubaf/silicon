@@ -1,0 +1,10 @@
+// An entry of an own family gives the data type of the family.
+// TOP M()
+module M() domains() {
+    input req[3]: UInt[8];
+    output o: UInt[8];
+    static_assert(@TypeOf(req[3]) == UInt[8], "an entry");
+    o := req[3];
+}
+// STEP in=(req[3] 7) out=(o 7)
+// STEP in=(req[3] 250) out=(o 250)

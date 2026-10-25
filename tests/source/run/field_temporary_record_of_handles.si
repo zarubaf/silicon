@@ -1,0 +1,16 @@
+// A temporary record of handles gives the handle of a field: `@field(RH(r), "r")` is the register.
+// TOP M()
+struct RH {
+    r: Reg[UInt[4]],
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    reg r: UInt[4] = 0;
+    r := x;
+    let h = @field(RH(r), "r");
+    o := read(h);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

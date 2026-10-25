@@ -1,0 +1,10 @@
+// `@field(t, 1)` selects a part of a tuple by a static `Nat`, as `t.1` does.
+// TOP M()
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let t = (true, x +% 2);
+    o := @field(t, 1);
+}
+// STEP in=(x 3) out=(o 5)
+// STEP in=(x 12) out=(o 14)

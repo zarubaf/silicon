@@ -1,0 +1,16 @@
+// A register base reads as the base of `rp.a` does: `@field(rp, "a")` is the field of the value.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    reg rp: P = P(0, false);
+    rp := P(x, true);
+    o := @field(rp, "a");
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

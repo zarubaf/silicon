@@ -1,0 +1,18 @@
+// A wire gives its handle type `Wire[P]`, and a step below it gives the data type.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    wire w: P;
+    static_assert(@TypeOf(w) == Wire[P], "the handle");
+    static_assert(@TypeOf(w.a) == UInt[8], "a field");
+    w := P(x, (true, 1));
+    o := read(w).a;
+}
+// STEP in=(clock$0rst false x 3) out=(o 3)
+// STEP in=(clock$0rst false x 250) out=(o 250)

@@ -1,0 +1,17 @@
+// An indexed `PortKey` as a key of a target binds one input of a family of a child.
+// TOP M()
+module C() domains() {
+    input req[2]: UInt[4];
+    output gnt[2]: UInt[4];
+    gnt[2] := req[2] +% 1;
+}
+
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    @field(u, PortKey("req", true, 2)) := x;
+    o := u.gnt[2];
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 12) out=(o 13)

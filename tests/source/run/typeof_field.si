@@ -1,0 +1,16 @@
+// A field step gives the declared type of the field.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input p: P;
+    output o: UInt[8];
+    static_assert(@TypeOf(p.a) == UInt[8], "a field");
+    static_assert(@TypeOf(p.b) == BU, "a tuple field");
+    o := p.a;
+}
+// STEP in=(p.a 3 p.b.0 true p.b.1 1) out=(o 3)
+// STEP in=(p.a 250 p.b.0 false p.b.1 2) out=(o 250)

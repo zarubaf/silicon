@@ -1,0 +1,12 @@
+// `@field(l, 0)` selects an element of a list by a static `Nat`.
+// TOP M()
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let mut l = list(Nat);
+    push(l, 2);
+    push(l, 5);
+    o := x +% UInt[4](@field(l, 1));
+}
+// STEP in=(x 3) out=(o 8)
+// STEP in=(x 12) out=(o 1)

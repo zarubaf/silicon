@@ -1,0 +1,11 @@
+// An item `const` gives the type of its annotation.
+// TOP M()
+const D: Nat = 1;
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@TypeOf(D) == Nat, "the annotation");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

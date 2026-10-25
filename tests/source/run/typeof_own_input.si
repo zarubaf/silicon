@@ -1,0 +1,16 @@
+// An own input gives its data type, not a handle.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: BU,
+}
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input p: P;
+    output o: Bool;
+    static_assert(@TypeOf(p) == P, "the input");
+    static_assert(@TypeOf(p.b.0) == Bool, "a part");
+    o := p.b.0;
+}
+// STEP in=(p.a 3 p.b.0 true p.b.1 1) out=(o true)
+// STEP in=(p.a 250 p.b.0 false p.b.1 2) out=(o false)

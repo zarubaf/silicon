@@ -1,0 +1,11 @@
+// A local of hardware data holds the type of its data. The operand reads no hardware.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let h = x +% 1;
+    static_assert(@TypeOf(h) == UInt[8], "a local");
+    o := h;
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 250) out=(o 251)

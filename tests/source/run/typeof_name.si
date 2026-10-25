@@ -1,0 +1,10 @@
+// `@TypeOf` of a name gives the type of its binding. The operand makes no hardware.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@TypeOf(x) == UInt[8], "a port");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

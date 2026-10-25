@@ -1,0 +1,13 @@
+// A memory gives its handle type `Mem[T, N]`.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    mem m: [UInt[8]; 4];
+    static_assert(@TypeOf(m) == Mem[UInt[8], 4], "the memory");
+    let rd = m.read_port(0, true);
+    write_port(m, 0, x, false);
+    o := rd.data;
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)

@@ -1,0 +1,20 @@
+// A port that a helper of the child declares with a computed name is a public port of the child.
+// TOP M()
+fn lane(comptime k: Nat) -> UInt[4] {
+    input req[k]: UInt[4];
+    output tap: UInt[4] as "tap" + str(k);
+    tap := req[k] +% 1;
+    return req[k];
+}
+module C() domains() {
+    let y = lane(2);
+}
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.req[2] := x;
+    o := @field(u, "tap2");
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 12) out=(o 13)
