@@ -209,7 +209,6 @@ impl Ids {
         }
     }
 
-    #[allow(clippy::match_wildcard_for_single_variants)]
     fn expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Num { .. }
@@ -254,6 +253,7 @@ impl Ids {
             }
             Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
+            Expr::Builtin { args, .. } => self.exprs(args),
             Expr::Match { scrut, arms, .. } => {
                 self.expr(scrut);
                 for arm in arms {
@@ -265,9 +265,6 @@ impl Ids {
                     self.expr(&arm.value);
                 }
             }
-            // A node of a later phase has no name of its own.
-            #[allow(unreachable_patterns, clippy::match_same_arms)]
-            _ => {}
         }
     }
 }
@@ -1310,6 +1307,11 @@ fn call_sites(r: &Resolved) -> Vec<(Pos, usize)> {
                     expr(r, a, out);
                 }
             }
+            Expr::Builtin { args, .. } => {
+                for a in args {
+                    expr(r, a, out);
+                }
+            }
             _ => {}
         }
     }
@@ -2293,4 +2295,52 @@ fn the_family_walk_needs_no_recursion_for_a_deep_nest() {
         "\n}".repeat(n)
     ));
     assert_eq!(errors(&src).first().map(|e| e.0), Some(S002));
+}
+
+#[test]
+fn the_operands_of_a_builtin_resolve_as_expressions() {
+    let src = "const k: Nat = 0;\nfn f(a: Nat) -> Nat {\n    let r = @field(a, k);\n    return @TypeOf(r);\n}";
+    // The base and the key are names like any other, and `r` is the local of the `let`.
+    let r = ok(src);
+    for at in [pos(3, 20), pos(3, 23), pos(4, 20)] {
+        assert!(target_at(&r, at).is_some(), "{at:?}");
+    }
+    assert_eq!(target_at(&r, pos(3, 23)), r.item("k").map(Target::Decl));
+    // An unknown name in an operand is S003 at the name, in source order.
+    let src = fn_body("let r = @field(a, b);\nreturn @TypeOf(c);");
+    assert_eq!(errors(&src), [(S003, 2, 16), (S003, 2, 19), (S003, 3, 16)]);
+    assert_eq!(message(&src), "`a` is not declared");
+}
+
+#[test]
+fn a_builtin_in_a_signature_makes_the_function_generic() {
+    assert!(generic(
+        "fn f(n: Nat) -> UInt[@field(n, 0)] { return 0; }",
+        "f"
+    ));
+    assert!(generic(
+        "fn f(n: Nat) -> [Nat; @field(n, 0)] { return 0; }",
+        "f"
+    ));
+    assert!(!generic(
+        "const k: Nat = 0;\nfn f(n: Nat) -> UInt[@field(k, 0)] { return 0; }",
+        "f"
+    ));
+}
+
+#[test]
+fn a_builtin_has_no_call_site_and_its_operands_count_in_pre_order() {
+    assert_eq!(
+        sites(&fn_body(
+            "let a = @field(len(p), len(p));\nreturn len(@field(p, len(p)));"
+        )),
+        [0, 1, 2, 3]
+    );
+}
+
+#[test]
+fn a_deep_chain_of_builtins_resolves() {
+    let n = parse::DEFAULT_SYNTAX_DEPTH - 8;
+    let chain = format!("{}p{}", "@field(".repeat(n), ", 0)".repeat(n));
+    ok(&fn_body(&format!("let a = {chain};\nreturn p;")));
 }
