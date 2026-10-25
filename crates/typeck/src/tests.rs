@@ -1481,3 +1481,91 @@ fn a_port_family_is_no_mutable_root() {
         1,
     );
 }
+
+// The builtins (design section 9.2, G11). The cases come from the `#guard` lines of
+// `Silicon.Source.Test.Check` in Lean.
+
+#[test]
+fn the_operand_of_typeof_is_no_static_position_but_its_indices_and_keys_are() {
+    ok(&mod_body(
+        "reg r: UInt[8] = 0;\nlet x: UInt[data_bits(@TypeOf(r))] = 0;",
+    ));
+    ok(&mod_body(
+        "reg r: Bool = false;\ncomptime if (@TypeOf(r) == Reg[Bool]) {}",
+    ));
+    ok(&mod_body("reg r: Bool = false;\nlet y = @field(r, 0);"));
+    fails(
+        &mod_body("reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t = @TypeOf(rs[w]);"),
+        S005,
+        4,
+        20,
+    );
+    fails(
+        &mod_body("wire w: Bool;\nlet p = 1;\nlet y = @field(p, w);"),
+        S005,
+        4,
+        19,
+    );
+    assert_eq!(
+        message(&mod_body(
+            "wire w: Bool;\nlet p = 1;\nlet y = @field(p, w);"
+        )),
+        "`w` is a wire; a static position needs a static value"
+    );
+    // The base of `@field` takes the position of the builtin.
+    fails(
+        &mod_body("reg r: Bool = false;\nlet y: UInt[@field(r, 0)] = 0;"),
+        S005,
+        3,
+        20,
+    );
+    fails(
+        &mod_body("reg r: Bool = false;\nwire w: Bool;\nlet t = @TypeOf(@field(r, w));"),
+        S005,
+        4,
+        27,
+    );
+}
+
+fn mut_fns(s: &str) -> String {
+    format!(
+        "fn g(mut a: Nat) -> Nat {{ return 1; }}\n\
+         fn h(mut a: Nat, mut b: Nat) -> Nat {{ return 1; }}\n{}",
+        fn_body(s)
+    )
+}
+
+#[test]
+fn a_mut_actual_through_field_has_the_root_of_its_base() {
+    ok(&mut_fns(
+        "let mut y = 1;\nlet mut z = 1;\nlet r = h(@field(y, 0), @field(z.a, 1));",
+    ));
+    fails(
+        &mut_fns("let y = 1;\nlet r = g(@field(y, 0));"),
+        S008,
+        5,
+        11,
+    );
+    assert_eq!(
+        message(&mut_fns("let y = 1;\nlet r = g(@field(y, 0));")),
+        "a `mut` actual has a `let mut` local or a `mut` formal as its root"
+    );
+    fails(
+        &mut_fns("let mut y = 1;\nlet r = h(@field(y, 0), @field(y, 1));"),
+        S008,
+        5,
+        25,
+    );
+    assert_eq!(
+        message(&mut_fns("let r = g(@field(f(p), 0));")),
+        "a `mut` actual is a place"
+    );
+    fails(&mut_fns("let r = g(@TypeOf(p));"), S008, 4, 11);
+}
+
+#[test]
+fn a_deep_chain_of_builtins_passes_on_a_test_thread() {
+    let n = parse::DEFAULT_SYNTAX_DEPTH - 8;
+    let chain = format!("{}p{}", "@field(".repeat(n), ", 0)".repeat(n));
+    ok(&fn_body(&format!("let a = {chain};\nreturn p;")));
+}
