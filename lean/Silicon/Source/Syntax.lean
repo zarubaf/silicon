@@ -104,6 +104,12 @@ end
 
 deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
 
+/-! A place: a name, or a field, an index, or a selector of a place. -/
+def Expr.place : Expr → Bool
+  | .name .. => true
+  | .field _ b _ | .index _ b _ | .select _ b .. => b.place
+  | _ => false
+
 /-!
 The name form of a port (section 5.6). A `scalar` port has a name only. An `indexed` port has its
 family key in `[ ]` after the name. A `keyed` port has an `as` key after the type. A port has one
@@ -224,6 +230,10 @@ structure Error where
   pos : Pos
   msg : String
   deriving Repr, DecidableEq, BEq, Inhabited
+
+/-! A string in a message: at most 64 characters, then a note of the full length. -/
+def strText (m : String) : String :=
+  if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"
 
 /-!
 The prelude type names of section 5.6: the builtin types of `Resolve.prelude`, then the prelude

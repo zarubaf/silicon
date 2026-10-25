@@ -248,10 +248,6 @@ def entryText (x : String) : Option Nat → String
 
 def Port.text (q : Port) : String := entryText q.name q.key
 
-/-! A string in a message: at most 64 characters, then a note of the full length. -/
-def strText (m : String) : String :=
-  if m.length ≤ 64 then m else s!"{(m.take 64).toString}... ({m.length} characters)"
-
 /-! The core name of the port `q`: its name, and the field `<k>f` of an entry (section 7.2). -/
 def Port.core (q : Port) : Name :=
   match q.key with

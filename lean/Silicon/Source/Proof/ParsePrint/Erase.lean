@@ -168,12 +168,6 @@ def Pattern.printable : Pattern → Bool
   | .variant _ t v bs =>
     validName t.name && t.name != "_" && validName v.name && v.name != "_" && bs.all binderOk
 
-/-! A place: a name, or a field, an index, or a selector of a place. -/
-def Expr.place : Expr → Bool
-  | .name .. => true
-  | .field _ b _ | .index _ b _ | .select _ b .. => b.place
-  | _ => false
-
 mutual
   def Expr.printable : Expr → Bool
     | .num _ v => v < numberBound
