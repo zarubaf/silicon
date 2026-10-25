@@ -187,9 +187,7 @@ impl Evaluator<'_> {
             let step = match key {
                 Key::Named(n) if n.charges => {
                     let plan = self.named_plan(n, At::Seen(cur), self.store.value(&n.key))?;
-                    if let Some(name) = plan.name() {
-                        Self::pay_name(&mut self.fuel, n.kp, name)?;
-                    }
+                    Self::pay_unpaid(&mut self.fuel, n, &plan)?;
                     let pick = self.named_finish(n, cur, &plan)?;
                     let next = match &pick {
                         Pick::Field(k, ..) => self.node_next(cur, *k),
@@ -271,11 +269,7 @@ impl Evaluator<'_> {
             return fail(Code::S017, start, PART_TEXT.to_owned());
         }
         let plan = self.named_plan(n, At::Seen(seen), self.store.value(&n.key))?;
-        if !n.paid
-            && let Some(name) = plan.name()
-        {
-            Self::pay_name(&mut self.fuel, n.kp, name)?;
-        }
+        Self::pay_unpaid(&mut self.fuel, n, &plan)?;
         match self.named_finish(n, seen, &plan)? {
             Pick::Port(info, port) => self.target_port(start, info, port),
             pick => self.named_apply(n, base, pick),
