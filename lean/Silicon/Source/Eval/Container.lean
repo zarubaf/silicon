@@ -486,10 +486,13 @@ def strAt (pos q : Pos) (s : String) (i : Value) : M Value := do
   | some c => return .str (String.singleton c)
   | none => fail .S013 q s!"the index {intText k} is out of range for {s.length} scalar(s)"
 
-/-! The number of the static index `i` at `q` in a container with `n` elements. -/
-def within (q : Pos) (n : Nat) (i : Value) : M Nat := do
+/-!
+The number of the static index `i` at `q` in a container with `n` elements. A `Fin n` lets the
+caller select with no second range check.
+-/
+def within (q : Pos) (n : Nat) (i : Value) : M (Fin n) := do
   let k ← indexOf q i
-  if 0 ≤ k ∧ k.toNat < n then return k.toNat
+  if h : 0 ≤ k ∧ k.toNat < n then return ⟨k.toNat, h.2⟩
   else fail .S013 q s!"the index {intText k} is out of range for {n} element(s)"
 
 /-!
@@ -502,17 +505,15 @@ def pickKey (pos q : Pos) (v : Val) (i : Value) : M (Nat × Val) := do
   match v with
   | .agg (.array _ xs) | .agg (.tuple _ xs) | .agg (.list _ _ xs) =>
     let k ← within q xs.size i
-    match xs[k]? with
-    | some x => return (k, ← normalize pos x)
-    | none => fail .S013 q s!"the index is out of range for {xs.size} element(s)"
+    return (k, ← normalize pos xs[k])
   | .agg (.ref b r@(.array e n)) => do
-    let k ← within q n i
+    let k := (← within q n i).val
     return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) r k (.elem k)) e))
   | .agg (.ref b r@(.tuple ts)) => do
     let k ← within q ts.size i
-    match ts[k]? with
-    | some t => return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) r k (.elem k)) t))
-    | none => fail .S013 q s!"the index is out of range for {ts.size} element(s)"
+    let t := ts[k]
+    let k := k.val
+    return (k, ← normalize pos (.ref (b.sub (partsIn (← get).specs) r k (.elem k)) t))
   | v =>
     let (k, w) ← pickAt pos q v i
     return (k, .static w)
