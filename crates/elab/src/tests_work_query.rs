@@ -475,30 +475,6 @@ fn w6_a_target_through_field_steps_walks_its_path_once() {
     assert_eq!(large.counts.selected, index_large.counts.selected);
 }
 
-#[test]
-fn probe_w6() {
-    for (d, n) in [(32, 4), (64, 4)] {
-        let (a, b) = (
-            target_run(d, n, (true, true), 80),
-            target_run(d, n, (true, false), 81),
-        );
-        let c = target_run(d, n, (false, true), 82);
-        eprintln!(
-            "d={d} n={n} named: total {} stepped {} selected {} copies {} used {}; index: total {} stepped {} used {}; base {} {}",
-            a.counts.total(),
-            a.counts.stepped,
-            a.counts.selected,
-            a.counts.copies,
-            a.used,
-            b.counts.total(),
-            b.counts.stepped,
-            b.used,
-            c.counts.total(),
-            c.used
-        );
-    }
-}
-
 /// How the run of W7 changes the part: an assignment of a static or a hardware leaf, or a `mut`
 /// actual of a hardware leaf.
 #[derive(Clone, Copy)]
