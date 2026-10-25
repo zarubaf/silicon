@@ -4083,12 +4083,18 @@ def tiSrc : String :=
   tiOut "enum" (e := "(uint 1)") (w := 1) (vs := [viOut "X" 0 [], viOut "Y" 1 []])
 
 /-!
-A value that is not a `Type` is `S010` "`@typeInfo` of a value" at the argument, and the text
-tells the user to bind it and use `@TypeOf`.
+A value that is not a `Type` is `S010` "`@typeInfo` of a value" at the argument. The text tells
+the user to bind it and use `@TypeOf`. A tuple of types gets the fix to name its tuple type, and
+a tuple with another element keeps the fix of a value.
 -/
 #guard out "" "@typeInfo(3)" == "S010 1:11"
 #guard msg "" "@typeInfo(3)" == "`@typeInfo` takes a type, not a value of `Int`; bind the " ++
   "value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+#guard out "" "@typeInfo((Bool, UInt[8]))" == "S010 1:11"
+#guard msg "" "@typeInfo((Bool, UInt[8]))" == "`@typeInfo` takes a type, not a value of " ++
+  "`(Type, Type)`; name the tuple type with `type T = (A, B);` and use `@typeInfo(T)`"
+#guard msg "" "@typeInfo((Bool, 3))" == "`@typeInfo` takes a type, not a value of " ++
+  "`(Type, Int)`; bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
 
 /-!
 The argument has the guard kind `arg`: a mutation of an earlier binding and a graph effect are
