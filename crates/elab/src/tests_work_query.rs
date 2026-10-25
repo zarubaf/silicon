@@ -352,3 +352,52 @@ fn w7b_a_field_chain_of_names_walks_its_path_once() {
     assert_eq!(a, field_small.counts.stepped);
     assert_eq!(b, field_large.counts.stepped);
 }
+
+/// The run of `@TypeOf` of an alternating chain of `d` steps over a hardware record that nests
+/// `d` structs: the steps are `@field(..., "a")` and `.a` in turn. Each `.a` must know if its
+/// base is an `Instance` handle, so a step that cannot tell walks the path from the root again.
+fn alternating_run(d: usize, queried: bool, run_key: u64) -> Run {
+    let mut src = "struct S0 {\n    a: UInt[8],\n}\n".to_owned();
+    for i in 1..=d {
+        writeln!(src, "struct S{i} {{\n    a: S{},\n}}", i - 1).unwrap();
+    }
+    let mut query = "p".to_owned();
+    for i in 0..=d {
+        query = if i % 2 == 0 {
+            format!("@field({query}, \"a\")")
+        } else {
+            format!("{query}.a")
+        };
+    }
+    let mut value = "x".to_owned();
+    for i in 0..=d {
+        value = format!("S{i}({value})");
+    }
+    let query = if queried {
+        format!("    let t = @TypeOf({query});\n")
+    } else {
+        String::new()
+    };
+    writeln!(
+        src,
+        "module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    let p = {value};\n\
+         {query}    o := x;\n}}"
+    )
+    .unwrap();
+    passing(KEY + run_key, 100_000, &src)
+}
+
+/// W9. A query of an alternating chain of `@field` and `.a` steps of depth `d` over a hardware
+/// record. A `.a` after an `@field` knows from the type of the part that the part is no `Instance`
+/// handle, so the pass along the part runs once. A pass for each `.a` walks the path from the root
+/// again, and the steps grow with `d` times `d`.
+#[test]
+fn w9_an_alternating_query_walks_its_place_once() {
+    let (small, large) = (alternating_run(32, true, 70), alternating_run(64, true, 71));
+    let (small_base, large_base) = (
+        alternating_run(32, false, 72),
+        alternating_run(64, false, 73),
+    );
+    let ((a, _), (b, _)) = (extra(&small, &small_base), extra(&large, &large_base));
+    assert!(a < b && b <= 2 * a + 16, "the work {a} at d and {b} at 2d");
+}
