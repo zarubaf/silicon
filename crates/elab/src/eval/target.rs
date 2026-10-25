@@ -15,6 +15,7 @@ use super::place::{Key, Sel, chain, key_pos};
 use super::{Evaluator, GuardKind, Out, Res, fail, need};
 use crate::Code;
 use crate::hw::{Handle, Ref, Root, Seen, Val};
+use crate::names::Sym;
 use crate::types::TyId;
 use parse::ast::{Expr, Ident, Pos};
 use resolve::{DeclId, Target as Resolved};
@@ -129,14 +130,14 @@ impl Evaluator<'_> {
         let mut at = 0;
         while let Some(key) = keys.get(at) {
             if let Key::Field(_, f) = key
-                && self.child_family(&cur, f)
+                && let Some(sym) = self.child_family(&cur, f)
             {
                 let (Some(Key::Index(_, xp, _)), Some(Some(ko))) =
                     (keys.get(at + 1), fams.get(at + 1))
                 else {
                     return family_value(start, &f.name);
                 };
-                cur = self.child_target(start, &cur, f, (*xp, ko))?;
+                cur = self.child_target(start, &cur, (sym, &f.name), (*xp, ko))?;
                 at += 2;
                 continue;
             }
@@ -252,16 +253,16 @@ impl Evaluator<'_> {
         )
     }
 
-    /// The entry of the family `f` of the child behind the `Instance` handle `cur`, with the
-    /// static key `fk` at `xp`, in a `:=` target that starts at `start` (section 5.2). The key
-    /// gets the type and range checks of a family selection. A key that the child did not declare
-    /// is `S013` "Child family key". An input entry gives its handle, and an output entry is
-    /// `S017`.
+    /// The entry of the family with the symbol `sym` and the name `name` of the child behind the
+    /// `Instance` handle `cur`, with the static key `ko` at `xp`, in a `:=` target that starts at
+    /// `start` (section 5.2). The key gets the type and range checks of a family selection. A key
+    /// that the child did not declare is `S013` "Child family key". An input entry gives its
+    /// handle, and an output entry is `S017`.
     fn child_target(
         &mut self,
         start: Pos,
         cur: &Out,
-        f: &Ident,
+        (sym, name): (Sym, &str),
         (xp, ko): (Pos, &Out),
     ) -> Res<Out> {
         let key = self.fam_key(self.store.value(ko)).key(xp)?;
@@ -269,7 +270,6 @@ impl Evaluator<'_> {
             return fail(Code::S017, start, PART_TEXT.to_owned());
         };
         let (id, path, inst, ty) = (*id, *path, *inst, *ty);
-        let sym = self.port_sym(f).unwrap_or(0);
         match self.elab.port(inst, (sym, Some(key))) {
             Some(port) if port.input => Ok(Out::Made(Val::Handle(Handle::Input {
                 inst: id,
@@ -277,7 +277,7 @@ impl Evaluator<'_> {
                 port,
             }))),
             Some(port) => fail(Code::S017, start, self.output_text(&port)),
-            None => child_key(xp, &self.tys.text(ty), &f.name, key),
+            None => child_key(xp, &self.tys.text(ty), name, key),
         }
     }
 }

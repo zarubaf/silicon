@@ -124,13 +124,13 @@ impl Evaluator<'_> {
         })
     }
 
-    /// The family of a child that the field `f` of the base `b` names, when `b` is an `Instance`
-    /// handle (Lean `childFamily`).
-    pub(in crate::eval) fn child_family(&self, b: &Out, f: &Ident) -> bool {
+    /// The symbol of the family of a child that the field `f` of the base `b` names, when `b` is
+    /// an `Instance` handle whose module has that family (Lean `childFamily`).
+    pub(in crate::eval) fn child_family(&self, b: &Out, f: &Ident) -> Option<Sym> {
         let Seen::Handle(Handle::Inst { inst, .. }) = self.store.seen(b) else {
-            return false;
+            return None;
         };
-        self.port_sym(f).is_some_and(|s| self.has_family(*inst, s))
+        self.port_sym(f).filter(|s| self.has_family(*inst, *s))
     }
 
     /// The text of the port `port` in a message: its public name, or the entry `x[k]`, with the
@@ -364,28 +364,22 @@ impl Evaluator<'_> {
     /// The selection `u.f[k]` at the index node `p` of the family `f` of the child behind the
     /// base `b`, with the field node at `q` (section 6.2). The index node and the field node
     /// charged 1, and `u` evaluated once. The base is an `Instance` handle whose module has the
-    /// family `f` (`child_family`). The key evaluates in a structural context, gets the checks of
+    /// family with the symbol `sym` and the name `name` (`child_family`). The key evaluates in a structural context, gets the checks of
     /// a selection key with `S010` at `q`, and selects the entry of the child (`child_entry`).
     pub(in crate::eval) fn child_sel(
         &mut self,
         (p, q): (Pos, Pos),
         b: &Out,
-        f: &Ident,
+        (sym, name): (Sym, &str),
         key: &Expr,
     ) -> Res<Out> {
         let Seen::Handle(Handle::Inst { id, path, inst, ty }) = self.store.seen(b) else {
-            return family_value(q, &f.name);
+            return family_value(q, name);
         };
         let (id, path, inst, ty) = (*id, *path, *inst, *ty);
         let out = self.key_out(key)?;
-        let number = self.selection_key(q, key.pos(), &f.name, &out)?;
-        let sym = self.port_sym(f).unwrap_or(0);
-        self.child_entry(
-            (p, key.pos()),
-            (id, path),
-            (inst, ty),
-            (sym, &f.name, number),
-        )
+        let number = self.selection_key(q, key.pos(), name, &out)?;
+        self.child_entry((p, key.pos()), (id, path), (inst, ty), (sym, name, number))
     }
 
     /// The entry `number` at `p` of the family with the symbol `sym` and the name `name` of the
