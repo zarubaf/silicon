@@ -772,6 +772,19 @@ def genericFn (s : String) : Option Bool :=
   some true
 
 /-!
+A name in the operands of a builtin in a type counts too (section 5.1). This holds in the result
+type and in a parameter type, also inside another type form. A builtin in a type that names no
+parameter does not make a function generic.
+-/
+#guard genericFn (pair ++ "fn g(x: UInt[8]) -> @TypeOf(x) { return x; }") == some true
+#guard genericFn (pair ++ "fn g(x: UInt[8]) -> [@TypeOf(x); 2] { return [x, x]; }") == some true
+#guard genericFn (pair ++ "fn g(x: UInt[8], y: @TypeOf(x)) -> Bool { return true; }") == some true
+#guard genericFn (pair ++ "fn g(t: Type) -> @Struct([FieldInfo(\"a\", t)]) { return true; }") ==
+  some true
+#guard genericFn (pair ++ "fn g(x: UInt[8]) -> @Struct([FieldInfo(\"a\", Op)]) { return x; }") ==
+  some false
+
+/-!
 Port families (section 5.6). The first indexed declaration of a name gives one family binder in
 the scope of the body. A loop declares the entries, and a later loop selects them (F35). The
 implicit `clock` is the local 0 and `W` the local 1, so the family takes the local 2 before the
@@ -907,6 +920,20 @@ family with the name of the binder is the ordinary `S002`.
 #guard match run "fn f(x: Nat) -> Nat { return @typeInfo(Nat); }" with
   | .ok items => match items[0]? with
     | some (Resolve.Item.fn _ _ _ _ _ [.ret _ (some (.typeInfo _ (.name _ "Nat" _)))]) => true
+    | _ => false
+  | .error _ => false
+
+/-!
+The argument of `@Struct` resolves as an expression, and so does a builtin in a type position: the
+type node holds the resolved builtin.
+-/
+#guard ok (fnBody "let t = @Struct([]);\nreturn p;")
+#guard fails (fnBody "let t = @Struct(Q);\nreturn p;") .S003 2 17
+#guard fails (fnBody "let t: @TypeOf(q) = 1;\nreturn p;") .S003 2 16
+#guard match run "fn f(x: Nat) -> @TypeOf(x) { return @Struct(x); }" with
+  | .ok items => match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ (.builtin (.typeOf _ (.name _ "x" (.local _))))
+        [.ret _ (some (.atStruct _ (.name _ "x" (.local _))))]) => true
     | _ => false
   | .error _ => false
 

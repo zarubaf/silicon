@@ -568,6 +568,8 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard ex "@TypeOf(a.b, c)" == "error S001 1:15"
 #guard ex "(f(a, b))" == "(call (name \"f\") ((name \"a\") (name \"b\")))"
 #guard ex "@Struct(T)" == "(builtin Struct ((name \"T\")))"
+#guard ex "@Struct()" == "error S001 1:15"
+#guard ex "@Struct(a, b)" == "error S001 1:15"
 #guard ex "@ports(M)" == "error S004 1:14"
 #guard ex "@field(x, \"f\")" == "(builtin field ((name \"x\") (str \"f\")))"
 #guard ex "@TypeOf(x)" == "(builtin TypeOf ((name \"x\")))"
@@ -826,6 +828,11 @@ def helper : Item :=
 #guard roundtrip
   [.module p (nm "M") [] none [.mem p (nm "m") (uint (n 8)) (bin .add (v "N") (n 1))]]
 #guard roundtrip []
+#guard roundtrip [.alias p (nm "R") (.builtin p .struct [v "fs"]),
+  .const p (nm "X") (.index p (.builtin p .typeOf [v "a"]) [n 8]) (.builtin p .struct [v "fs"]),
+  .fn p false (nm "f") [⟨p, .none, nm "x", .builtin p .typeOf [v "a"]⟩]
+    (.tuple p [.builtin p .typeInfo [v "T"], .array p (.builtin p .field [v "a", n 0]) (n 2)])
+    [.local p false (nm "y") (some (.builtin p .struct [.array p []])) (v "x")]]
 
 /-! Parse, print, and parse again. The second parse gives the AST of the first. -/
 def reparse (s : String) : Bool :=
@@ -1023,6 +1030,33 @@ name has the limit of a string in a message (section 5.5).
 #guard stFails "let y: @ports(u) = x;" .S004 8
 #guard message "const X: T = @ports(u);" == "a builtin is not supported yet"
 #guard message "const X: @ports(y) = 1;" == "a builtin is not supported yet"
+
+/-!
+Each builtin can stand in a type position (F39). The parser reads it as in an expression, with
+the same checks of its operands, then the suffixes of a type. Thus an index after it parses, and
+pass 4 rejects it. A `(` after it is a type function call.
+-/
+#guard st "let y: @TypeOf(x) = x;" ==
+  "(local false \"y\" (some (builtin TypeOf ((name \"x\")))) (name \"x\"))"
+#guard st "let y: [@field(x, 0); 2] = x;" ==
+  "(local false \"y\" (some (array (builtin field ((name \"x\") (num 0))) (num 2))) " ++
+    "(name \"x\"))"
+#guard st "let y: @TypeOf(x)[8] = x;" ==
+  "(local false \"y\" (some (index (builtin TypeOf ((name \"x\"))) ((num 8)))) (name \"x\"))"
+#guard st "type R = @Struct(fs);" == "(alias \"R\" (builtin Struct ((name \"fs\"))))"
+#guard dump "fn f() -> @Struct(x) {}" ==
+  "(fn false \"f\" () (builtin Struct ((name \"x\"))) ())\n"
+#guard dump "fn f() -> @typeInfo(x) {}" ==
+  "(fn false \"f\" () (builtin typeInfo ((name \"x\"))) ())\n"
+#guard dump "fn f() -> @field(x, \"f\") {}" ==
+  "(fn false \"f\" () (builtin field ((name \"x\") (str \"f\"))) ())\n"
+#guard dump "fn f(x: UInt[8]) -> (@TypeOf(x), fn (@Struct(fs)) -> Bool) {}" ==
+  "(fn false \"f\" ((param none \"x\" (index (name \"UInt\") ((num 8))))) " ++
+    "(tuple ((builtin TypeOf ((name \"x\"))) (fn ((fnparam false " ++
+    "(builtin Struct ((name \"fs\"))))) (name \"Bool\")))) ())\n"
+#guard fails "fn f() -> @TypeOf(x)(1) {}" .S004 1 21
+#guard fails "fn f() -> @Struct() {}" .S001 1 12
+#guard fails "fn f() -> @TypeOf(1) {}" .S001 1 19
 
 /-!
 An `@field` selection of a place is a place: it is a target, and a statement starts with it.
