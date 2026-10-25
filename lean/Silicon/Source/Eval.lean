@@ -2662,6 +2662,23 @@ def placeStep (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty
     | none, none => w.ty?
   return (k, w, ty)
 
+/-! A list, static or a node. -/
+def Val.isList : Val → Bool
+  | .static (.list ..) | .agg (.list ..) => true
+  | _ => false
+
+/-!
+The steps `sels` of a place from the part `cur` with the type `ty`, once from the root outward
+(`placeStep`). `keys` holds the number of each part so far, and `inList` tells whether a step
+selected in a list. The result is the part, its type, the numbers, and `inList`.
+-/
+def placeWalk (ev : Resolve.Expr → M (Option Out)) (cur : Val) (ty : Option Ty)
+    (keys : Array Nat) (inList : Bool) : List Sel → M (Val × Option Ty × List Nat × Bool)
+  | [] => pure (cur, ty, keys.toList, inList)
+  | sel :: rest => do
+    let (k, w, t) ← placeStep ev cur ty sel
+    placeWalk ev w t (keys.push k) (inList || cur.isList) rest
+
 /-! The value of the root `root` of a `:=` target. A local gives its value with no charge. -/
 def targetRoot (ev : Resolve.Expr → M (Option Out)) (root : Resolve.Expr) : M Val := do
   match root with
@@ -3161,17 +3178,8 @@ mutual
     let some (id, slot, x) := ← place root
       | fail code p "the root of a place is a `let mut` local"
     pend p x id
-    let mut cur := slot.value
-    let mut ty := slot.ty
-    let mut keys : Array Nat := #[]
-    let mut inList := false
-    for sel in sels do
-      let (k, w, t) ← placeStep (eval n) cur ty sel
-      ty := t
-      inList := inList || cur matches .static (.list ..) | .agg (.list ..)
-      cur := w
-      keys := keys.push k
-    return ⟨id, slot, x, ty, cur, keys.toList, inList⟩
+    let (cur, ty, keys, inList) ← placeWalk (eval n) slot.value slot.ty #[] false sels
+    return ⟨id, slot, x, ty, cur, keys, inList⟩
   termination_by (n + 1, 0)
 
   /-- The values of the arguments `xs` in the order of the parameters, by `bound b`. -/

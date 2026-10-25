@@ -1103,6 +1103,15 @@ theorem placeStep_f {ev ev' : Resolve.Expr → M (Option Out)}
   follows [he, need_f, static_f, pickKey_f, selectKey_f, fieldKey_f, staticValue_f, fieldKeyOf_f,
     fieldKeyBy_f]
 
+theorem placeWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
+    (he : ∀ e, Follows cap (ev e) (ev' e)) :
+    ∀ (v : Val) (t : Option Ty) (ks : Array Nat) (l : Bool) (sels : List Sel),
+      Follows cap (placeWalk ev v t ks l sels) (placeWalk ev' v t ks l sels)
+  | v, t, ks, l, [] => by rw [placeWalk, placeWalk]; follows
+  | v, t, ks, l, sel :: rest => by
+    rw [placeWalk, placeWalk]
+    follows [placeStep_f he, placeWalk_f he]
+
 end helpers
 
 /-!
@@ -1153,7 +1162,7 @@ theorem name_f (he : ∀ e, Follows m (eval k e) (eval m e))
 theorem placeAt_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p : Pos) (c : ErrorCode)
     (t : Resolve.Expr) : Follows m (placeAt k p c t) (placeAt m p c t) := by
   rw [placeAt.eq_def k, placeAt.eq_def m]
-  follows [place_f, pend_f, placeStep_f he]
+  follows [place_f, pend_f, placeWalk_f he]
 
 theorem args_f (he : ∀ e, Follows m (eval k e) (eval m e)) (b : Nat)
     (xs : List Resolve.Expr) : Follows m (args k b xs) (args m b xs) := by
