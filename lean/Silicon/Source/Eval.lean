@@ -2881,6 +2881,15 @@ def operand (p : Pos) (x : Resolve.Expr) (v : Val) : M Val := do
   argHw x.pos w
   return w
 
+/-!
+An element of a literal at `pos` (`element`). In an open builtin argument, an element that reads
+an own output to a hardware value is `S011` at `pos` (section 9.4).
+-/
+def argElement (pos : Pos) (v : Val) : M (Part × Option Pos) := do
+  let e ← element pos v
+  if let (.value a, _) := e then argHw pos a.val
+  return e
+
 -- The code generator needs more than the default heartbeats for the cases of this block.
 set_option maxHeartbeats 400000 in
 mutual
@@ -2981,13 +2990,13 @@ mutual
         | .field p b f => return some (← fieldPart p (← need b (← onPlace place (eval n b))) f)
         | .unit p => do charge p Value.unit.size; return some ⟨.static .unit, false, none⟩
         | .tuple p xs => do
-          let es ← operands n xs fun x o => element x.pos o.value
+          let es ← operands n xs fun x o => argElement x.pos o.value
           match waiting es with
           | some q => return some ⟨.pending q (.tuple p (es.map (·.1))), false, none⟩
           | none => return some ⟨(← tupleOf p (values es)).val, false, none⟩
         | .array p [] => do charge p 1; return some ⟨.pending p (.empty p), false, none⟩
         | .array p xs => do
-          let es ← operands n xs fun x o => element x.pos o.value
+          let es ← operands n xs fun x o => argElement x.pos o.value
           match waiting es with
           | some q => return some ⟨.pending q (.array p (es.map (·.1))), false, none⟩
           | none => return some ⟨(← arrayOf p (values es)).val, false, none⟩
@@ -3151,7 +3160,11 @@ mutual
       let o ← need c (← onPlace place (eval n c))
       match ← childSel (eval n) p q o f x with
       | some r => return (r, true)
-      | none => return (← fieldPart q o f, false)
+      | none => do
+        let r ← fieldPart q o f
+        -- The field node has its value here, before the key (section 9.4).
+        unless place do argHw q r.value
+        return (r, false)
     | b => do return (← need b (← onPlace place (eval n b)), false)
   termination_by (n + 1, 0)
 
