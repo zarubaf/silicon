@@ -2030,8 +2030,8 @@ fn a_missing_name_pays_before_the_look_up_fails() {
     }
 }
 
-/// The program of a write or a read through a key that a later key with a call changes. `key`
-/// is the key, and `change` the function that sets it to `"b"` (a `mut` formal).
+/// The program of a write or a read through a key that a later key with a call changes. `body` is
+/// the statement under test, and `g` sets its `mut` formal to `"b"`.
 fn changed(body: &str) -> String {
     format!(
         "struct P {{\n    a: [UInt[4]; 1],\n    b: [UInt[4]; 1],\n}}\n\
