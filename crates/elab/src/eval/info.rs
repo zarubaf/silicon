@@ -50,25 +50,61 @@ impl Num<'_> {
 }
 
 /// The names of the fields of a type: the positions of a tuple, or the declared names of a
-/// struct. A name is an identifier, so its length in bytes is its length in characters.
+/// struct. `info_of` checks that a struct has one name for each field type.
 #[derive(Clone, Copy)]
 enum Names<'v> {
     Index,
     Declared(&'v [StructField]),
 }
 
-impl Names<'_> {
-    fn len(&self, k: usize) -> u64 {
+impl<'v> Names<'v> {
+    /// The names in the order of the field types.
+    fn iter(self) -> NameIter<'v> {
         match self {
-            Names::Index => k.checked_ilog10().map_or(1, |d| u64::from(d) + 1),
-            Names::Declared(fs) => fs.get(k).map_or(0, |f| f.name.name.len() as u64),
+            Names::Index => NameIter::Index(0),
+            Names::Declared(fs) => NameIter::Declared(fs.iter()),
+        }
+    }
+}
+
+enum NameIter<'v> {
+    Index(usize),
+    Declared(std::slice::Iter<'v, StructField>),
+}
+
+impl<'v> Iterator for NameIter<'v> {
+    type Item = FieldName<'v>;
+
+    fn next(&mut self) -> Option<FieldName<'v>> {
+        match self {
+            NameIter::Index(k) => {
+                *k += 1;
+                Some(FieldName::Index(*k - 1))
+            }
+            NameIter::Declared(fs) => fs.next().map(|f| FieldName::Declared(&f.name.name)),
+        }
+    }
+}
+
+/// The name of one field. A name is an identifier, so its length in bytes is its length in
+/// characters.
+enum FieldName<'v> {
+    Index(usize),
+    Declared(&'v str),
+}
+
+impl FieldName<'_> {
+    fn len(&self) -> u64 {
+        match self {
+            FieldName::Index(k) => k.checked_ilog10().map_or(1, |d| u64::from(d) + 1),
+            FieldName::Declared(n) => n.len() as u64,
         }
     }
 
-    fn text(&self, k: usize) -> String {
+    fn text(&self) -> String {
         match self {
-            Names::Index => k.to_string(),
-            Names::Declared(fs) => fs.get(k).map(|f| f.name.name.clone()).unwrap_or_default(),
+            FieldName::Index(k) => k.to_string(),
+            FieldName::Declared(n) => (*n).to_owned(),
         }
     }
 }
@@ -168,6 +204,9 @@ fn info_of<'v>(
             else {
                 return missing();
             };
+            if fields.len() != parts.types.len() {
+                return missing();
+            }
             info.names = Names::Declared(fields);
             info.fields = parts.types;
             info.length = Num::Word(parts.types.len() as u64);
@@ -217,10 +256,10 @@ impl Info<'_> {
         size += u128::from(self.element.size());
         size += u128::from(self.length.size()) + u128::from(self.width.size());
         let mut fields = ids.field.depth();
-        for (k, t) in self.fields.iter().enumerate() {
+        for (name, t) in self.names.iter().zip(self.fields) {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Reflected, 1);
-            size += 1 + (1 + u128::from(self.names.len(k))) + u128::from(t.size());
+            size += 1 + (1 + u128::from(name.len())) + u128::from(t.size());
             fields = fields.max(1 + ids.field.depth().max(1).max(t.depth()));
         }
         let mut variants = ids.variant.depth();
@@ -253,16 +292,13 @@ impl Info<'_> {
         let fields = self
             .fields
             .iter()
-            .enumerate()
-            .map(|(k, t)| {
+            .zip(self.names.iter())
+            .map(|(t, name)| {
                 #[cfg(test)]
                 crate::counters::add(crate::counters::Count::Reflected, 1);
                 #[cfg(test)]
-                crate::counters::add(crate::counters::Count::TextBytes, self.names.len(k));
-                Value::Record(
-                    ids.field,
-                    vec![Value::Str(self.names.text(k)), Value::Type(*t)],
-                )
+                crate::counters::add(crate::counters::Count::TextBytes, name.len());
+                Value::Record(ids.field, vec![Value::Str(name.text()), Value::Type(*t)])
             })
             .collect();
         let variants = self
