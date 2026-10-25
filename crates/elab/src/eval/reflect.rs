@@ -574,10 +574,7 @@ impl Evaluator<'_> {
         for key in keys {
             #[cfg(test)]
             crate::counters::add(crate::counters::Count::Queried, 1);
-            ty = match key {
-                Key::Named(n) => self.named_ty(n, ty)?,
-                key => self.ty_step(ty, key)?,
-            };
+            ty = self.ty_step(ty, key)?;
         }
         walk.part = Part::Type(ty);
         walk.known = Known::Not;
@@ -665,42 +662,42 @@ impl Evaluator<'_> {
     /// type of a struct, a selector the element type of a tuple, and an index the element type of
     /// an array or a tuple, with the range of the type. The text of an error names the part as a
     /// reference of `ty` does.
-    fn ty_step(&self, ty: TyId, key: &Key<'_>) -> Res<TyId> {
+    fn ty_step(&mut self, ty: TyId, key: &Key<'_>) -> Res<TyId> {
         match key {
             Key::Field(pos, field) => self.field_ty(ty, *pos, field),
             Key::Select(pos, lit, number) => self.select_ty(ty, (*pos, *lit), number),
-            // The caller paid the name of the step (`named_ty`).
-            Key::Named(n) => {
-                let plan = self.named_plan(n, At::Ty(ty), self.store.value(&n.key))?;
-                self.named_ty_by(n, ty, &plan)
-            }
-            Key::Index(pos, key_pos, index) => {
-                let part = match self.tys.get(ty) {
-                    Ty::Array(elem, count) => {
-                        Self::within(*key_pos, count.to_u64().unwrap_or(u64::MAX), index)?;
-                        Some(*elem)
-                    }
-                    Ty::Tuple(parts) => {
-                        let at = Self::within(*key_pos, parts.len() as u64, index)?;
-                        parts.get(at).copied()
-                    }
-                    _ => None,
-                };
-                part.map_or_else(
-                    || {
-                        fail(
-                            Code::S010,
-                            *pos,
-                            format!(
-                                "an index needs an array, a list, or a tuple, not {}",
-                                self.query_part_text(ty)
-                            ),
-                        )
-                    },
-                    Ok,
-                )
-            }
+            Key::Named(n) => self.named_ty(n, ty),
+            Key::Index(pos, key_pos, index) => self.index_ty(ty, (*pos, *key_pos), index),
         }
+    }
+
+    /// The index `index` at the node `pos`, with its key at `key_pos`, of a part of the data type
+    /// `ty`: the element type of an array or a tuple, with the range of the type.
+    fn index_ty(&self, ty: TyId, (pos, key_pos): (Pos, Pos), index: &Index) -> Res<TyId> {
+        let part = match self.tys.get(ty) {
+            Ty::Array(elem, count) => {
+                Self::within(key_pos, count.to_u64().unwrap_or(u64::MAX), index)?;
+                Some(*elem)
+            }
+            Ty::Tuple(parts) => {
+                let at = Self::within(key_pos, parts.len() as u64, index)?;
+                parts.get(at).copied()
+            }
+            _ => None,
+        };
+        part.map_or_else(
+            || {
+                fail(
+                    Code::S010,
+                    pos,
+                    format!(
+                        "an index needs an array, a list, or a tuple, not {}",
+                        self.query_part_text(ty)
+                    ),
+                )
+            },
+            Ok,
+        )
     }
 
     /// The field `field` at `pos` of a part of the data type `ty`.
@@ -745,9 +742,7 @@ impl Evaluator<'_> {
                 };
                 self.field_ty_by(ty, n.kp, f)
             }
-            super::field::Plan::Index => {
-                self.ty_step(ty, &Key::Index(n.pos, n.kp, self.index_of(&n.key)))
-            }
+            super::field::Plan::Index => self.index_ty(ty, (n.pos, n.kp), &self.index_of(&n.key)),
             // A data type is no `Instance` handle.
             super::field::Plan::Port(..) => {
                 base_error(n.base.pos(), &format!("a value of `{}`", self.tys.text(ty)))
