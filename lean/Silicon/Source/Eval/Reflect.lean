@@ -282,13 +282,26 @@ def Info.value (info : Info) (ti fi vi : Ty) : Value :=
       .record vi #[.str x, .int tag, .list .type (ps.map .type)])]
 
 /-!
+The fix `{h}` of "`@typeInfo` of a value" for the argument `v` (section 6.2). A domain has no
+type. A tuple of types names its tuple type. Each other value takes its type with `@TypeOf`.
+-/
+def typeInfoHint : Val → String
+  | .handle (.domain _) => "a domain has no type"
+  | .static (.tuple xs) =>
+    if xs.all (· matches .type _) then
+      "name the tuple type with `type T = (A, B);` and use `@typeInfo(T)`"
+    else bindHint
+  | _ => bindHint
+where
+  bindHint := "bind the value with `let x = ...;` and use `@typeInfo(@TypeOf(x))`"
+
+/-!
 The argument of `@typeInfo` at the node `pos` after it evaluated (section 6.2, **`@typeInfo`
 order**, step 3). A value that is not a `Type` is `S010`, with no copy charge.
 -/
 def typeInfoArg (pos : Pos) : Val → M Ty
   | .static (.type t) => pure t
-  | v => fail .S010 pos (s!"`@typeInfo` takes a type, not {v.about}; bind the value with " ++
-      "`let x = ...;` and use `@typeInfo(@TypeOf(x))`")
+  | v => fail .S010 pos s!"`@typeInfo` takes a type, not {v.about}; {typeInfoHint v}"
 
 /-!
 The number of fields and the variants of the type `t` at the node `p`, as the type stores them
