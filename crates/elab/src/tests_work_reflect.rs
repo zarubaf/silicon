@@ -5,7 +5,7 @@
 //! same run without them. The tests count the steps of the walks and the bytes that they copy,
 //! and not the time.
 
-use crate::tests_work_handles::{Run, passing};
+use crate::tests_work_handles::{Run, passing, run_with};
 use std::fmt::Write;
 
 /// The key of the first run of this file. It keeps the fuel of each run unique.
@@ -121,6 +121,84 @@ fn w2_the_info_of_an_enum_pays_for_its_variants_and_payloads() {
     );
 }
 
+/// The first fuel in `lo..hi` for which `done` holds on the counts of the run. The test `done`
+/// holds for more fuel when it holds for less, because a run with more fuel does more.
+fn first_fuel(src: &str, (mut lo, mut hi): (u64, u64), done: impl Fn(&Run) -> bool) -> u64 {
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if done(&run_with(mid, 1000, src)) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    lo
+}
+
+/// The module `M` with `n` lets of `@typeInfo(E)` for an enum of `v` variants, each with `p`
+/// payload types.
+fn charge_module(v: usize, p: usize, n: usize) -> String {
+    let payload = if p == 0 {
+        String::new()
+    } else {
+        format!("({})", vec!["Bool"; p].join(", "))
+    };
+    let mut decls = "enum E: UInt[8] {\n".to_owned();
+    for k in 0..v {
+        writeln!(decls, "    V{k}{payload} = {k},").unwrap();
+    }
+    decls.push_str("}\n");
+    module(&decls, "E", n)
+}
+
+/// W2, the order of the charges. The call charges the counts, then the payload counts, and only
+/// then the size, before the shape visits a part and before the build copies a name. The fuel
+/// that ends at the size charge leaves the shape done and the build undone. The fuel that ends
+/// before the shape leaves both undone. The payload charge shows in the fuel that the shape
+/// needs: an enum of `P` more payload types needs `P` more fuel before its shape starts.
+#[test]
+fn w2_the_charges_of_an_enum_come_before_the_shape_and_the_build() {
+    let (v, p) = (8, 3);
+    let heavy = (charge_module(v, p, 1), charge_module(v, p, 2));
+    let light = (charge_module(v, 0, 1), charge_module(v, 0, 2));
+    let ceiling = 100_000;
+    let whole = run_with(ceiling, 1000, &heavy.0);
+    assert_eq!(whole.error, None);
+    let shaped = whole.counts.reflected;
+    let size_fuel = first_fuel(&heavy.0, (0, ceiling), |r| r.counts.text_bytes > 0);
+    let shape_fuel = first_fuel(&heavy.0, (0, ceiling), |r| r.counts.reflected > 0);
+    let before_shape = run_with(shape_fuel - 1, 1000, &heavy.0);
+    assert!(before_shape.error.is_some());
+    assert_eq!(
+        (
+            before_shape.counts.reflected,
+            before_shape.counts.text_bytes
+        ),
+        (0, 0)
+    );
+    let at_size = run_with(size_fuel - 1, 1000, &heavy.0);
+    assert!(at_size.error.is_some());
+    assert_eq!(
+        (at_size.counts.reflected, at_size.counts.text_bytes),
+        ((v + v * p) as u64, 0),
+        "the shape visits the variants and the payloads, and the build copies no name"
+    );
+    assert_eq!(
+        shaped,
+        2 * v as u64 + (v * p) as u64,
+        "the build visits the variants"
+    );
+    // The second call starts after the first, so the fuel before its shape less the fuel of
+    // the whole run with one call holds the charges of the second call and nothing of the enum.
+    let before = |src: &(String, String), floor: u64| {
+        let one = run_with(ceiling, 1000, &src.0);
+        let shape = first_fuel(&src.1, (0, ceiling), |r| r.counts.reflected > floor);
+        shape - one.used
+    };
+    let (with, without) = (before(&heavy, shaped), before(&light, 2 * v as u64));
+    assert_eq!(with - without, (v * p) as u64, "the payload charge");
+}
+
 /// The run of a read `m[k][k]...[k]` of depth `d` over a hardware aggregate root, where each key
 /// `k` is `key`. The functions `fns` declare what `key` calls.
 fn chain_run(d: usize, (fns, key): (&str, &str), run_key: u64) -> Run {
@@ -134,9 +212,10 @@ fn chain_run(d: usize, (fns, key): (&str, &str), run_key: u64) -> Run {
     passing(KEY + run_key, 100_000, &src)
 }
 
-/// W10. A key `@typeInfo(f()).length - 1` is an index with a call. The read holds its root once for
-/// the whole chain, so the steps of the walks stay linear in the depth, and they equal those of the
-/// chain with a plain call in each key. The checks before each key run, as for any index with a call.
+/// W10. A key `@typeInfo(f()).length - 1` is an index with a call. The read holds its root once
+/// for the whole chain, so the steps of the walks stay linear in the depth, and they equal those
+/// of the chain with a plain call in each key. The checks before each key run, as for any index
+/// with a call.
 #[test]
 fn w10_a_key_with_a_call_in_a_typeinfo_argument_holds_the_root_once() {
     let info = (

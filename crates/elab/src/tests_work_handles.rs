@@ -20,7 +20,13 @@ pub(crate) struct Run {
 /// The run of the module `M` in `src` with the depth limit `depth`. The key makes the fuel
 /// budget unique, and the counts of the run are keyed by it.
 pub(crate) fn run(key: u64, depth: u64, src: &str) -> Run {
-    let fuel = 920_000_000 + key;
+    run_with(920_000_000 + key, depth, src)
+}
+
+/// The run of the module `M` in `src` with the fuel `fuel` and the depth limit `depth`. The
+/// counts of the run are keyed by the fuel, so a test that sweeps the fuel needs fuels that no
+/// other test uses.
+pub(crate) fn run_with(fuel: u64, depth: u64, src: &str) -> Run {
     let file = load(src).unwrap();
     let budget = Budget { fuel, depth };
     match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
