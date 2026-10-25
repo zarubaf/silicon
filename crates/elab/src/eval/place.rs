@@ -561,6 +561,11 @@ impl Evaluator<'_> {
                     base = self.base_data(next.pos(), base.into_out())?;
                 }
             }
+            if let Some(Sel::Index(q, _)) = rest.first()
+                && matches!(self.opnd_seen(&base), Seen::Static(Value::Type(_)))
+            {
+                return fail_type_index(*q);
+            }
         }
     }
 
@@ -648,6 +653,9 @@ impl Evaluator<'_> {
             {
                 break;
             }
+            if n > 0 && self.indexes_type(step, known) {
+                break;
+            }
             // Lean checks each step before the next key evaluates, and a key with a call can make
             // a record. So the steps before it pass their checks first, by their types, or the
             // segment ends before it and its walk checks them.
@@ -724,6 +732,15 @@ impl Evaluator<'_> {
             return Err(e);
         }
         Ok((out, keyed.keys().len(), after))
+    }
+
+    /// Whether `step` is an index with a call whose base has the type `Type`. A type takes no
+    /// index, and Lean fails that before the key evaluates, so the segment ends before the key
+    /// and the read gives the failure.
+    fn indexes_type(&self, step: &Sel<'_>, base: Option<TyId>) -> bool {
+        matches!(step, Sel::Index(..))
+            && self.has_call(step)
+            && base.is_some_and(|t| matches!(self.tys.get(t), Ty::Type))
     }
 
     /// Pushes the evaluated step `key` on a container of the type `within` onto `keyed`. An
