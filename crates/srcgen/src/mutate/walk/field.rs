@@ -6,7 +6,7 @@
 //! program has no other error.
 
 use super::super::{EFFECT_FN, Effect, Kind};
-use super::{Walk, zero};
+use super::{Spot, Walk, zero};
 use crate::program::{HExpr, SBin, SExpr, STy};
 use num_bigint::BigInt;
 
@@ -84,11 +84,11 @@ impl Walk<'_> {
             **key = int(if negative { -1 } else { FAR });
             let code = if negative { "S012" } else { "S013" };
             self.found("give @field of a container a key out of range", code);
-        } else if self.targets == 0 && self.site(Kind::FieldBase) {
+        } else if self.spot != Spot::Target && self.site(Kind::FieldBase) {
             **base = SExpr::Str("s".to_owned());
             self.found("give @field a String as its base", "S010");
         } else if let Some(def) = self.enum_names.first().cloned()
-            && self.targets == 0
+            && self.spot != Spot::Target
             && self.site(Kind::EnumField)
         {
             **base = SExpr::Zero(def, Vec::new());
@@ -132,12 +132,13 @@ impl Walk<'_> {
     }
 
     /// The sites on a hardware `@field(base, key)`, in a read or a target.
-    pub(super) fn hardware_field(&mut self, e: &mut HExpr) -> bool {
+    /// `ReadInput` has no site in a raw `let`: `S017` comes at a later use.
+    pub(super) fn hardware_field(&mut self, e: &mut HExpr, raw: bool) -> bool {
         let HExpr::FieldOf(base, key) = e else {
             return false;
         };
         let class = self.key_class(key);
-        let target = self.targets > 0;
+        let target = self.spot == Spot::Target;
         let hit = if self.site(Kind::FieldKeyType) {
             *key = SExpr::Bool(true);
             Some(("give @field a key of another type", "S010"))
@@ -160,6 +161,7 @@ impl Walk<'_> {
             *key = SExpr::Name(input);
             Some(("give @field the key of a port", Self::EVERYWHERE))
         } else if !target
+            && !raw
             && let HExpr::Name(u) = &**base
             && let Some(input) = self.child_input(u)
             && self.site(Kind::ReadInput)

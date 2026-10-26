@@ -76,13 +76,23 @@ pub(super) struct Walk<'a> {
     children: BTreeMap<String, String>,
     module_inputs: BTreeMap<String, Vec<String>>,
     diag_fns: Vec<String>,
-    /// How many targets of a `:=` the walk is in: 0 or 1.
-    targets: u8,
+    /// Where the walk is: in a value, in the target of a `:=`, or at the
+    /// initializer of a `let` with no type.
+    spot: Spot,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
     index: usize,
     stmt: usize,
+}
+
+/// The position of an expression. A raw value is checked at a later use,
+/// so its own position gives no code.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Spot {
+    Value,
+    Target,
+    Raw,
 }
 
 impl<'a> Walk<'a> {
@@ -115,7 +125,7 @@ impl<'a> Walk<'a> {
             children: BTreeMap::new(),
             module_inputs: BTreeMap::new(),
             diag_fns: Vec::new(),
-            targets: 0,
+            spot: Spot::Value,
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -420,7 +430,11 @@ impl<'a> Walk<'a> {
                 if let Some(t) = ty {
                     self.ty(t);
                 }
+                if ty.is_none() {
+                    self.spot = Spot::Raw;
+                }
                 self.hexpr(value);
+                self.spot = Spot::Value;
             }
             Stmt::StaticLet(_, _, v)
             | Stmt::MutLet(_, _, v)
@@ -449,9 +463,9 @@ impl<'a> Walk<'a> {
             Stmt::PlaceCall { place, f, arg, .. } => {
                 self.rename(f);
                 // The place is no value: a base that is no place is `S008`.
-                self.targets = 1;
+                self.spot = Spot::Target;
                 self.sexpr(place);
-                self.targets = 0;
+                self.spot = Spot::Value;
                 self.sexpr(arg);
             }
             Stmt::Assign(n, v) => {
@@ -662,9 +676,9 @@ impl<'a> Walk<'a> {
         match place {
             Place::Name(n) | Place::Field(n, _) => self.rename(n),
             Place::Path(e) => {
-                self.targets = 1;
+                self.spot = Spot::Target;
                 self.hexpr(e);
-                self.targets = 0;
+                self.spot = Spot::Value;
             }
             Place::Entry(fam, k) => {
                 self.rename(fam);
@@ -1437,9 +1451,20 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Whether the walk is at a raw value. The position is then a plain value
+    /// for the parts of the expression.
+    fn take_raw(&mut self) -> bool {
+        let raw = self.spot == Spot::Raw;
+        if raw {
+            self.spot = Spot::Value;
+        }
+        raw
+    }
+
     fn hexpr(&mut self, e: &mut HExpr) {
+        let raw = self.take_raw();
         if self.hardware_enum_eq(e)
-            || self.hardware_field(e)
+            || self.hardware_field(e, raw)
             || (matches!(e, HExpr::Static(s) if int_valued(s)) && self.arm_stage(e))
         {
             return;

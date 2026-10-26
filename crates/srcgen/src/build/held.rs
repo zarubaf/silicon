@@ -30,7 +30,6 @@
 
 use super::stat::int;
 use super::{Builder, Built, Ctx, Names};
-use crate::eval::{Env, exec_static};
 use crate::program::{MutFn, SBin, SExpr, STy, Stmt};
 use num_bigint::BigInt;
 
@@ -60,17 +59,8 @@ impl Builder {
             } else {
                 b.held_place(names)?
             };
-            // Each env runs the group, so a fault keeps it out.
-            let ok = ctx.envs.iter().all(|env| {
-                let mut env: Env = env.clone();
-                stmts
-                    .iter()
-                    .all(|s| exec_static(s, &mut env, &b.scope).is_ok())
-            });
-            if ok {
-                b.key_groups += 1;
-                out.extend(stmts);
-            }
+            b.key_groups += 1;
+            out.extend(stmts);
             Ok(())
         })
     }
