@@ -987,6 +987,10 @@ impl Evaluator<'_> {
             BuiltinArgs::TypeInfo(arg) => Ok(Some(self.type_info(pos, arg)?)),
             BuiltinArgs::Struct(arg) => Ok(Some(self.struct_builtin(pos, arg)?)),
             BuiltinArgs::Field(base, key) => self.read_key((pos, base, key), place),
+            // TODO(#346): evaluate `@ports` (the steps after the walk of its operand).
+            BuiltinArgs::Ports(_) => {
+                fail(Code::S004, pos, "`@ports` is not supported yet".to_owned())
+            }
         }
     }
 
