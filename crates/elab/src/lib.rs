@@ -384,6 +384,9 @@ mod tests_work_keys;
 mod tests_work_match;
 
 #[cfg(test)]
+mod tests_work_ports;
+
+#[cfg(test)]
 mod tests_work_query;
 
 #[cfg(test)]
