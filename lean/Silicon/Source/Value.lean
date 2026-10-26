@@ -63,7 +63,8 @@ These rules settle the open points of the spec:
   It serializes as `(instance root <name> (<argument> ...))`, the form of an `InstantiationId`.
   Its size is 1 plus the sizes of its arguments, as for a struct type.
 - A text of a type or a value in a message has at most 1024 bytes and then `...`. Each integer
-  in it is decimal up to 256 bits (section 5.5).
+  in it is decimal up to 256 bits. Each string argument in it has the limit of a string in a
+  message (`strText`, section 5.5).
 -/
 namespace Silicon.Source
 
@@ -799,7 +800,7 @@ variant. A handle type prints in its source form: `Reg[UInt[8]]`, `Mem[UInt[8], 
 
 Each walk appends to the text `o` so far. Each step, of a part and of a list of parts, first
 checks the bound: it returns `o` at once when `o` has more than `textLimit` bytes. Each piece
-that it appends is short: a string argument appends at most `textLimit + 1` characters. Thus the
+that it appends is short: a string argument has the limit of a string (`strText`). Thus the
 walk of a huge type, also of a tuple with `2^20` parts, stops soon after the bound. Each open
 step then adds its closing piece in constant work, and `boundText` cuts the text (section 5.5).
 -/
@@ -849,7 +850,7 @@ mutual
     else match v with
     | .int n => o ++ intText n
     | .bool b => o ++ Print.boolean b
-    | .str s => o ++ Print.quote (s.take (textLimit + 1)).toString
+    | .str s => o ++ Print.quote (strText s)
     | .uint _ v => o ++ intText v.toNat
     | .sint _ v => o ++ intText v.toInt
     | .type t => t.put o

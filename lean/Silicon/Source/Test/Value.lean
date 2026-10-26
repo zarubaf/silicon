@@ -531,13 +531,20 @@ example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
   == 1027
 def named (n : Nat) : Ty := .struct 0 "S" #[.str (String.ofList (List.replicate n 'a'))] Meta.static
   .user
-#guard (named 1019).text == "S[\"" ++ String.ofList (List.replicate 1019 'a') ++ "\"]"
-#guard (named 1020).text == "S[\"" ++ String.ofList (List.replicate 1020 'a') ++ "\"..."
+/-! A string argument has the limit of a string in a message (`strText`, section 5.5). -/
+#guard (named 64).text == "S[\"" ++ String.ofList (List.replicate 64 'a') ++ "\"]"
+#guard (named 65).text ==
+  "S[\"" ++ String.ofList (List.replicate 64 'a') ++ "... (65 characters)\"]"
+#guard (named 2000).text ==
+  "S[\"" ++ String.ofList (List.replicate 64 'a') ++ "... (2000 characters)\"]"
+#guard (Ty.struct 0 "S" (Array.replicate 20 (.str (String.ofList (List.replicate 65 'a'))))
+  Meta.static .user).text.utf8ByteSize == 1027
 #guard (huge 64).text.utf8ByteSize == 1027 && (huge 64).text.endsWith "(((Bool, Bo..."
 #guard (Value.tuple (Array.replicate 1000 (.uint 8 0))).text.utf8ByteSize == 1027
-#guard (Value.str (String.ofList (List.replicate 5000 'é'))).literal.utf8ByteSize == 1026
+#guard (Value.str (String.ofList (List.replicate 5000 'é'))).literal ==
+  "\"" ++ String.ofList (List.replicate 64 'é') ++ "... (5000 characters)\""
 #guard (Ty.struct 0 "S" #[.str (String.ofList (List.replicate 5000 'é'))] Meta.static .user).text ==
-  "S[\"" ++ String.ofList (List.replicate 510 'é') ++ "..."
+  "S[\"" ++ String.ofList (List.replicate 64 'é') ++ "... (5000 characters)\"]"
 #guard (Ty.array .bool (2 ^ 256)).text == "[Bool; an integer of 257 bits]"
 #guard (Ty.struct 0 "P" #[.int (-(2 ^ 300))] Meta.static .user).text ==
   "P[a negative integer of 301 bits]"
