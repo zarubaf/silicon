@@ -103,13 +103,11 @@ def tyStep (t : Ty) : QueryStep → M Ty
     | _ => fail .S010 q s!"an index needs an array, a list, or a tuple, not {partText t}"
 
 /-!
-The fix `{h}` of "String index in a query" for the query `g` (section 6.2). Only `@TypeOf` and
-`@ports` have an operand with steps.
+The fix `{h}` of "String index in a query" for the query `g` (section 6.2).
 -/
-def stringIndexHint : Builtin → String
+def stringIndexHint : QueryOp → String
+  | .typeOf => "an index of a string has the type `String`, so write `String` instead of the query"
   | .ports => "`@ports` takes an instance handle, so pass the name of an instance"
-  | .typeOf | .typeInfo | .struct | .field =>
-    "an index of a string has the type `String`, so write `String` instead of the query"
 
 /-!
 The step `s` on the value `v` that holds its parts (section 9.3). A container node gives its
@@ -121,7 +119,7 @@ walk selects in types and a `String` has no element type. The text names no valu
 string, and its fix names the query `g` (`stringIndexHint`). The result is the number of the
 part, the part, and the field type of a field.
 -/
-def valueStep (g : Builtin) (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
+def valueStep (g : QueryOp) (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
   match s, v with
   | .index _ q k, .agg (.array _ xs) | .index _ q k, .agg (.tuple _ xs)
   | .index _ q k, .agg (.list _ _ xs) => do
@@ -155,7 +153,7 @@ its type selects in the type (`tyStep`). Another part selects in its value (`val
 gives its field type as the declared type of the part. Another step gives the part of the declared
 type, else of the stored type of the container. A static tuple without a declared type has none.
 -/
-def queryStep (g : Builtin) (q : Query) (s : QueryStep) : M Query := do
+def queryStep (g : QueryOp) (q : Query) (s : QueryStep) : M Query := do
   match q with
   | .type t => return .type (← tyStep t s)
   | .value v decl =>
