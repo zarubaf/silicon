@@ -1,0 +1,13 @@
+// `@Struct([])` is a record type without fields. It has 0 bits, and `T()` is its only value.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let E = @Struct([]);
+    static_assert(data_bits(E) == 0, "bits");
+    static_assert(E() == E(), "value");
+    static_assert(E != Unit, "not unit");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

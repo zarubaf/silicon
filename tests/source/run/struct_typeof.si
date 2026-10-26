@@ -1,0 +1,13 @@
+// `@TypeOf` of a value of a generated record type gives that type, and a typed `let` accepts it.
+// TOP M()
+type G = @Struct([FieldInfo("a", UInt[8])]);
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let g = G(x);
+    let h: @TypeOf(g) = G(x +% 1);
+    static_assert(@TypeOf(h) == G, "type");
+    o := h.a;
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 250) out=(o 251)

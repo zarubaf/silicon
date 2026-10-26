@@ -1,0 +1,14 @@
+// A field of a handle type keeps the handle, as in a declared struct. The record holds the register, and the field read gives the register back.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    reg r: UInt[8] = 0;
+    r := x;
+    let G = @Struct([FieldInfo("h", Reg[UInt[8]])]);
+    let p = G(r);
+    o := read(p.h);
+}
+// STEP in=(clock$0rst true x 0) out=(o 0)
+// STEP in=(clock$0rst false x 4) out=(o 0)
+// STEP in=(clock$0rst false x 5) out=(o 4)

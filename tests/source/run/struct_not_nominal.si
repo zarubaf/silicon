@@ -1,0 +1,15 @@
+// A declared struct stays nominal. `@Struct` of its fields is another type, also with the same fields.
+// TOP M()
+struct P {
+    a: UInt[8],
+    b: Bool,
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@Struct(@typeInfo(P).fields) != P, "not nominal");
+    static_assert(@typeInfo(@Struct(@typeInfo(P).fields)).fields == @typeInfo(P).fields, "same fields");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

@@ -1,0 +1,15 @@
+// `@Struct` of a `List[FieldInfo]` builds a record type with the fields in order. The constructor, the field reads, and `data_bits` use it.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut fs = list(FieldInfo);
+    push(fs, FieldInfo("a", UInt[8]));
+    push(fs, FieldInfo("b", Bool));
+    let G = @Struct(fs);
+    static_assert(data_bits(G) == 9, "bits");
+    let g = G(x, true);
+    o := g.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

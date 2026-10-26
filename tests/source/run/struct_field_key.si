@@ -1,0 +1,13 @@
+// A field of a generated record type is reachable by `x.f` and by `@field` with a string key, and by `@TypeOf`.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let g = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)])(x, true);
+    static_assert(@TypeOf(g) == @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]), "typeof");
+    static_assert(@TypeOf(g.a) == UInt[8], "field type");
+    static_assert(@TypeOf(@field(g, "b")) == Bool, "key type");
+    o := @field(g, "a");
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

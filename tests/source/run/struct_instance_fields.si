@@ -1,0 +1,17 @@
+// A field of type `Instance[C]` is a handle field. The record holds the instance, and the field read gives the instance back.
+// TOP M()
+module C() {
+    input y: UInt[8];
+    output q: UInt[8];
+    q := y +% 1;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    u.y := x;
+    let g = @Struct([FieldInfo("u", Instance[C])])(u);
+    o := g.u.q;
+}
+// STEP in=(clock$0rst false x 3) out=(o 4)
+// STEP in=(clock$0rst false x 250) out=(o 251)

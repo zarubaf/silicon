@@ -1,0 +1,14 @@
+// `@Struct` of a `[FieldInfo; N]` gives the same type as the list with the same fields.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut fs = list(FieldInfo);
+    push(fs, FieldInfo("a", UInt[8]));
+    push(fs, FieldInfo("b", Bool));
+    static_assert(@Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]) == @Struct(fs), "list and array");
+    let g = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)])(x, false);
+    o := g.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

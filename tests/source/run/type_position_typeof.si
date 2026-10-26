@@ -1,0 +1,11 @@
+// `@TypeOf` in a type position names the type of a place. The `let` and the parameter use it.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let y: @TypeOf(x) = x +% 1;
+    let z: (@TypeOf(x), Bool) = (y, true);
+    o := z.0;
+}
+// STEP in=(x 3) out=(o 4)
+// STEP in=(x 250) out=(o 251)

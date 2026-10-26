@@ -1,0 +1,13 @@
+// A builtin inside an array type of an expression, and `@Struct([])` as a type: `[@TypeOf(Bool); 2]` is an array of the type `Type`.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert([@TypeOf(Bool); 2] == [Type; 2], "array of types");
+    let e: @Struct([]) = @Struct([])();
+    static_assert(e == @Struct([])(), "empty record");
+    let ys: [@TypeOf(x); 2] = [x, x];
+    o := ys[1];
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

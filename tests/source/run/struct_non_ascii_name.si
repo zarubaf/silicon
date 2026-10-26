@@ -1,0 +1,10 @@
+// A name with a character outside ASCII charges its number of characters, then it breaks the name rule (S022). The name has 2 characters and 3 bytes.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    // expected-error S022 @+2
+    // expected-message: `aé` is not a valid field name; use an ASCII letter or `_`, then letters, digits, or `_`
+    let g = @Struct([FieldInfo("aé", UInt[8])]);
+    o := x;
+}

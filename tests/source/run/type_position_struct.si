@@ -1,0 +1,13 @@
+// `@Struct` in a type position: the type of a `let`, a port, and a register.
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: @Struct([FieldInfo("a", UInt[8])]);
+    reg r: @Struct([FieldInfo("a", UInt[8])]) = @Struct([FieldInfo("a", UInt[8])])(0);
+    let y: @Struct([FieldInfo("a", UInt[8])]) = @Struct([FieldInfo("a", UInt[8])])(x);
+    r := y;
+    o := r;
+}
+// STEP in=(clock$0rst true x 0) out=(o.a 0)
+// STEP in=(clock$0rst false x 7) out=(o.a 0)
+// STEP in=(clock$0rst false x 9) out=(o.a 7)
