@@ -271,6 +271,12 @@ const PORT_ODDS: usize = 8;
 const OLD_KINDS: usize = 29;
 const FIELD_KINDS: usize = 11;
 const FIELD_ODDS: usize = 6;
+/// A program with a site of `EarlyStep` picks that kind in one draw in
+/// `EARLY_ODDS`. The site is rare, so the plain share of the kind would
+/// leave it nearly untested. The draw reads the digits above all the other
+/// splits, so the earlier draws keep their kinds.
+const EARLY_ODDS: usize = 4;
+const EARLY_SPLIT: usize = PORT_ODDS * FIELD_ODDS * FIELD_KINDS;
 
 /// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that
 /// no value of the type `w` bits wide has. Three kinds use it: a tag, and a
@@ -318,7 +324,11 @@ pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
     // kinds.
     let old_kinds = OLD_KINDS;
     let spare = kind as usize / PORT_ODDS;
-    let first = if kind as usize % PORT_ODDS == PORT_ODDS - 1 {
+    let early = (kind as usize / EARLY_SPLIT) % EARLY_ODDS == EARLY_ODDS - 1
+        && sites(Kind::EarlyStep, &program.items, &program.top) > 0;
+    let first = if early {
+        KINDS.len() - 1
+    } else if kind as usize % PORT_ODDS == PORT_ODDS - 1 {
         old_kinds + spare % PORT_KINDS
     } else if spare % FIELD_ODDS == FIELD_ODDS - 1 {
         old_kinds + PORT_KINDS + (spare / FIELD_ODDS) % FIELD_KINDS
