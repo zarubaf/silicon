@@ -1558,7 +1558,7 @@ const PINNED: [u64; 256] = [
 
 /// A program with no `@field` is the program of the same tape before the
 /// form existed: a form draws only from its own tape and adds only text that
-/// holds `@field`. At least 40% of the tapes hold no `@field`.
+/// holds `@field`. At least 10% of the tapes hold no `@field`.
 #[test]
 fn a_program_without_field_forms_keeps_its_text() {
     let mut kept = 0;
