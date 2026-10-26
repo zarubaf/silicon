@@ -4167,4 +4167,104 @@ progress as the argument is `S019` at the argument, before the use of `TypeInfo`
 #guard out "const T: (Bool, @TypeOf(X)) = (true, 1);\nconst X: Nat = 1;" "T" ==
   "(tuple ((bool true) (int 1)))"
 
+/-!
+`@Struct(fs)` (section 9.3). `[]` takes the type `[FieldInfo; 0]` and gives the record type
+without fields. A builtin in an array type evaluates as a type.
+-/
+#guard out "" "@Struct([])" == "(type (gstruct ()))"
+#guard out "" "[@TypeOf(Bool); 2]" == "(type (array type 2))"
+
+/-!
+A generated record type has the uses of a record type: the constructor, a field, `@field`,
+`@TypeOf` of a field, `T()`, and `data_bits`. Its constructor takes 0 or 2 arguments, and the
+arity is `S007` in pass 5.
+-/
+def gsSrc : String :=
+  "type G = @Struct([FieldInfo(\"a\", UInt[8]), FieldInfo(\"b\", Bool)]);\n" ++
+  "fn rd() -> UInt[8] { let x = G(3, true); return x.a; }\n" ++
+  "fn ty() -> Type { let x = G(3, true); return @TypeOf(x.a); }\n" ++
+  "struct P { a: UInt[8], b: Bool }\ntype T = (Bool, Bool);\n" ++
+  "struct H(comptime U: Type) { x: U }\nenum E: UInt[1] { A(G) = 0, B = 1 }\n" ++
+  "const FS: [FieldInfo; 2] = [FieldInfo(\"a\", UInt[8]), FieldInfo(\"b\", Bool)];\n"
+def gsTy : String := "(gstruct ((\"a\" (uint 8)) (\"b\" bool)))"
+#guard out gsSrc "G" == s!"(type {gsTy})"
+#guard out gsSrc "rd()" == "(uint 8 3)"
+#guard out gsSrc "@field(G(3, true), \"b\")" == "(bool true)"
+#guard out gsSrc "ty()" == "(type (uint 8))"
+#guard out gsSrc "G(3, true)" == s!"(record {gsTy} ((uint 8 3) (bool true)))"
+#guard out gsSrc "G()" == s!"(record {gsTy} ((uint 8 0) (bool false)))"
+#guard out gsSrc "data_bits(G)" == "(int 9)"
+#guard out gsSrc "G(3)" == "S007 1:1"
+#guard msg gsSrc "G(3)" == "a struct constructor takes 0 or 2 argument(s), but it has 1; pass " ++
+  "one value for each field, or none for the zero"
+
+/-!
+The identity is the entry of the field list (F38). Two equal lists give one type, and a declared
+struct stays nominal. The fields of `@typeInfo` give the generated type back.
+-/
+#guard out gsSrc "@Struct(FS) == G" == "(bool true)"
+#guard out gsSrc "@Struct(@typeInfo(P).fields) == P" == "(bool false)"
+#guard out gsSrc "@Struct(@typeInfo(G).fields) == G" == "(bool true)"
+
+/-! A generated record type is a struct argument and an enum payload type. -/
+#guard out gsSrc "H[G](G(3, true)).x.a" == "(uint 8 3)"
+#guard out gsSrc "E::A(G(5, false))" == "(enum (enum root E ()) 0 (uint 9 5))"
+
+/-!
+The name rule of each field name (`S022` at the `@`, `{kind}` = `field`). A tuple has the names
+`0` and `1`, so its fields give no generated type. A second name gives its two indices from 0.
+-/
+#guard out gsSrc "@Struct(@typeInfo(T).fields)" == "S022 1:1"
+#guard msg gsSrc "@Struct(@typeInfo(T).fields)" ==
+  "`0` is not a valid field name; use an ASCII letter or `_`, then letters, digits, or `_`"
+#guard msg "" "@Struct([FieldInfo(\"fn\", Bool)])" ==
+  "`fn` is a keyword, so it cannot be a field name; choose another name"
+#guard out "" "@Struct([FieldInfo(\"a\", Bool), FieldInfo(\"b\", Bool), FieldInfo(\"a\", Bool)])" ==
+  "S022 1:1"
+#guard msg "" "@Struct([FieldInfo(\"a\", Bool), FieldInfo(\"b\", Bool), FieldInfo(\"a\", Bool)])" ==
+  "the field `a` occurs at the indices 0 and 2 of `@Struct`; give each field its own name"
+
+/-!
+The kind check is at the argument. A user struct `FieldInfo` hides the prelude one, also as the
+element type of a list.
+-/
+#guard out "" "@Struct(1)" == "S010 1:9"
+#guard msg "" "@Struct(1)" == "`@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not a " ++
+  "value of `Int`; build each field with the prelude `FieldInfo(name, ty)`"
+def userFi : String := "struct FieldInfo { name: String, ty: Type }\n"
+#guard out userFi "@Struct([FieldInfo(\"a\", Bool)])" == "S010 1:9"
+#guard msg userFi "@Struct(list(FieldInfo))" == "`@Struct` takes the prelude `FieldInfo`, not " ++
+  "a value of `List[crate::FieldInfo]`; a user struct `FieldInfo` hides the prelude one, so " ++
+  "rename it, or take the fields from `@typeInfo(T).fields`"
+
+/-! A generated type that names itself is `S019` at the use in progress. -/
+#guard out "type R = @Struct([FieldInfo(\"a\", R)]);\n" "R" == "S019 1:34"
+#guard out "const R: Type = @Struct([FieldInfo(\"a\", R)]);\n" "R" == "S019 1:41"
+
+/-!
+The charges (section 6.2, **`@Struct` order**). After the node and the argument, the copy of
+`FS` charges 10. Each name charges 2, the type term 8, and the sums 12. `@Struct([])` is the
+first use of `FieldInfo` here: 15 units, after the node, the `[]`, and its copy. Its errors are at
+the `@`, also the depth of `[FieldInfo; 0]`.
+-/
+#guard exact gsSrc "@Struct(FS)" (1 + cost gsSrc "FS" + 10 + 2 + 2 + 8 + 12)
+#guard exact "" "@Struct([])" (1 + 2 + 1 + 15 + 1 + 4)
+#guard cost "" "FieldInfo" == 1 + 15
+#guard out "" "@Struct([])" (depth := 2) == "S015 1:1"
+#guard out "" "  @Struct([])" (depth := 1) == "S015 1:3"
+#guard (out "" "@Struct([])" (depth := 3)).startsWith "(type"
+-- A hit in the table charges as a miss: the second call of `b` makes a new entry, and the
+-- second call of `a` finds the entry of the first. Both lists have the same sizes.
+def flSrc : String := "fn fl(x: String) -> [FieldInfo; 1] { return [FieldInfo(x, Bool)]; }\n"
+#guard cost flSrc "@Struct(fl(\"a\")) == @Struct(fl(\"a\"))" ==
+  cost flSrc "@Struct(fl(\"a\")) == @Struct(fl(\"b\"))"
+#guard out flSrc "@Struct(fl(\"a\")) == @Struct(fl(\"a\"))" == "(bool true)"
+#guard out flSrc "@Struct(fl(\"a\")) == @Struct(fl(\"b\"))" == "(bool false)"
+-- A name charges its characters, not its bytes: `é` and `$` stop at one fuel.
+#guard out "" "@Struct([FieldInfo(\"é\", Bool)])" 42 == "S022 1:1"
+#guard msg "" "@Struct([FieldInfo(\"é\", Bool)])" 41 ==
+  "the fuel cannot pay 2 unit(s); 1 remain; raise --fuel"
+#guard out "" "@Struct([FieldInfo(\"$\", Bool)])" 42 == "S022 1:1"
+#guard out "" "@Struct([FieldInfo(\"$\", Bool)])" 41 == "S015 1:1"
+
 end Silicon.Source.Test.Eval
