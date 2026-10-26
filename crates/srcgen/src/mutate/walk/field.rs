@@ -5,9 +5,9 @@
 //! key, the kind of the key, and the look-up in this order, and the original
 //! program has no other error.
 
-use super::super::{EFFECT_FN, Effect, Kind};
-use super::{Spot, Walk, zero};
-use crate::program::{HExpr, SBin, SExpr, STy};
+use super::super::{EFFECT_FN, Effect, KEEP_FN, Kind};
+use super::{LOCAL, Spot, Walk, zero};
+use crate::program::{HExpr, Place, SBin, SExpr, STy, Stmt, Ty};
 use num_bigint::BigInt;
 
 /// The key that no field, element, or port has, and the key that no
@@ -98,10 +98,45 @@ impl Walk<'_> {
         {
             **key = SExpr::Name(input);
             self.found("give @field the key of a port", Self::EVERYWHERE);
+        } else if self.before.is_some()
+            && let Some(input) = self.hardware_input()
+            && self.site(Kind::KeyValue)
+        {
+            **key = SExpr::Name(LOCAL.to_owned());
+            self.local_of(HExpr::Name(input), false);
+            self.found("give @field a hardware value as its key", "S011");
         } else {
             return false;
         }
         true
+    }
+
+    /// An own input of a finite type that has bits: its value is hardware in
+    /// each run.
+    fn hardware_input(&self) -> Option<String> {
+        let finite = |t: &Ty| match t {
+            Ty::Bool => true,
+            Ty::UInt(SExpr::Int(w, _)) | Ty::SInt(SExpr::Int(w, _)) => *w > BigInt::ZERO,
+            _ => false,
+        };
+        self.typed
+            .iter()
+            .find(|(n, t)| self.inputs.contains(n) && finite(t))
+            .map(|(n, _)| n.clone())
+    }
+
+    /// The statement `let gp0 = value;` before the statement of the site: a
+    /// plain local, or a container of one child.
+    fn local_of(&mut self, value: HExpr, mutable: bool) {
+        let local = Stmt::Let {
+            name: LOCAL.to_owned(),
+            mutable,
+            ty: None,
+            value,
+        };
+        if let Some(before) = &mut self.before {
+            before.push(local);
+        }
     }
 
     /// `EarlyStep`: a key calls a function that runs a `diagnostic`, and an
@@ -139,6 +174,19 @@ impl Walk<'_> {
         };
         let class = self.key_class(key);
         let target = self.spot == Spot::Target;
+        if !target
+            && !raw
+            && self.before.is_some()
+            && let HExpr::Name(u) = &**base
+            && self.children.contains_key(u.as_str())
+            && self.site(Kind::InstanceData)
+        {
+            let child = HExpr::Name(u.clone());
+            self.local_of(HExpr::Array(vec![child]), false);
+            *e = HExpr::FieldOf(Box::new(HExpr::Name(LOCAL.to_owned())), int(0));
+            self.found("read a child as data with @field", "S010");
+            return true;
+        }
         let hit = if self.site(Kind::FieldKeyType) {
             *key = SExpr::Bool(true);
             Some(("give @field a key of another type", "S010"))
@@ -168,6 +216,13 @@ impl Walk<'_> {
         {
             *key = SExpr::Str(input);
             Some(("read an input of a child with @field", "S017"))
+        } else if self.before.is_some()
+            && let Some(input) = self.hardware_input()
+            && self.site(Kind::KeyValue)
+        {
+            *key = SExpr::Name(LOCAL.to_owned());
+            self.local_of(HExpr::Name(input), false);
+            Some(("give @field a hardware value as its key", "S011"))
         } else if target && class != Key::Text {
             self.target_key(key)
         } else {
@@ -216,14 +271,77 @@ impl Walk<'_> {
             SExpr::PortKey(..) | SExpr::Str(_) => return None,
             other => other,
         };
-        if !self.site(Kind::TargetKey) {
+        if self.site(Kind::TargetKey) {
+            *slot = SExpr::Call(EFFECT_FN.to_owned(), vec![slot.clone()]);
+            return Some((
+                "call the function that runs a diagnostic in the key of a target",
+                "S016",
+            ));
+        }
+        let root = self.counter()?;
+        if !self.site(Kind::TargetMutation) {
             return None;
         }
-        *slot = SExpr::Call(EFFECT_FN.to_owned(), vec![slot.clone()]);
+        *slot = SExpr::Call(KEEP_FN.to_owned(), vec![SExpr::Name(root), slot.clone()]);
         Some((
-            "call the function that runs a diagnostic in the key of a target",
+            "call a function that changes a root in the key of a target",
             "S016",
         ))
+    }
+
+    /// `PortPlace`: after an instance statement, a local container of the
+    /// child and an assignment to its first input through the container. A
+    /// place cannot hold a port (spec 9.3).
+    pub(super) fn port_place(&mut self, body: &mut Vec<Stmt>, i: usize) -> bool {
+        let Some(Stmt::Instance(u, m, _)) = body.get(i) else {
+            return false;
+        };
+        let Some(port) = self.module_inputs.get(m).and_then(|v| v.first()).cloned() else {
+            return false;
+        };
+        if !self.site(Kind::PortPlace) {
+            return false;
+        }
+        let u = u.clone();
+        let local = Stmt::Let {
+            name: LOCAL.to_owned(),
+            mutable: true,
+            ty: None,
+            value: HExpr::Array(vec![HExpr::Name(u.clone())]),
+        };
+        let name = format!("{LOCAL}[0].{port}");
+        let assign = Stmt::Assign(name, HExpr::Static(SExpr::Bool(true)));
+        body.insert(i + 1, assign);
+        body.insert(i + 1, local);
+        let what = format!(
+            "assign to the port {port} of {u} through a local in {}",
+            self.item
+        );
+        self.hit(what, Effect::Code(self.always.then_some("S010")));
+        true
+    }
+
+    /// `TargetBase`: the target of a `:=` becomes an `@field` on a static
+    /// integer. The target kind of the base is `S017` (spec 5.2).
+    pub(super) fn target_base(&mut self, place: &mut Place) -> bool {
+        if !self.always {
+            return false;
+        }
+        let Some(root) = self.counter() else {
+            return false;
+        };
+        if !self.site(Kind::TargetBase) {
+            return false;
+        }
+        let key = SExpr::Str("a".to_owned());
+        let base = HExpr::FieldOf(Box::new(HExpr::Name(root.clone())), key);
+        *place = Place::Path(base);
+        let what = format!("select with @field in the integer {root} as a target");
+        self.hit(
+            format!("{what} in {}", self.item),
+            Effect::Code(Some("S017")),
+        );
+        true
     }
 
     /// The first input of the module of the instance `u`.

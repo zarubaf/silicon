@@ -21,6 +21,10 @@ mod query;
 /// holds it also declares the resource.
 const DELETE_BINDING_SITES: usize = 32;
 
+/// The name of the local that a mutation of the gaps declares: a container
+/// of a child, or a hardware value.
+const LOCAL: &str = "gp0";
+
 /// A pre-order walk over the sites of one kind: items in order, then
 /// statements in order, then expressions left to right. Without a target
 /// it only counts the sites (and, for `Rename`, collects the names); with
@@ -84,6 +88,9 @@ pub(super) struct Walk<'a> {
     /// Where the walk is: in a value, in the target of a `:=`, or at the
     /// initializer of a `let` with no type.
     spot: Spot,
+    /// The statements that a hit puts before the statement under the walk, or
+    /// `None` where the walk is at no statement.
+    before: Option<Vec<Stmt>>,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
@@ -141,6 +148,7 @@ impl<'a> Walk<'a> {
             module_inputs: BTreeMap::new(),
             diag_fns: Vec::new(),
             spot: Spot::Value,
+            before: None,
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -418,13 +426,21 @@ impl<'a> Walk<'a> {
                 self.hit(what, Effect::Code(code));
                 return;
             }
+            if self.port_place(body, i) {
+                return;
+            }
+            let outer = self.before.replace(Vec::new());
             if let Some(s) = body.get_mut(i) {
                 self.stmt_parts(s);
                 if let Stmt::MutLet(n, t, _) = s {
                     self.scope.push((n.clone(), t.clone()));
                 }
             }
+            let added = mem::replace(&mut self.before, outer).unwrap_or_default();
             if self.hit.is_some() {
+                for (k, st) in added.into_iter().enumerate() {
+                    body.insert(i + k, st);
+                }
                 return;
             }
             i += 1;
@@ -520,6 +536,9 @@ impl<'a> Walk<'a> {
                 self.hexpr(v);
             }
             Stmt::Connect(place, v) => {
+                if self.target_base(place) {
+                    return;
+                }
                 self.place_parts(place);
                 self.hexpr(v);
             }

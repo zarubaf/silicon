@@ -232,6 +232,16 @@ enum Kind {
     /// The step before a key that runs a `diagnostic` gets a key out of
     /// range.
     EarlyStep,
+    /// The key of an `@field` becomes a hardware value.
+    KeyValue,
+    /// A key of a `:=` target calls a function that changes a root.
+    TargetMutation,
+    /// The target of a `:=` becomes an `@field` on a static integer.
+    TargetBase,
+    /// A child gets a local container and an assignment to its port.
+    PortPlace,
+    /// A read of a port of a child becomes the read of the child.
+    InstanceData,
     /// A builtin gets a name that is no builtin.
     BuiltinName,
     /// A builtin gets one operand more or less.
@@ -273,7 +283,7 @@ enum Kind {
     ZeroNonData,
 }
 
-const KINDS: [Kind; 63] = [
+const KINDS: [Kind; 68] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -318,6 +328,11 @@ const KINDS: [Kind; 63] = [
     Kind::ScalarKeyIndex,
     Kind::TargetKey,
     Kind::EarlyStep,
+    Kind::KeyValue,
+    Kind::TargetMutation,
+    Kind::TargetBase,
+    Kind::PortPlace,
+    Kind::InstanceData,
     Kind::BuiltinName,
     Kind::BuiltinArity,
     Kind::QueryOperand,
@@ -362,6 +377,13 @@ const EARLY_SPLIT: usize = PORT_ODDS * FIELD_ODDS * FIELD_KINDS;
 const QUERY_KINDS: usize = 19;
 const QUERY_ODDS: usize = 4;
 const QUERY_SPLIT: usize = EARLY_SPLIT * EARLY_ODDS;
+/// The kinds of the gaps of `@field` sit between those of `@field` and those
+/// of queries. A draw in `GAP_ODDS`, read from the digits above those of the
+/// queries, picks one of them, if the program has a site of one. The other
+/// draws keep the kinds that they had before.
+const GAP_KINDS: usize = 5;
+const GAP_ODDS: usize = 6;
+const GAP_SPLIT: usize = QUERY_SPLIT * QUERY_ODDS * QUERY_KINDS;
 
 /// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that
 /// no value of the type `w` bits wide has. Three kinds use it: a tag, and a
@@ -391,7 +413,7 @@ impl Kind {
             Kind::ArmEffect | Kind::TypeEffect | Kind::TargetKey | Kind::KeyEffect => format!(
                 "comptime fn {EFFECT_FN}(x: Int) -> Int {{\n    diagnostic(\"{EFFECT_FN}\", x);\n    return x;\n}}\n"
             ),
-            Kind::ArmMutation | Kind::TypeMutation | Kind::KeyMutation => {
+            Kind::ArmMutation | Kind::TypeMutation | Kind::KeyMutation | Kind::TargetMutation => {
                 format!("comptime fn {KEEP_FN}(mut n: Int, x: Int) -> Int {{\n    return x;\n}}\n")
             }
             _ => String::new(),
@@ -426,10 +448,26 @@ pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
                 })
         })
         .flatten();
+    // The kinds of the gaps come after the kinds of `@field`.
+    let gaps = OLD_KINDS + PORT_KINDS + FIELD_KINDS;
+    let gap_pick = (kind as usize / (GAP_SPLIT * GAP_ODDS)) % GAP_KINDS;
+    let gap = ((kind as usize / GAP_SPLIT) % GAP_ODDS == GAP_ODDS - 1)
+        .then(|| {
+            (0..GAP_KINDS)
+                .map(|i| gaps + (gap_pick + i) % GAP_KINDS)
+                .find(|&i| {
+                    KINDS
+                        .get(i)
+                        .is_some_and(|&k| sites(k, &program.items, &program.top) > 0)
+                })
+        })
+        .flatten();
     let first = if early {
         OLD_KINDS + PORT_KINDS + FIELD_KINDS - 1
     } else if let Some(query) = query {
         query
+    } else if let Some(gap) = gap {
+        gap
     } else if kind as usize % PORT_ODDS == PORT_ODDS - 1 {
         old_kinds + spare % PORT_KINDS
     } else if spare % FIELD_ODDS == FIELD_ODDS - 1 {
