@@ -36,7 +36,7 @@ use num_bigint::BigInt;
 
 /// One statement of a frame in this many is followed by a group, and the
 /// most groups of one program.
-const GROUP_ODDS: u32 = 6;
+const GROUP_ODDS: u32 = 14;
 const MAX_GROUPS: u32 = 4;
 /// The slots of `key_fns`: the key function, the key function with a
 /// `diagnostic`, and the function that a place passes its part to.
@@ -143,6 +143,7 @@ impl Builder {
             SExpr::Index(Box::new(first), Box::new(call))
         };
         note!(self, held_groups);
+        note!(self, field_name_keys);
         note!(self, early_groups, early);
         let shown = SExpr::Tuple(vec![name(&got), name(&key)]);
         Ok(vec![
@@ -191,6 +192,7 @@ impl Builder {
         };
         note!(self, place_groups);
         note!(self, held_place_groups, held);
+        note!(self, field_name_keys, held);
         note!(self, early_groups, held && early);
         let arg = int(i64::from(self.tape.between(0, 6)));
         let shown = SExpr::Tuple(vec![name(&got), name(&cont), name(&key)]);
