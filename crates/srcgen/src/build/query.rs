@@ -31,7 +31,7 @@ use super::reflect::{self, RTy};
 use super::{Builder, Built, Ctx, Lane, Module, Names};
 use crate::eval::Value;
 use crate::program::{
-    FnTy, HBin, HExpr, Place, QExpr, Query, SBin, SExpr, STy, Scalar, Stmt, Ty, Un, string,
+    FnTy, HBin, HExpr, Place, QExpr, Query, SBin, SExpr, STy, Scalar, Stmt, Ty, Un, sexpr, string,
 };
 use num_bigint::BigInt;
 use std::collections::BTreeSet;
@@ -50,7 +50,7 @@ pub(super) struct Op {
 
 /// One statement of a frame in this many is followed by a group, and the
 /// most groups of a program.
-const GROUP_ODDS: u32 = 3;
+const GROUP_ODDS: u32 = 2;
 const MAX_GROUPS: u32 = 10;
 /// The most groups at the end of a module body.
 const TAIL: u32 = 2;
@@ -60,6 +60,11 @@ const MIX_ODDS: u32 = 3;
 const WIDTH_ODDS: u32 = 1;
 /// The most steps of a place and of a type value.
 const STEPS: u32 = 3;
+/// The most text that the queries of a program add, in bytes: the largest
+/// program stays below its cap.
+const QUERY_BYTES: usize = 1700;
+/// A group uses a generated type in this many groups, if there is one.
+const STRUCT_ODDS: u32 = 3;
 /// The most low bits of a query that an unsigned output takes. A signed output
 /// takes `-(query & 1)`, which fits each `SInt`.
 const MASK_BITS: u32 = 3;
@@ -127,7 +132,14 @@ fn is(base: QExpr, text: &str) -> QExpr {
 impl Builder {
     /// Runs `f` on the query tape, isolated from the other tapes.
     pub(super) fn on_query<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
-        self.isolated(Lane::Query, f)
+        #[cfg(test)]
+        let outside = self.stats.clone();
+        let out = self.isolated(Lane::Query, f);
+        #[cfg(test)]
+        {
+            self.stats = outside.with_queries_of(&self.stats);
+        }
+        out
     }
 
     /// Makes the name `text` of the type `t` readable to the queries of the
@@ -318,6 +330,15 @@ impl Builder {
                 RTy::Static(STy::Enum(Box::new(def.clone()))),
             ));
         }
+        for g in &self.gens {
+            let rec = STy::Record(Box::new(g.rec.clone()));
+            out.push(Op {
+                text: g.def.name.clone(),
+                ty: RTy::from_static(&rec),
+                place: false,
+                paired: false,
+            });
+        }
         if let Some(record) = self.record_ty() {
             out.push(literal(record.text(), RTy::from_static(&record)));
         }
@@ -331,12 +352,12 @@ impl Builder {
         pool.extend(self.static_ops(ctx));
         pool.extend(self.root_ops());
         let kinds: BTreeSet<&str> = pool.iter().map(|op| reflect::info(&op.ty).kind).collect();
-        // A tuple, a record, and an enum have names to read, so they count
-        // twice.
+        // A tuple, a record, and an enum have names to read, and an instance
+        // is rare, so they count twice.
         let kinds: Vec<&str> = kinds
             .into_iter()
             .flat_map(|k| {
-                let names = matches!(k, "tuple" | "record" | "enum");
+                let names = matches!(k, "tuple" | "record" | "enum" | "instance");
                 std::iter::repeat_n(k, 1 + usize::from(names))
             })
             .collect();
@@ -504,9 +525,20 @@ impl Builder {
                 let widths: Vec<(SExpr, bool)> =
                     b.ops.iter().filter_map(|op| op.ty.data()).collect();
                 let copy = widths.get(b.tape.index(widths.len())).cloned();
-                let ty = match copy {
-                    Some((w, true)) if b.tape.flag() => Ty::SInt(w),
-                    Some((w, false)) if b.tape.flag() => Ty::UInt(w),
+                // A type of hardware data gives a width: `data_bits(D0)`.
+                let data: Vec<&str> = b
+                    .gens
+                    .iter()
+                    .filter(|g| g.data())
+                    .map(|g| g.def.name.as_str())
+                    .collect();
+                let bits = data
+                    .get(b.tape.index(data.len()))
+                    .map(|name| SExpr::DataBits((*name).to_owned(), Vec::new()));
+                let ty = match (copy, bits) {
+                    (_, Some(bits)) if b.tape.below(3) == 0 => Ty::UInt(bits),
+                    (Some((w, true)), _) if b.tape.flag() => Ty::SInt(w),
+                    (Some((w, false)), _) if b.tape.flag() => Ty::UInt(w),
                     _ => b.decl_ty(b.reach(ctx), &ctx.envs),
                 };
                 let types = b.types(&ty, &ctx.envs)?;
@@ -532,6 +564,7 @@ impl Builder {
                     out.push(Stmt::Wire(name.clone(), shown));
                 }
                 let driver = b.driver_at(ctx, &want, 1);
+                b.query_bytes += 40 + crate::program::hexpr(&driver).len();
                 out.push(Stmt::Connect(Place::Name(name.clone()), driver));
                 b.add_op(&name, handle);
             }
@@ -554,7 +587,15 @@ impl Builder {
     /// A static `let` of one query, and its record, if the frame can
     /// reflect something.
     fn one_group(&mut self, ctx: &Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
-        if self.queries >= MAX_GROUPS || ctx.envs.is_empty() {
+        if self.queries >= MAX_GROUPS || self.query_bytes > QUERY_BYTES || ctx.envs.is_empty() {
+            return;
+        }
+        if !self.gens.is_empty()
+            && self.tape.below(STRUCT_ODDS) == 0
+            && self.struct_group(ctx, names, out)
+        {
+            self.queries += 1;
+            self.emitted += 1;
             return;
         }
         let Some(op) = self.source(ctx) else {
@@ -575,12 +616,19 @@ impl Builder {
         note!(self, query_groups);
         #[cfg(test)]
         self.stats.query_kinds.insert(reflect::info(&t).kind);
-        let name = names.fresh("s");
-        let ty = if boolean { STy::Bool } else { STy::Nat };
         let query = SExpr::Query(Box::new(Query { form, value }));
-        out.push(Stmt::StaticLet(name.clone(), ty, query));
+        self.query_bytes += sexpr(&query).len() + 24;
         let message = self.next_message();
-        out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
+        // One group in three binds the result at its type first.
+        if self.tape.below(3) == 0 {
+            let name = names.fresh("s");
+            let ty = if boolean { STy::Bool } else { STy::Nat };
+            self.query_bytes += 24;
+            out.push(Stmt::StaticLet(name.clone(), ty, query));
+            out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
+        } else {
+            out.push(Stmt::Diagnostic(message, query));
+        }
     }
 
     /// The type `ty` of a wire or a register as a query on a name of the same
@@ -657,7 +705,7 @@ impl Builder {
     /// and a front end disagree on a type that the output reads. A name that
     /// a type position paired gets its `data_bits` mixed in first.
     pub(super) fn mix_query(&mut self, ctx: &Ctx, outputs: &mut [(String, Want, HExpr)]) {
-        if !self.query_on || outputs.is_empty() {
+        if !self.query_on || self.query_bytes > QUERY_BYTES || outputs.is_empty() {
             return;
         }
         self.on_query(|b| {
@@ -702,6 +750,7 @@ impl Builder {
                 widths.iter().copied().min().unwrap_or(1).min(MASK_BITS)
             };
             let number = SExpr::Query(Box::new(Query { form, value }));
+            b.query_bytes += sexpr(&number).len() + 24;
             let mask = int((1usize << bits) - 1);
             let low = SExpr::Binary(SBin::And, Box::new(number), Box::new(mask));
             let (op, mixed) = match ty.resolved() {
@@ -815,6 +864,30 @@ mod tests {
         for kind in KINDS {
             forms.push((format!("kind {kind}"), s.query_kinds.contains(kind)));
         }
+        let aliases = text.contains("\ntype D");
+        forms.push(("generated type".to_owned(), aliases));
+        forms.push(("struct group".to_owned(), s.struct_groups > 0));
+        for (name, seen) in [
+            ("spelling literal", text.contains("= @Struct([FieldInfo(")),
+            ("spelling empty", text.contains("= @Struct([]);")),
+            ("spelling push", text.contains("    push(fs, FieldInfo(")),
+            ("spelling struct", text.contains("= @Struct(@typeInfo(S")),
+            (
+                "spelling round trip",
+                text.contains("= @Struct(@typeInfo(D"),
+            ),
+            (
+                "identity test",
+                text.contains(".fields) == D") || text.contains(".fields) == S"),
+            ),
+            (
+                "alias test",
+                text.contains("(D0 == D") || text.contains("(D1 == D"),
+            ),
+            ("width of a generated type", text.contains("[data_bits(D")),
+        ] {
+            forms.push((format!("generated {name}"), seen));
+        }
         forms
     }
 
@@ -842,7 +915,8 @@ mod tests {
             "{any} programs"
         );
         for (form, n) in &with {
-            let floor = if form.starts_with("root ") || form.starts_with("kind ") {
+            let detail = ["root ", "kind ", "generated "];
+            let floor = if detail.iter().any(|d| form.starts_with(d)) {
                 TAPES / 32
             } else {
                 TAPES / 10

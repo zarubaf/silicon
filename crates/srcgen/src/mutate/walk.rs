@@ -256,7 +256,7 @@ impl<'a> Walk<'a> {
         self.typed.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
-            Item::HwFnValue { .. } => {}
+            Item::HwFnValue { .. } | Item::Alias { .. } => {}
             Item::Enum(def) => self.enum_item(def),
             Item::ListFn(f) => self.sexpr(&mut f.element),
             Item::MutFn(f) => {
@@ -1719,7 +1719,7 @@ fn item_name(item: &Item) -> &str {
         | Item::HwFnValue { name, .. }
         | Item::Module { name, .. } => name,
         Item::ComptimeFn(f) => &f.name,
-        Item::Struct(def) => &def.name,
+        Item::Struct(def) | Item::Alias { def, .. } => &def.name,
         Item::Enum(def) => &def.name,
         Item::ListFn(f) => &f.name,
         Item::MutFn(f) => &f.name,
