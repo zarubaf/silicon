@@ -890,42 +890,41 @@ impl Builder {
     /// `old != ((query & 1) == 1)` for a `Bool`. The twin writes the result
     /// of the query, so its outputs differ from the program if the generator
     /// and a front end disagree on a type that the output reads. A name that
-    /// a type position paired gets its `data_bits` mixed in first.
+    /// a type position paired in the body of the module gets its `data_bits`
+    /// mixed in first. A pair of a nested frame ends with the frame, so no
+    /// mix reads it.
     pub(super) fn mix_query(&mut self, ctx: &Ctx, outputs: &mut [(String, Want, HExpr)]) {
         if !self.query_on || outputs.is_empty() {
             return;
         }
         self.on_query(|b| {
             let paired: Vec<Op> = b.ops.iter().filter(|op| op.paired).cloned().collect();
-            // A paired name always mixes: the type position is the reason.
+            // A paired name always mixes, and mixes its `data_bits`: the type
+            // position is the reason.
             if paired.is_empty() && (b.query_bytes > QUERY_BYTES || b.tape.below(MIX_ODDS) != 0) {
                 return;
             }
             let at = b.tape.index(outputs.len());
-            let from_pair = !paired.is_empty() && b.tape.below(4) != 0;
-            let (form, value) = match paired.get(b.tape.index(paired.len())) {
-                Some(op) if from_pair => {
-                    let (tq, t) = b.type_value(op, true);
-                    let Some(bits) = reflect::data_bits(&t) else {
+            let (form, value) = if let Some(op) = paired.get(b.tape.index(paired.len())) {
+                let (tq, t) = b.type_value(op, true);
+                let Some(bits) = reflect::data_bits(&t) else {
+                    return;
+                };
+                (QExpr::Call("data_bits", Box::new(tq)), bits)
+            } else {
+                let kid = b.kids.get(b.tape.index(b.kids.len())).cloned();
+                let ports = match kid {
+                    Some(kid) if b.tape.below(3) == 0 => b.ports_read(&kid, true),
+                    _ => None,
+                };
+                if let Some(read) = ports {
+                    read
+                } else {
+                    let Some(op) = b.source(ctx) else {
                         return;
                     };
-                    (QExpr::Call("data_bits", Box::new(tq)), bits)
-                }
-                _ => {
-                    let kid = b.kids.get(b.tape.index(b.kids.len())).cloned();
-                    let ports = match kid {
-                        Some(kid) if b.tape.below(3) == 0 => b.ports_read(&kid, true),
-                        _ => None,
-                    };
-                    if let Some(read) = ports {
-                        read
-                    } else {
-                        let Some(op) = b.source(ctx) else {
-                            return;
-                        };
-                        let (tq, t) = b.type_value(&op, false);
-                        b.size(&tq, &t, true)
-                    }
+                    let (tq, t) = b.type_value(&op, false);
+                    b.size(&tq, &t, true)
                 }
             };
             let Some((_, want, driver)) = outputs.get_mut(at) else {
@@ -965,7 +964,7 @@ impl Builder {
             let old = std::mem::replace(driver, HExpr::Unit);
             *driver = HExpr::Binary(op, Box::new(old), Box::new(mixed));
             note!(b, query_mixes);
-            note!(b, query_pairs, from_pair);
+            note!(b, query_pairs, !paired.is_empty());
             b.emitted += 1;
         });
     }
