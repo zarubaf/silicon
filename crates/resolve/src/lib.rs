@@ -173,6 +173,12 @@ impl Resolved {
         self.users + prelude::FIELD_INFO
     }
 
+    /// The index in [`Resolved::ast`] of the prelude struct `PortInfo`. It always exists.
+    #[must_use]
+    pub fn port_info_struct(&self) -> usize {
+        self.users + prelude::PORT_INFO
+    }
+
     /// The syntax depth of the parse, which sizes the stack of each pass over the AST.
     #[must_use]
     pub fn depth(&self) -> usize {

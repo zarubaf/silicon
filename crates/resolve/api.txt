@@ -17,6 +17,7 @@ method resolve::Resolved::depth
 method resolve::Resolved::field_info_struct
 method resolve::Resolved::is_prelude_item
 method resolve::Resolved::item
+method resolve::Resolved::port_info_struct
 method resolve::Resolved::prelude_struct
 method resolve::Resolved::receiver
 method resolve::Resolved::site
