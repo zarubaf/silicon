@@ -129,6 +129,10 @@ pub(crate) struct Counts {
     /// The type nodes that a walk into a type visited: the zero value, the length of the text,
     /// the text, and the serialization.
     pub type_nodes: u64,
+    /// The compares of two field symbols in the member map of a generated record type.
+    pub mapped: u64,
+    /// The field pairs that the look-up of a generated record type compared in its bucket.
+    pub matched: u64,
 }
 
 impl Counts {
@@ -188,6 +192,8 @@ impl Counts {
             checked,
             reflected,
             type_nodes,
+            mapped,
+            matched,
         } = *self;
         [
             scanned,
@@ -241,6 +247,8 @@ impl Counts {
             checked,
             reflected,
             type_nodes,
+            mapped,
+            matched,
         ]
         .iter()
         .fold(0u64, |a, n| a.saturating_add(*n))
@@ -301,6 +309,8 @@ pub(crate) enum Count {
     Checked,
     Reflected,
     TypeNodes,
+    Mapped,
+    Matched,
 }
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
@@ -395,6 +405,8 @@ pub(crate) fn add(count: Count, n: u64) {
             Count::Checked => &mut c.checked,
             Count::Reflected => &mut c.reflected,
             Count::TypeNodes => &mut c.type_nodes,
+            Count::Mapped => &mut c.mapped,
+            Count::Matched => &mut c.matched,
         };
         *field += n;
     }

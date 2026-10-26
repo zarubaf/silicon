@@ -70,10 +70,8 @@ impl Shapes {
             for (k, u) in parts.types.iter().enumerate() {
                 if full(*u) {
                     let text = match parts.names {
-                        PartNames::Struct(_) => {
-                            env.texts.get(*parts.names.order(env.order)?.get(k)?)?
-                        }
                         PartNames::Enum => *ENUM_PART_NAMES.get(k)?,
+                        _ => env.texts.get(*parts.names.order(env.order)?.get(k)?)?,
                     };
                     kids.push(Kid {
                         index: k as u64,

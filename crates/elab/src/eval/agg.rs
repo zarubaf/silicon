@@ -619,8 +619,8 @@ impl Evaluator<'_> {
     /// its name. An enum has the parts `tag` and `payload`.
     fn field_step(&self, t: TyId, k: usize, pos: Pos) -> Res<Step> {
         let sym = self.tys.parts(t).and_then(|parts| match parts.names {
-            PartNames::Struct(_) => parts.names.order(&self.syms.field_order)?.get(k).copied(),
             PartNames::Enum => [self.syms.tag, self.syms.payload].get(k).copied(),
+            _ => parts.names.order(&self.syms.field_order)?.get(k).copied(),
         });
         match sym {
             Some(sym) => Ok(Step::User(sym)),

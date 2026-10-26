@@ -17,7 +17,7 @@ use super::{ArgRec, Evaluator, GuardKind, Out, Res, at, fail, need};
 use crate::Code;
 use crate::hw::{Handle, Seen, Val};
 use crate::int::Int;
-use crate::types::{Ty, TyId, Types, Variant};
+use crate::types::{PartNames, Ty, TyId, Types, Variant};
 use crate::value::{Value, int_size};
 use core_ir::Bits;
 use parse::ast::{Builtin, Expr, Item, Pos, StructField, Variant as VariantItem};
@@ -55,6 +55,7 @@ impl Num<'_> {
 enum Names<'v> {
     Index,
     Declared(&'v [StructField]),
+    Generated(&'v [String]),
 }
 
 impl<'v> Names<'v> {
@@ -63,6 +64,7 @@ impl<'v> Names<'v> {
         match self {
             Names::Index => NameIter::Index(0),
             Names::Declared(fs) => NameIter::Declared(fs.iter()),
+            Names::Generated(ns) => NameIter::Generated(ns.iter()),
         }
     }
 }
@@ -70,6 +72,7 @@ impl<'v> Names<'v> {
 enum NameIter<'v> {
     Index(usize),
     Declared(std::slice::Iter<'v, StructField>),
+    Generated(std::slice::Iter<'v, String>),
 }
 
 impl<'v> Iterator for NameIter<'v> {
@@ -82,6 +85,7 @@ impl<'v> Iterator for NameIter<'v> {
                 Some(FieldName::Index(*k - 1))
             }
             NameIter::Declared(fs) => fs.next().map(|f| FieldName::Declared(&f.name.name)),
+            NameIter::Generated(ns) => ns.next().map(|n| FieldName::Declared(n)),
         }
     }
 }
@@ -200,14 +204,22 @@ fn info_of<'v>(
             let Some(parts) = tys.parts(t) else {
                 return missing();
             };
-            let Some(Item::Struct { fields, .. }) = parts.item().and_then(|i| file.ast().get(i))
-            else {
-                return missing();
-            };
-            if fields.len() != parts.types.len() {
-                return missing();
+            if let PartNames::Generated(g) = parts.names {
+                if g.names().len() != parts.types.len() {
+                    return missing();
+                }
+                info.names = Names::Generated(g.names());
+            } else {
+                let Some(Item::Struct { fields, .. }) =
+                    parts.item().and_then(|i| file.ast().get(i))
+                else {
+                    return missing();
+                };
+                if fields.len() != parts.types.len() {
+                    return missing();
+                }
+                info.names = Names::Declared(fields);
             }
-            info.names = Names::Declared(fields);
             info.fields = parts.types;
             info.length = Num::Word(parts.types.len() as u64);
         }
