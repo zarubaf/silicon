@@ -153,6 +153,15 @@ impl Builder {
         }
     }
 
+    /// The identity of a list of fields: the id of an earlier type with an
+    /// equal list, else a new one. Equal lists make one type in the language.
+    fn id_of(&self, fields: &[(String, FieldTy)], fresh: usize) -> usize {
+        self.gens
+            .iter()
+            .find(|g| g.def.fields == fields)
+            .map_or(fresh, |g| g.id)
+    }
+
     /// The type `G<k>`: a list of fields, a spelling, and an identity.
     fn generated_type(&mut self, k: usize) -> Built<Gen> {
         let name = format!("D{k}");
@@ -197,7 +206,8 @@ impl Builder {
                 let mut fields = g.def.fields.clone();
                 fields.swap(0, 1);
                 let form = struct_of(QExpr::Text(list_text(&fields)));
-                (fields, fresh, None, form, None)
+                let id = self.id_of(&fields, fresh);
+                (fields, id, None, form, None)
             }
             // The fields of a declared struct, which stays nominal.
             (4, _) if !self.structs.is_empty() => {
@@ -216,31 +226,28 @@ impl Builder {
                     .gens
                     .iter()
                     .find(|g| g.from.as_deref() == Some(text.as_str()))
-                    .map_or(fresh, |g| g.id);
+                    .map_or_else(|| self.id_of(&fields, fresh), |g| g.id);
                 let form = struct_of(fields_of(&text));
                 (fields, id, Some(text), form, None)
             }
             // No field.
             (5 | 9, _) => {
                 let form = struct_of(QExpr::Text("[]".to_owned()));
-                (Vec::new(), fresh, None, form, None)
+                let id = self.id_of(&[], fresh);
+                (Vec::new(), id, None, form, None)
             }
             // A list that a function builds.
             (6 | 7, _) => {
                 let fields = self.gen_fields();
                 let (call, helper) = push_helper(k, &fields);
-                (
-                    fields,
-                    fresh,
-                    None,
-                    struct_of(QExpr::Text(call)),
-                    Some(helper),
-                )
+                let id = self.id_of(&fields, fresh);
+                (fields, id, None, struct_of(QExpr::Text(call)), Some(helper))
             }
             _ => {
                 let fields = self.gen_fields();
                 let form = struct_of(QExpr::Text(list_text(&fields)));
-                (fields, fresh, None, form, None)
+                let id = self.id_of(&fields, fresh);
+                (fields, id, None, form, None)
             }
         };
         let def = StructDef {
