@@ -31,8 +31,6 @@ rust | S012 Width of a memory word | 314
 rust | S012 Memory depth out of range | 314
 rust | S010 `@ports` of a non-instance | 346
 rust | S010 String index in a query | 346
-rust | S007 Index of `@ports` in a type | 346
-rust | S007 Index of a builtin type | 346
 unlisted | S001 a comparison does not chain | 354
 unlisted | S001 a comparison does not chain; use parentheses | 354
 unlisted | S001 a parameter of a function type has no `comptime` | 354
@@ -58,13 +56,13 @@ unlisted | S002 the field `{}` is already declared | 354
 unlisted | S002 the variant `{}` is already declared in this enu | 354
 unlisted | S003 `{}` is not {} | 354
 unlisted | S003 unscannable crates/resolve/src/walk.rs | 354
+unlisted | S004 `@ports` is not supported yet | 346
 unlisted | S004 {} is not supported yet | 354
 unlisted | S005 `{}` is {}; a static position needs a static val | 354
 unlisted | S006 a `comptime fn` has no memory port call | 354
 unlisted | S006 a `comptime fn` has no {} | 354
 unlisted | S006 a module body has no `return` | 354
 unlisted | S006 only a function has `return` | 354
-unlisted | S007 a type from `{}` takes 0 argument(s), but it has | 346
 unlisted | S007 Instance[M, args] | 354
 unlisted | S007 `len` takes 1 argument(s), but it has {} | 354
 unlisted | S007 `{}` has no parameter without `comptime` for the | 354
