@@ -670,6 +670,7 @@ pub(crate) fn concrete(t: &Ty, env: &Env, scope: &Scope) -> Result<Scalar, Fault
         Ty::UInt(w) => Scalar::UInt(width(w)?),
         Ty::SInt(w) => Scalar::SInt(width(w)?),
         Ty::Enum(_) => return Err(Fault::Type),
+        Ty::Query(t, _) => concrete(t, env, scope)?,
     })
 }
 

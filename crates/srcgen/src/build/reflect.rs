@@ -58,6 +58,7 @@ impl RTy {
             Ty::UInt(w) => Some(RTy::UInt(w.clone())),
             Ty::SInt(w) => Some(RTy::SInt(w.clone())),
             Ty::Enum(_) => None,
+            Ty::Query(t, _) => RTy::of(t),
         }
     }
 
@@ -78,6 +79,15 @@ impl RTy {
             RTy::UInt(w) | RTy::SInt(w) => reads_root(w, root),
             RTy::Reg(t) | RTy::Wire(t) | RTy::Input(t) | RTy::Mem(t, _) => t.reads(root),
             RTy::Bool | RTy::Unit | RTy::Type | RTy::Instance | RTy::Static(_) => false,
+        }
+    }
+
+    /// The hardware data type of a name, or of the element of its handle.
+    pub(super) fn data_ty(&self) -> Option<&RTy> {
+        match self {
+            RTy::Bool | RTy::UInt(_) | RTy::SInt(_) => Some(self),
+            RTy::Reg(t) | RTy::Wire(t) | RTy::Input(t) => t.data_ty(),
+            RTy::Unit | RTy::Type | RTy::Instance | RTy::Mem(..) | RTy::Static(_) => None,
         }
     }
 

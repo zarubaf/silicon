@@ -43,20 +43,26 @@ pub(super) struct Op {
     text: String,
     ty: RTy,
     place: bool,
+    /// Whether a declaration took its type from this name: the outputs then
+    /// mix in its `data_bits`.
+    paired: bool,
 }
 
 /// One statement of a frame in this many is followed by a group, and the
 /// most groups of a program.
 const GROUP_ODDS: u32 = 3;
-const MAX_GROUPS: u32 = 14;
+const MAX_GROUPS: u32 = 10;
 /// The most groups at the end of a module body.
-const TAIL: u32 = 3;
+const TAIL: u32 = 2;
 /// A module mixes a query into its outputs in this many modules.
 const MIX_ODDS: u32 = 3;
 /// A wire or a register takes a query as its width in this many.
 const WIDTH_ODDS: u32 = 1;
 /// The most steps of a place and of a type value.
 const STEPS: u32 = 3;
+/// The most low bits of a query that an unsigned output takes. A signed output
+/// takes `-(query & 1)`, which fits each `SInt`.
+const MASK_BITS: u32 = 3;
 
 /// The tags of the kinds: the true tag of a type and another one make a
 /// test that holds and a test that fails.
@@ -100,6 +106,20 @@ fn read(base: QExpr, suffix: &str) -> QExpr {
     QExpr::Read(Box::new(base), suffix.to_owned())
 }
 
+/// The text of the type of `op` in a type position: `@TypeOf(x)`, or the
+/// element of its handle. A type position takes no `.element` after a
+/// call, so the element is `@field(@typeInfo(T), "element")`.
+fn type_text(op: &Op) -> QExpr {
+    let of = builtin("TypeOf", QExpr::Text(op.text.clone()));
+    if op.ty.handled().is_none() {
+        return of;
+    }
+    QExpr::Builtin(
+        "field".to_owned(),
+        vec![builtin("typeInfo", of), QExpr::Text(string("element"))],
+    )
+}
+
 fn is(base: QExpr, text: &str) -> QExpr {
     QExpr::Eq(Box::new(base), Box::new(QExpr::Text(string(text))))
 }
@@ -118,6 +138,7 @@ impl Builder {
                 text: text.to_owned(),
                 ty,
                 place: true,
+                paired: false,
             });
         }
     }
@@ -185,6 +206,7 @@ impl Builder {
             },
             ty: RTy::from_static(ty),
             place: true,
+            paired: false,
         });
         if levels == 0 {
             return;
@@ -238,6 +260,7 @@ impl Builder {
             text,
             ty,
             place: false,
+            paired: false,
         };
         let data = RTy::UInt(int(width as usize));
         let array = STy::Array(Box::new(STy::Int), len);
@@ -247,6 +270,7 @@ impl Builder {
                 text: format!("UInt[{width}]"),
                 ty: RTy::Type,
                 place: true,
+                paired: false,
             },
             literal("Bool".to_owned(), RTy::Bool),
             literal(format!("UInt[{width}]"), data.clone()),
@@ -285,6 +309,7 @@ impl Builder {
                 text: f.name.clone(),
                 ty: RTy::from_static(&ty),
                 place: true,
+                paired: false,
             });
         }
         for def in &self.enums {
@@ -558,84 +583,128 @@ impl Builder {
         out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
     }
 
-    /// The width `w` of a wire or a register as a query on a name of the
-    /// same width, in one declaration in `WIDTH_ODDS`: the result of the
-    /// query is `w` in each env of the frame.
+    /// The type `ty` of a wire or a register as a query on a name of the same
+    /// type, in one declaration in `WIDTH_ODDS`: `@TypeOf(x)` for the whole
+    /// type, or `data_bits(@TypeOf(x))` for the width of a finite integer.
+    /// The type that the query gives is `ty` in each env of the frame. A name
+    /// that a type stands for is *paired*: `mix_query` mixes its
+    /// `data_bits` into an output, so that a wrong type shows in a vector
+    /// and not only in a check.
     pub(super) fn query_ty(&mut self, ctx: &Ctx, ty: Ty, want: &Want) -> Ty {
-        let (Ty::UInt(w) | Ty::SInt(w)) = &ty else {
-            return ty;
-        };
-        let signed = matches!(ty, Ty::SInt(_));
-        let widths: Vec<u32> = want
-            .types
-            .iter()
-            .filter_map(|t| match t {
-                Scalar::UInt(w) | Scalar::SInt(w) => Some(*w),
-                Scalar::Bool => None,
-            })
-            .collect();
-        if !self.query_on || self.ops.is_empty() || widths.len() != ctx.envs.len() {
+        if !self.query_on || self.ops.is_empty() || want.types.len() != ctx.envs.len() {
             return ty;
         }
-        let w = w.clone();
-        let query = self.on_query(|b| {
+        self.on_query(|b| {
             if b.tape.below(WIDTH_ODDS) != 0 {
-                return None;
+                return ty;
             }
-            let same = |op: &&Op| {
-                let Some((bits, is_signed)) = op.ty.data() else {
-                    return false;
-                };
-                is_signed == signed
-                    && b.values(&bits, &ctx.envs).is_some_and(|vs| {
-                        vs.iter()
-                            .zip(&widths)
-                            .all(|(v, w)| *v == Value::Int(BigInt::from(*w)))
-                    })
+            let same: Vec<usize> = (0..b.ops.len())
+                .filter(|&i| b.ops.get(i).is_some_and(|op| b.has_type(op, want, ctx)))
+                .collect();
+            let Some(&at) = same.get(b.tape.index(same.len())) else {
+                return ty;
             };
-            let ops: Vec<Op> = b.ops.iter().filter(same).cloned().collect();
-            let op = ops.get(b.tape.index(ops.len()))?;
-            let (tq, _) = b.type_value(op, true);
-            note!(b, query_widths);
+            let Some(op) = b.ops.get(at).cloned() else {
+                return ty;
+            };
+            let whole = matches!(ty, Ty::Bool) || b.tape.flag();
             b.emitted += 1;
-            Some(SExpr::Query(Box::new(Query {
-                form: QExpr::Call("data_bits", Box::new(tq)),
-                value: w,
-            })))
-        });
-        match (query, signed) {
-            (Some(q), false) => Ty::UInt(q),
-            (Some(q), true) => Ty::SInt(q),
-            (None, _) => ty,
-        }
+            if whole {
+                note!(b, query_types);
+                if let Some(paired) = b.ops.get_mut(at) {
+                    paired.paired = true;
+                }
+                return Ty::Query(Box::new(ty), type_text(&op));
+            }
+            note!(b, query_widths);
+            let (tq, _) = b.type_value(&op, true);
+            let form = QExpr::Call("data_bits", Box::new(tq));
+            match ty {
+                Ty::UInt(w) => Ty::UInt(SExpr::Query(Box::new(Query { form, value: w }))),
+                Ty::SInt(w) => Ty::SInt(SExpr::Query(Box::new(Query { form, value: w }))),
+                other => other,
+            }
+        })
     }
 
-    /// The outputs with the low bit of a query mixed into one of them, in
-    /// one module in `MIX_ODDS`: `old ^ T(query & 1)`, or `old != (query & 1) == 1`
-    /// for a `Bool`. The twin writes the result of the query, so its outputs
-    /// differ from the program if the generator and a front end disagree
-    /// on a type that the output reads.
+    /// Whether the type of `op`, or of the element of its handle, is the
+    /// wanted type in each env.
+    fn has_type(&self, op: &Op, want: &Want, ctx: &Ctx) -> bool {
+        let Some(t) = op.ty.data_ty() else {
+            return false;
+        };
+        let (width, signed) = match t {
+            RTy::Bool => {
+                return want.types.iter().all(|w| *w == Scalar::Bool);
+            }
+            RTy::UInt(w) => (w, false),
+            RTy::SInt(w) => (w, true),
+            _ => return false,
+        };
+        self.values(width, &ctx.envs).is_some_and(|vs| {
+            vs.iter().zip(&want.types).all(|(v, w)| match (v, w) {
+                (Value::Int(n), Scalar::UInt(w)) => !signed && *n == BigInt::from(*w),
+                (Value::Int(n), Scalar::SInt(w)) => signed && *n == BigInt::from(*w),
+                _ => false,
+            })
+        })
+    }
+
+    /// The outputs with the low bits of a query mixed into one of them, in
+    /// one module in `MIX_ODDS`: `old ^ T(query & mask)`, or
+    /// `old != ((query & 1) == 1)` for a `Bool`. The twin writes the result
+    /// of the query, so its outputs differ from the program if the generator
+    /// and a front end disagree on a type that the output reads. A name that
+    /// a type position paired gets its `data_bits` mixed in first.
     pub(super) fn mix_query(&mut self, ctx: &Ctx, outputs: &mut [(String, Want, HExpr)]) {
         if !self.query_on || outputs.is_empty() {
             return;
         }
         self.on_query(|b| {
-            if b.tape.below(MIX_ODDS) != 0 {
+            let paired: Vec<Op> = b.ops.iter().filter(|op| op.paired).cloned().collect();
+            if b.tape.below(MIX_ODDS) != 0 && paired.is_empty() {
                 return;
             }
             let at = b.tape.index(outputs.len());
-            let Some(op) = b.source(ctx) else {
-                return;
+            let from_pair = !paired.is_empty() && b.tape.flag();
+            let (form, value) = match paired.get(b.tape.index(paired.len())) {
+                Some(op) if from_pair => {
+                    let (tq, t) = b.type_value(op, true);
+                    let Some(bits) = reflect::data_bits(&t) else {
+                        return;
+                    };
+                    (QExpr::Call("data_bits", Box::new(tq)), bits)
+                }
+                _ => {
+                    let Some(op) = b.source(ctx) else {
+                        return;
+                    };
+                    let (tq, t) = b.type_value(&op, false);
+                    b.size(&tq, &t, true)
+                }
             };
             let Some((_, want, driver)) = outputs.get_mut(at) else {
                 return;
             };
             let Some(ty) = want.printable() else { return };
-            let (tq, t) = b.type_value(&op, false);
-            let (form, value) = b.size(&tq, &t, true);
+            let widths: Vec<u32> = want
+                .types
+                .iter()
+                .map(|t| match t {
+                    Scalar::Bool => 1,
+                    Scalar::UInt(w) | Scalar::SInt(w) => *w,
+                })
+                .collect();
+            let signed = matches!(ty.resolved(), Ty::SInt(_));
+            let bits = if signed {
+                1
+            } else {
+                widths.iter().copied().min().unwrap_or(1).min(MASK_BITS)
+            };
             let number = SExpr::Query(Box::new(Query { form, value }));
-            let low = SExpr::Binary(SBin::And, Box::new(number), Box::new(int(1)));
-            let (op, mixed) = match ty {
+            let mask = int((1usize << bits) - 1);
+            let low = SExpr::Binary(SBin::And, Box::new(number), Box::new(mask));
+            let (op, mixed) = match ty.resolved() {
                 Ty::Bool => {
                     let one = SExpr::Binary(SBin::Eq, Box::new(low), Box::new(int(1)));
                     (HBin::Ne, HExpr::Static(one))
@@ -645,11 +714,12 @@ impl Builder {
                     let negative = SExpr::Unary(Un::Neg, Box::new(low));
                     (HBin::Xor, HExpr::Make(ty, negative))
                 }
-                Ty::Enum(_) => return,
+                Ty::Enum(_) | Ty::Query(..) => return,
             };
             let old = std::mem::replace(driver, HExpr::Unit);
             *driver = HExpr::Binary(op, Box::new(old), Box::new(mixed));
             note!(b, query_mixes);
+            note!(b, query_pairs, from_pair);
             b.emitted += 1;
         });
     }
@@ -714,6 +784,8 @@ mod tests {
             ("group".to_owned(), s.query_groups > 0),
             ("width".to_owned(), s.query_widths > 0),
             ("mix".to_owned(), s.query_mixes > 0),
+            ("type position".to_owned(), s.query_types > 0),
+            ("paired output".to_owned(), s.query_pairs > 0),
             ("kind test".to_owned(), text.contains(".kind == ")),
             ("element".to_owned(), text.contains(".element")),
             (

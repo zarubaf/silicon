@@ -254,6 +254,15 @@ fn reads_root(e: &SExpr, root: &str) -> bool {
         .any(|token| token == root)
 }
 
+/// Whether a width of the type `t` names the root `root`.
+fn ty_reads_root(t: &Ty, root: &str) -> bool {
+    match t {
+        Ty::UInt(w) | Ty::SInt(w) => reads_root(w, root),
+        Ty::Bool | Ty::Enum(_) => false,
+        Ty::Query(t, _) => ty_reads_root(t, root),
+    }
+}
+
 /// A hardware name in scope: its expression (`x` or `u.q`), its type
 /// expression if one is valid here, and its concrete type in each env.
 #[derive(Clone, Debug)]
@@ -320,10 +329,7 @@ impl Ctx {
     /// a literal type or choose another name.
     fn forget(&mut self, root: &str) {
         for h in &mut self.hw {
-            let reads = h.ty.as_ref().is_some_and(|t| match t {
-                Ty::UInt(w) | Ty::SInt(w) => reads_root(w, root),
-                Ty::Bool | Ty::Enum(_) => false,
-            });
+            let reads = h.ty.as_ref().is_some_and(|t| ty_reads_root(t, root));
             if reads {
                 h.ty = None;
             }
@@ -596,6 +602,8 @@ struct Stats {
     field_entry_keys: u32,
     query_groups: u32,
     query_widths: u32,
+    query_types: u32,
+    query_pairs: u32,
     query_mixes: u32,
     /// The kinds of the types that the groups reflect.
     query_kinds: BTreeSet<&'static str>,

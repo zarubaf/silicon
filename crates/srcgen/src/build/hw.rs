@@ -47,6 +47,17 @@ pub(super) fn literal_ty(t: Scalar) -> Ty {
     }
 }
 
+/// The type of the other signedness and the same width.
+fn flipped(t: &Ty) -> Ty {
+    match t {
+        Ty::Bool => Ty::Bool,
+        Ty::UInt(w) => Ty::SInt(w.clone()),
+        Ty::SInt(w) => Ty::UInt(w.clone()),
+        Ty::Enum(name) => Ty::Enum(name.clone()),
+        Ty::Query(t, _) => flipped(t),
+    }
+}
+
 impl Want {
     pub(super) fn of(h: &Hw) -> Want {
         Want {
@@ -91,12 +102,7 @@ impl Want {
                 Scalar::SInt(w) => Scalar::UInt(*w),
             })
             .collect();
-        let ty = self.ty.as_ref().map(|t| match t {
-            Ty::Bool => Ty::Bool,
-            Ty::UInt(w) => Ty::SInt(w.clone()),
-            Ty::SInt(w) => Ty::UInt(w.clone()),
-            Ty::Enum(name) => Ty::Enum(name.clone()),
-        });
+        let ty = self.ty.as_ref().map(flipped);
         Want { types, ty }
     }
 }
