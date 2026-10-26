@@ -4164,4 +4164,40 @@ def ftPlain : String :=
   | .error e => (e.code, e.pos.line, e.pos.col) == (.S008, 9, 13)
   | .ok _ => false
 
+/-!
+The table of generated record types (section 5.6). Two equal field lists give one entry, also
+in two calls. Another list, also with the same names in another order, gives a new entry. Each
+entry takes the next number of the table of specializations, so it never shares the number of a
+struct specialization. The entry holds the member map, and `Specs.members` reads it.
+-/
+def members (ks : List (Nat × Nat)) : Std.TreeMap Nat Nat compare :=
+  ks.foldl (fun m (y, k) => m.insert y k) {}
+def ab : List (String × Ty) := [("a", .uint 8), ("b", .bool)]
+def genOnce : Eval.Specs × Ty := ({} : Eval.Specs).generate ab (members [(7, 0), (9, 1)])
+def genTwice : Eval.Specs × Ty × Ty :=
+  let (s, t) := genOnce
+  let (s, u) := s.generate ab (members [(7, 0), (9, 1)])
+  (s, t, u)
+#guard genTwice.2.1 == genTwice.2.2 && genTwice.1.entries.size == 1
+#guard genTwice.2.1 matches .struct 0 _ _ _ .gen
+def genOther : Eval.Specs × Ty := genOnce.1.generate [("b", .bool), ("a", .uint 8)] {}
+#guard genOther.1.entries.size == 2 && genOther.2 matches .struct 1 _ _ _ .gen
+#guard !genOther.2.same genOnce.2
+#guard genOnce.2.serialize == "(gstruct ((\"a\" (uint 8)) (\"b\" bool)))"
+#guard genOnce.2.depth == 2 && genOnce.2.size == 8
+#guard (({} : Eval.Specs).generate [] {}).2.text == "@Struct {}"
+#guard (genOnce.1.parts genOnce.2).map (·.toList) == some ab
+def noSyms : Eval.Syms := ⟨{}, #[], #[], #[], #[], #[]⟩
+#guard (genOnce.1.members noSyms genOnce.2).map (·.toList) == some [(7, 0), (9, 1)]
+#guard ((genOnce.1.members noSyms genOnce.2).bind (·[9]?)) == some 1
+#guard ((genOnce.1.members noSyms genOnce.2).bind (·[8]?)) == none
+
+/-! The design reads the named parts with a leaf of a generated record type from its entry. -/
+def genFields : Layout.Fields := Elab.fieldsOf genOnce.1 (Elab.leafFields genOnce.1)
+#guard (genFields genOnce.2).map (·.toList) == some [(0, "a", .uint 8), (1, "b", .bool)]
+#guard ((genOnce.1.generate [("u", .unit), ("b", .bool)] {}).2 |>
+  Elab.fieldsOf (genOnce.1.generate [("u", .unit), ("b", .bool)] {}).1
+    (Elab.leafFields (genOnce.1.generate [("u", .unit), ("b", .bool)] {}).1)).map (·.toList) ==
+  some [(1, "b", .bool)]
+
 end Silicon.Source.Test.Elab

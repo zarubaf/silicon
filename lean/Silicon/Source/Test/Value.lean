@@ -541,4 +541,71 @@ def named (n : Nat) : Ty := .struct 0 "S" #[.str (String.ofList (List.replicate 
 #guard (Value.enum (.enum 0 "E" (Meta.enum 300 0)) 300 (2 ^ 299) 0 0).literal ==
   "an integer of 300 bits"
 
+/-!
+A generated record type (origin `gen`) holds the name and the type of each field as its
+arguments. Its size is 1 plus the size of each name as a string and of each field type. The
+one field `a` of type `UInt[8]` thus gives the size 5 (section 5.4). A name counts characters,
+not bytes. Its depth is 1 plus the largest depth of a field type, and 1 without fields.
+-/
+def gen (k : Nat) (fs : List (String × Ty)) : Ty :=
+  .struct k "" (fs.flatMap fun (x, t) => [Value.str x, .type t]).toArray
+    (Meta.struct (fs.map (·.2.info)) []) .gen
+#guard (gen 0 [("a", .uint 8)]).size == 5
+#guard (gen 0 [("a", .uint 8), ("bc", .bool)]).size == 9
+#guard (gen 0 [("é", .bool)]).size == 4
+#guard (gen 0 []).size == 1
+#guard (gen 0 []).depth == 1
+#guard (gen 0 [("a", .uint 8)]).depth == 2
+#guard (gen 0 [("a", .bool), ("b", .array (.array .bool 2) 2)]).depth == 4
+#guard (gen 0 [("a", .bool), ("b", gen 1 [("c", .tuple #[.bool, .bool])])]).depth == 4
+#guard (gen 0 []).info.data && (gen 0 []).info.width == 0
+#guard (gen 0 [("a", .uint 8), ("b", .bool)]).info.width == 9
+
+/-!
+A generated record type serializes each name and field type in order, and `(gstruct ())`
+without fields (section 7.1). A record of it keeps the type, as a record of a struct does.
+-/
+#guard (gen 0 [("a", .uint 8), ("b", .bool)]).serialize ==
+  "(gstruct ((\"a\" (uint 8)) (\"b\" bool)))"
+#guard (Value.type (gen 0 [])).serialize == "(type (gstruct ()))"
+#guard (Value.type (gen 0 [("a", .uint 8)])).serialize == "(type (gstruct ((\"a\" (uint 8)))))"
+#guard (Value.record (gen 0 [("a", .uint 8), ("b", .bool)]) #[.uint 8 3, .bool false]).serialize
+  == "(record (gstruct ((\"a\" (uint 8)) (\"b\" bool))) ((uint 8 3) (bool false)))"
+#guard (gen 0 [("a\"", .bool)]).serialize == "(gstruct ((\"a\\\"\" bool)))"
+#guard (gen 3 [("a", .bool)]).serialize != (Ty.struct 3 "" #[.str "a", .type .bool]
+  (Meta.struct [Meta.bool] [])).serialize
+
+/-!
+A message prints a generated record type as `@Struct { a: UInt[8], b: Bool }`, and as
+`@Struct {}` without fields (section 6.2). Each name has the limit of a string, and the whole
+text has at most 1024 bytes and then `...`.
+-/
+#guard (gen 0 [("a", .uint 8), ("b", .bool)]).text == "@Struct { a: UInt[8], b: Bool }"
+#guard (gen 0 []).text == "@Struct {}"
+#guard (gen 0 [("a", gen 1 [("b", .bool)])]).text == "@Struct { a: @Struct { b: Bool } }"
+#guard (Ty.list (gen 0 [("a", .bool)])).text == "List[@Struct { a: Bool }]"
+#guard (Value.record (gen 0 [("a", .uint 8)]) #[.uint 8 3]).literal == "@Struct { a: UInt[8] }(3)"
+def longName (n : Nat) : String := String.ofList (List.replicate n 'a')
+#guard (gen 0 [(longName 64, .bool)]).text == "@Struct { " ++ longName 64 ++ ": Bool }"
+#guard (gen 0 [(longName 65, .bool)]).text ==
+  "@Struct { " ++ longName 64 ++ "... (65 characters): Bool }"
+#guard (gen 0 [(longName 5000, .bool)]).text ==
+  "@Struct { " ++ longName 64 ++ "... (5000 characters): Bool }"
+def wideGen (n : Nat) : Ty := gen 0 ((List.range n).map fun k => (s!"f{k}", .uint 8))
+#guard (wideGen 200).text.utf8ByteSize == 1027 && (wideGen 200).text.endsWith "..."
+#guard (wideGen 3).text == "@Struct { f0: UInt[8], f1: UInt[8], f2: UInt[8] }"
+#guard (gen 0 ((List.range 30).map fun k => (longName 60 ++ toString k, .bool))).text.utf8ByteSize
+  == 1027
+example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
+    Value.putGen o xs = o := by
+  unfold Value.putGen; simp [h]
+
+/-!
+A generated record type compares by its number, as a struct type does. A struct type with the
+same number and arguments but another origin is another type.
+-/
+#guard (gen 0 [("a", .bool)]).same (gen 0 [("a", .bool)])
+#guard !(gen 0 [("a", .bool)]).same (gen 1 [("a", .bool)])
+#guard gen 3 [("a", .bool)] != Ty.struct 3 "" #[.str "a", .type .bool] (Meta.struct [Meta.bool] [])
+
 end Silicon.Source.Test.Value
