@@ -95,6 +95,59 @@ pub enum UnOp {
     Neg,
 }
 
+/// The operands of a builtin in the form of the builtin, so no node has the wrong number of
+/// operands. The parser reports that error first.
+#[cfg_attr(test, derive(Clone, Debug, PartialEq, Eq))]
+pub enum BuiltinArgs {
+    TypeOf(Box<Expr>),
+    TypeInfo(Box<Expr>),
+    Field(Box<Expr>, Box<Expr>),
+}
+
+impl BuiltinArgs {
+    /// The builtin of the operands.
+    #[must_use]
+    pub fn builtin(&self) -> Builtin {
+        match self {
+            BuiltinArgs::TypeOf(_) => Builtin::TypeOf,
+            BuiltinArgs::TypeInfo(_) => Builtin::TypeInfo,
+            BuiltinArgs::Field(..) => Builtin::Field,
+        }
+    }
+
+    /// The operands in source order.
+    pub fn operands(&self) -> impl Iterator<Item = &Expr> {
+        let (first, second) = match self {
+            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) => (x, None),
+            BuiltinArgs::Field(b, k) => (b, Some(k)),
+        };
+        std::iter::once(&**first).chain(second.map(|k| &**k))
+    }
+
+    /// The operands of `builtin` from the list `args`, if their number is its arity.
+    pub(crate) fn of_list(builtin: Builtin, args: Vec<Expr>) -> Option<BuiltinArgs> {
+        if args.len() != builtin.arity() {
+            return None;
+        }
+        let mut args = args.into_iter().map(Box::new);
+        Some(match builtin {
+            Builtin::TypeOf => BuiltinArgs::TypeOf(args.next()?),
+            Builtin::TypeInfo => BuiltinArgs::TypeInfo(args.next()?),
+            Builtin::Field => BuiltinArgs::Field(args.next()?, args.next()?),
+        })
+    }
+
+    fn take_children(&mut self, work: &mut Vec<Pending>) {
+        match self {
+            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) => take_expr(x, work),
+            BuiltinArgs::Field(b, k) => {
+                take_expr(b, work);
+                take_expr(k, work);
+            }
+        }
+    }
+}
+
 /// A builtin of slice 4: `@TypeOf`, `@typeInfo`, and `@field`. `@Struct` and `@ports` are not
 /// names here until their phases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -269,11 +322,11 @@ pub enum Expr {
         scrut: Box<Expr>,
         arms: Vec<Arm>,
     },
-    /// The builtin `@name(args)` at the position of its `@`, with the operands in source order.
+    /// The builtin `@name(args)` at the position of its `@`. Its operands have the form of the
+    /// builtin.
     Builtin {
         pos: Pos,
-        builtin: Builtin,
-        args: Vec<Expr>,
+        args: BuiltinArgs,
     },
     /// The array type `[T; N]` in an expression.
     ArrayType {
@@ -632,7 +685,7 @@ impl Expr {
     #[must_use]
     pub fn builtin_operands(&self) -> Option<(Builtin, Vec<&Expr>)> {
         match self {
-            Expr::Builtin { builtin, args, .. } => Some((*builtin, args.iter().collect())),
+            Expr::Builtin { args, .. } => Some((args.builtin(), args.operands().collect())),
             _ => None,
         }
     }
@@ -670,7 +723,7 @@ impl Expr {
             }
             Expr::Field { base, .. } | Expr::Select { base, .. } => take_expr(base, work),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => take_exprs(elems, work),
-            Expr::Builtin { args, .. } => take_exprs(args, work),
+            Expr::Builtin { args, .. } => args.take_children(work),
             Expr::Match { scrut, arms, .. } => {
                 take_expr(scrut, work);
                 work.extend(arms.drain(..).map(|arm| Pending::Expr(arm.value)));

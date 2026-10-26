@@ -80,7 +80,9 @@ use crate::scan::{CallArgs, Numbers, Scan, Syms};
 use crate::types::{Ty, TyId, Types};
 use crate::value::{Evaluated, Value, int_size};
 use crate::{Budget, Code, Error};
-use parse::ast::{BinOp, Builtin, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr, UnOp};
+use parse::ast::{
+    BinOp, Builtin, BuiltinArgs, Expr, Ident, Item, NodeId, Pos, Stmt, TypeExpr, UnOp,
+};
 use parse::{NestedStack, StackError};
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
@@ -969,21 +971,12 @@ impl Evaluator<'_> {
             Expr::Match { pos, scrut, arms } => self.match_expr(*pos, scrut, arms),
             Expr::Builtin {
                 pos,
-                builtin: Builtin::TypeOf,
-                args,
-            } => match args.as_slice() {
-                [operand] => Ok(Some(self.type_of_builtin(*pos, operand)?)),
-                // The parser fixes the arity (`S001`), so another shape has no value here.
-                _ => Ok(None),
-            },
+                args: BuiltinArgs::TypeOf(operand),
+            } => Ok(Some(self.type_of_builtin(*pos, operand)?)),
             Expr::Builtin {
                 pos,
-                builtin: Builtin::TypeInfo,
-                args,
-            } => match args.as_slice() {
-                [arg] => Ok(Some(self.type_info(*pos, arg)?)),
-                _ => Ok(None),
-            },
+                args: BuiltinArgs::TypeInfo(arg),
+            } => Ok(Some(self.type_info(*pos, arg)?)),
             Expr::Unary { pos, op, arg } => self.unary_expr(*pos, *op, arg),
             Expr::Binary {
                 pos,
@@ -1011,7 +1004,7 @@ impl Evaluator<'_> {
             Expr::Select { .. }
             | Expr::Field { .. }
             | Expr::Builtin {
-                builtin: Builtin::Field,
+                args: BuiltinArgs::Field(..),
                 ..
             } => self.read(e, place),
             Expr::ArrayType { pos, elem, len } => {

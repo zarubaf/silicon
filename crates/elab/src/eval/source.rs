@@ -45,8 +45,8 @@ fn level(e: &Expr) -> u8 {
 }
 
 /// The elements `xs` separated by a comma and a space.
-fn args(xs: &[Expr], out: &mut String) {
-    for (i, x) in xs.iter().enumerate() {
+fn args<'a>(xs: impl IntoIterator<Item = &'a Expr>, out: &mut String) {
+    for (i, x) in xs.into_iter().enumerate() {
         if i > 0 {
             out.push_str(", ");
         }
@@ -162,13 +162,11 @@ fn expr(e: &Expr, ctx: u8, out: &mut String) {
             }
             out.push_str(" }");
         }
-        Expr::Builtin {
-            builtin, args: xs, ..
-        } => {
+        Expr::Builtin { args: xs, .. } => {
             out.push('@');
-            out.push_str(builtin.name());
+            out.push_str(xs.builtin().name());
             out.push('(');
-            args(xs, out);
+            args(xs.operands(), out);
             out.push(')');
         }
         Expr::ArrayType { elem, len, .. } => {

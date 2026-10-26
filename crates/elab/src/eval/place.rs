@@ -17,7 +17,7 @@ use crate::names::Step;
 use crate::ops::{int_text, str_text};
 use crate::types::{Ty, TyId};
 use crate::value::Value;
-use parse::ast::{Builtin, Expr, Ident, Nat, Pos};
+use parse::ast::{BuiltinArgs, Expr, Ident, Nat, Pos};
 use resolve::{DeclId, Target};
 use std::borrow::Cow;
 
@@ -286,12 +286,8 @@ pub(super) fn chain(e: &Expr) -> Option<(&Expr, Vec<Sel<'_>>)> {
             }
             Expr::Builtin {
                 pos,
-                builtin: Builtin::Field,
-                args,
+                args: BuiltinArgs::Field(base, key),
             } => {
-                let [base, key] = args.as_slice() else {
-                    return None;
-                };
                 steps.push(Sel::Key(*pos, base, key));
                 cur = base;
             }
@@ -457,12 +453,8 @@ impl Evaluator<'_> {
             Expr::Field { pos, base, field } => Some((Sel::Field(*pos, field), &**base)),
             Expr::Builtin {
                 pos,
-                builtin: Builtin::Field,
-                args,
-            } => match args.as_slice() {
-                [base, key] => Some((Sel::Key(*pos, base, key), base)),
-                _ => None,
-            },
+                args: BuiltinArgs::Field(base, key),
+            } => Some((Sel::Key(*pos, base, key), &**base)),
             _ => None,
         }
     }

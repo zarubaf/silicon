@@ -671,11 +671,14 @@ impl Walker {
                 self.expr(len);
             }
             Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
-            Expr::Tuple { elems, .. }
-            | Expr::Array { elems, .. }
-            | Expr::Builtin { args: elems, .. } => {
+            Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => {
                 for elem in elems {
                     self.expr(elem);
+                }
+            }
+            Expr::Builtin { args, .. } => {
+                for operand in args.operands() {
+                    self.expr(operand);
                 }
             }
             Expr::Path { pos, ty, variant } => self.variant_path(*pos, ty, variant),
