@@ -1,0 +1,19 @@
+// S010: `@ports` takes an instance handle, so a wire is no valid part.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    wire w: UInt[4];
+    w := x;
+    // expected-error S010 @+2
+    // expected-message: `@ports` takes an instance handle, not a handle of `Wire[UInt[4]]`; pass the name of an instance, for example `u` of `instance u = M(...);`
+    let t = @ports(w);
+    o := u.q;
+}
