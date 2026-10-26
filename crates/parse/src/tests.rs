@@ -516,9 +516,7 @@ fn later_slice_syntax_is_s004() {
         ("module M() { wire w: T in d; }", 1, 24),
         ("module M() { instance u = A() with { }; }", 1, 31),
         ("module M() { instance u = a::A(); }", 1, 28),
-        ("const X: T = @ports(M);", 1, 14),
         ("const X: T = a::b::c;", 1, 18),
-        ("const X: @ports(M) = f;", 1, 10),
         ("const X: T::U = f;", 1, 11),
         ("const X: a::T = f;", 1, 11),
         ("enum E(T): U {}", 1, 7),
@@ -883,8 +881,6 @@ fn rules_of_the_lean_parser() {
         // Another name after `@` is "Not a builtin" at the name.
         ("const X: T = @x(y);", Code::S001, 1, 15),
         ("module M() { @x(y); }", Code::S001, 1, 15),
-        // A builtin of a later phase is S004 at the `@`, whatever its arguments are.
-        ("module M() { @ports(u).a = 1; }", Code::S004, 1, 14),
         ("module M() { f(x)[0] = e; }", Code::S001, 1, 22),
         ("module M() { f(x) = e; }", Code::S001, 1, 19),
         // A third part of a path, also in parentheses: S004 at the second `::`.
@@ -2101,6 +2097,31 @@ fn builtins_are_primaries_with_their_operands() {
 }
 
 #[test]
+fn ports_takes_a_place_and_is_no_place() {
+    let cases = [
+        // `@ports(u)` is no place, so it is no target, and no selection of it is one.
+        ("module M() { @ports(u).a = 1; }", Code::S001, 1, 26),
+        ("module M() { @ports(u)[0] = 1; }", Code::S001, 1, 27),
+        ("module M() { @ports(u) = 1; }", Code::S001, 1, 24),
+        // The operand of `@ports` is a place, as for `@TypeOf`.
+        ("const X: T = @ports(1);", Code::S001, 1, 21),
+        ("const X: T = @ports(f(x));", Code::S001, 1, 21),
+        ("const X: T = @ports((a + b));", Code::S001, 1, 21),
+        ("const X: T = @ports(E::V);", Code::S001, 1, 21),
+        ("const X: T = @ports(@ports(u));", Code::S001, 1, 21),
+        ("const X: T = @ports(@field(f(x), k));", Code::S001, 1, 21),
+        ("const X: T = @ports();", Code::S001, 1, 15),
+        ("const X: T = @ports(a, b);", Code::S001, 1, 15),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(input, code, line, col)| first_error(input) != Some((*code, *line, *col)))
+        .map(|(input, ..)| (input, first_error(input)))
+        .collect();
+    assert_eq!(wrong, []);
+}
+
+#[test]
 fn a_missing_builtin_name_has_the_text_of_lean() {
     for input in ["const X: @ = 1;", "const X: T = @;"] {
         let parsed = parse(input);
@@ -2124,8 +2145,8 @@ fn a_builtin_in_a_type_and_the_struct_builtin_follow_the_rules_of_a_builtin() {
         ("const X: @TypeOf() = 1;", Code::S001, 1, 11),
         ("const X: @Struct(fs)(1) = 1;", Code::S004, 1, 21),
         ("const X: @Struct(fs $) = 1;", Code::S001, 1, 21),
-        // `@ports` is S004 in both positions.
-        ("const X: @ports(M) = f;", Code::S004, 1, 10),
+        ("const X: @ports() = 1;", Code::S001, 1, 11),
+        ("const X: @ports(1) = 1;", Code::S001, 1, 17),
     ];
     let wrong: Vec<_> = cases
         .iter()
@@ -2144,6 +2165,7 @@ fn a_builtin_stands_in_a_type_position() {
         ("@field(a, \"t\")", "(@field a \"t\")"),
         // The suffixes of a type follow the builtin.
         ("@TypeOf(x)[8]", "(index (@TypeOf x) 8)"),
+        ("@ports(u)[0]", "(index (@ports u) 0)"),
         ("@Struct(fs)[8][2]", "(index (index (@Struct fs) 8) 2)"),
         // A builtin is a type form in each type position.
         ("[@TypeOf(x); 4]", "(array (@TypeOf x) 4)"),
@@ -2203,6 +2225,10 @@ fn a_builtin_in_a_type_dumps_as_lean_prints_it() {
             "[@TypeOf(x); 4]",
             "(const \"X\" (array (builtin TypeOf ((name \"x\"))) (num 4)) (num 0))\n",
         ),
+        (
+            "@ports(u)[0]",
+            "(const \"X\" (index (builtin ports ((name \"u\"))) ((num 0))) (num 0))\n",
+        ),
     ] {
         let text = parse(&format!("const X: {ty} = 0;"))
             .dump()
@@ -2236,6 +2262,19 @@ fn a_builtin_dumps_as_lean_prints_it() {
         (
             "@field(a.b, \"c\")",
             "(builtin field ((field (name \"a\") \"b\") (str \"c\")))",
+        ),
+        ("@ports(u)", "(builtin ports ((name \"u\")))"),
+        (
+            "@ports(us[0])",
+            "(builtin ports ((index (name \"us\") ((num 0)))))",
+        ),
+        (
+            "@ports(u.a)",
+            "(builtin ports ((field (name \"u\") \"a\")))",
+        ),
+        (
+            "@ports(@field(us, 0))",
+            "(builtin ports ((builtin field ((name \"us\") (num 0)))))",
         ),
     ] {
         assert_eq!(expr_dump(input), want, "{input}");
@@ -2281,6 +2320,20 @@ fn the_text_of_a_builtin_error_equals_lean() {
         (
             "const X: T = @typeInfo(a, b);".to_owned(),
             "`@typeInfo` takes 1 argument(s), but it has 2; write `@typeInfo(T)`".to_owned(),
+        ),
+        (
+            "const X: T = @ports(a, b);".to_owned(),
+            "`@ports` takes 1 argument(s), but it has 2; write `@ports(h)`".to_owned(),
+        ),
+        (
+            "const X: T = @ports();".to_owned(),
+            "`@ports` takes 1 argument(s), but it has 0; write `@ports(h)`".to_owned(),
+        ),
+        (
+            "const X: @ports(1) = 1;".to_owned(),
+            "`@ports` takes a name or a selection of a name; bind the value with `let` and \
+             pass the name"
+                .to_owned(),
         ),
     ] {
         let errors = parse(&input).errors;
