@@ -17,14 +17,13 @@ module RegFile(comptime T: Type, comptime N: Nat) {
     input we: Bool;
     input wd: T;
     output state: [T; N];
-    static_assert(N == 2, "two entries");
-    reg rf: [T; N] = [T(), T()];
-    let mut next = [rf[0], rf[1]];
+    reg rf: [T; N] = [T; N]();
+    let mut next = [T; N]();
     comptime for k in 0..N {
         next[k] = if (we && wa == k) { wd } else { rf[k] };
     }
     rf := next;
-    state := [rf[0], rf[1]];
+    state := rf;
 }
 module Top() {
     input wa: UInt[1];
@@ -37,6 +36,7 @@ module Top() {
     input re: Bool;
     output mrd: Entry;
     output mvalid: Bool;
+    // TODO(#197): raise N when #197 is fixed.
     instance f = RegFile(Entry, 2);
     static_assert(data_bits(Entry) == 13, "entry width");
     static_assert(len(@typeInfo(Entry).fields) == 3, "three fields");
@@ -65,3 +65,7 @@ module Top() {
 // STEP in=(clock$0rst false ra 1 rb 0 re true wa 0 wd.valid true wd.tag 9 wd.data 7 we true) out=(hit false mrd.valid false mrd.tag 0 mrd.data 0 mvalid true rda.valid true rda.tag 5 rda.data 200)
 // STEP in=(clock$0rst false ra 0 rb 1 re true wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit true mrd.valid true mrd.tag 5 mrd.data 200 mvalid true rda.valid true rda.tag 9 rda.data 7)
 // STEP in=(clock$0rst false ra 1 rb 0 re false wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit true mrd.valid true mrd.tag 9 mrd.data 7 mvalid true rda.valid true rda.tag 5 rda.data 200)
+// STEP in=(clock$0rst false ra 0 rb 1 re true wa 1 wd.valid true wd.tag 3 wd.data 1 we true) out=(hit true mrd.valid true mrd.tag 9 mrd.data 7 mvalid false rda.valid true rda.tag 9 rda.data 7)
+// STEP in=(clock$0rst false ra 0 rb 1 re true wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit true mrd.valid true mrd.tag 9 mrd.data 7 mvalid true rda.valid true rda.tag 9 rda.data 7)
+// STEP in=(clock$0rst true ra 1 rb 1 re false wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit true mrd.valid true mrd.tag 9 mrd.data 7 mvalid true rda.valid true rda.tag 3 rda.data 1)
+// STEP in=(clock$0rst false ra 1 rb 1 re true wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit false mrd.valid false mrd.tag 0 mrd.data 0 mvalid false rda.valid false rda.tag 0 rda.data 0)

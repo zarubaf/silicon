@@ -19,14 +19,13 @@ module RegFile(comptime T: Type, comptime N: Nat) {
     input we: Bool;
     input wd: T;
     output state: [T; N];
-    static_assert(N == 2, "two entries");
-    reg rf: [T; N] = [T(), T()];
-    let mut next = [rf[0], rf[1]];
+    reg rf: [T; N] = [T; N]();
+    let mut next = [T; N]();
     comptime for k in 0..N {
         next[k] = if (we && wa == k) { wd } else { rf[k] };
     }
     rf := next;
-    state := [rf[0], rf[1]];
+    state := rf;
 }
 module Top() {
     input wa: UInt[1];
@@ -39,6 +38,7 @@ module Top() {
     input re: Bool;
     output mrd: Entry;
     output mvalid: Bool;
+    // TODO(#197): raise N when #197 is fixed.
     instance f = RegFile(Entry, 2);
     static_assert(data_bits(Entry) == 13, "entry width");
     static_assert(len(@typeInfo(Entry).fields) == 3, "three fields");

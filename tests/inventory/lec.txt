@@ -43,10 +43,10 @@ tests/source/corpus/arbiter_families.si main PASS
 tests/source/corpus/arbiter_families.si lowering PASS
 tests/source/corpus/bus_bind_all.si main PASS
 tests/source/corpus/bus_bind_all.si lowering PASS
-tests/source/corpus/bus_wrapper_ports.si main PASS
-tests/source/corpus/bus_wrapper_ports.si lowering PASS
 tests/source/corpus/bus_port_keys.si main PASS
 tests/source/corpus/bus_port_keys.si lowering PASS
+tests/source/corpus/bus_wrapper_ports.si main PASS
+tests/source/corpus/bus_wrapper_ports.si lowering PASS
 tests/source/corpus/comptime_for_helpers.si main PASS
 tests/source/corpus/comptime_for_helpers.si lowering PASS
 tests/source/corpus/const_table.si main PASS
