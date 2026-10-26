@@ -223,7 +223,8 @@ A prediction of these four kinds holds only where the site always runs, in the t
 
 - `silicon elab` and `silicon-check elab` run the mutant. The oracle is `agree` of `testkit`. Both must exit 0 with the same design, or both must exit 1 with the same first code, line, and column. Any other exit code is a failure.
 - Where the pass order makes the first code certain, `srcgen` predicts it. It is a third trace. If both front ends agree on another code, the failure names `gen`.
-- Both front ends can accept a mutant, and the run counts it. The success line counts the mutants by code, for example `diff-si: 100 mutants agree (seeds 1 to 100): 88 rejected (S002 12, S003 30), 12 accepted`. Read it to see a drop in the rejections.
+- A mutant that holds a `diagnostic` call also runs `observe` in both front ends. The compare is `compare_observe` of `testkit`: the records before the error line must be equal, byte for byte, and the first error must agree. A difference is a failure that names the kind of the mutant and prints both outputs. The success line counts these mutants as `with records`. A mutant without `diagnostic` keeps the cheap compare.
+- Both front ends can accept a mutant, and the run counts it. The success line counts the mutants by code, for example `diff-si: 100 mutants agree (seeds 1 to 100): 88 rejected (S002 12, S003 30), 12 accepted, 90 with records`. Read it to see a drop in the rejections.
 - The kinds reach `S008` and `S016`, but not all codes. Issue #130 tracks the codes of slice 1 that no mutation reaches yet. The mutation mode thus does not cover all rejections.
 
 The budget mode checks the fuel and the depth on a typed program. `silicon cost` and `silicon-check cost` must agree, and the first line gives `total N`. Then `elab` runs in both front ends with these limits:
