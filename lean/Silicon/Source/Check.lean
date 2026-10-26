@@ -567,9 +567,10 @@ mutual
       if let some h ← head n r then indexArity p h xs
       for x in xs do let _ ← visit true false x
     | .index p (.builtin f) xs => do
-      let b := f.builtin
-      arity p s!"a type from `@{b.name}`" 0 xs.length
-        s!"; remove the index after `@{b.name}(...)`"
+      let q := s!"@{f.builtin.name}"
+      unless xs.isEmpty do
+        report .S007 p (s!"a type from `{q}` takes 0 argument(s), but it has {xs.length}; " ++
+          s!"remove the index after `{q}(...)`")
       builtinForm false f
       for x in xs do let _ ← visit true false x
     | .index _ b@(.index _ (.builtin _) _) xs => do
