@@ -100,6 +100,14 @@ pub(super) fn family_signature(k: Prelude) -> (usize, &'static str) {
     }
 }
 
+/// The result `work` with each of its errors moved to the use at `pos` (Lean `atUse`).
+pub(super) fn at_use<T>(pos: Pos, work: Res<T>) -> Res<T> {
+    work.map_err(|stop| match stop {
+        Stop::Error(e) => Stop::Error(Error { pos, ..e }),
+        Stop::Stack(e) => Stop::Stack(e),
+    })
+}
+
 impl Evaluator<'_> {
     /// The index of the struct item that the name node `id` refers to.
     pub(super) fn struct_item(&self, id: NodeId) -> Option<usize> {
@@ -587,7 +595,7 @@ impl Evaluator<'_> {
     /// The metadata sums of a tuple or a struct type of the depth `depth` with the parts
     /// `parts`, as Lean `sums`. The sums read the four integers of each part, so they charge
     /// their sizes first. Then they charge the sizes of the four new integers.
-    fn sums(&mut self, pos: Pos, parts: &[TyId], depth: u64) -> Res<Meta> {
+    pub(super) fn sums(&mut self, pos: Pos, parts: &[TyId], depth: u64) -> Res<Meta> {
         self.charge(pos, self.tys.read_charge(parts))?;
         let meta = self.tys.sum(parts);
         self.charge(pos, meta.int_charge(depth))?;
@@ -711,10 +719,7 @@ impl Evaluator<'_> {
         // The prelude struct has no source position, so each error of its work reports at the
         // use (section 6.2).
         if file.is_prelude_item(i) {
-            work.map_err(|stop| match stop {
-                Stop::Error(e) => Stop::Error(Error { pos, ..e }),
-                Stop::Stack(e) => Stop::Stack(e),
-            })
+            at_use(pos, work)
         } else {
             work
         }
