@@ -142,3 +142,160 @@ fn the_depth_of_the_record_is_checked_before_its_size_charges() {
         "the depth 6 goes above the nesting depth 5; raise --depth to at least 6"
     );
 }
+
+const USER_FIELD_INFO: &str = "struct FieldInfo {\n\
+    \x20   name: String,\n\
+    \x20   ty: Type,\n\
+    }";
+
+const AB: &str = r#"@Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)])"#;
+
+#[test]
+fn a_struct_gives_a_generated_record_type() {
+    assert_eq!(o(AB), "(type (gstruct ((\"a\" (uint 8)) (\"b\" bool))))");
+    assert_eq!(o("@Struct([])"), "(type (gstruct ()))");
+    assert_eq!(
+        o(r#"@Struct([FieldInfo("a", @Struct([FieldInfo("x", Bool)]))])"#),
+        "(type (gstruct ((\"a\" (gstruct ((\"x\" bool)))))))"
+    );
+    assert_eq!(
+        o(r#"@Struct([FieldInfo("a", UInt[8])])(7)"#),
+        "(record (gstruct ((\"a\" (uint 8)))) ((uint 8 7)))"
+    );
+    assert_eq!(
+        o(&format!("{AB}()")),
+        "(record (gstruct ((\"a\" (uint 8)) (\"b\" bool))) ((uint 8 0) (bool false)))"
+    );
+    assert_eq!(o(&format!("data_bits({AB})")), "(int 9)");
+}
+
+#[test]
+fn a_generated_record_type_is_equal_by_its_field_list() {
+    let same = r#"@Struct([FieldInfo("a", UInt[8])]) == @Struct([FieldInfo("a", UInt[8])])"#;
+    assert_eq!(o(same), "(bool true)");
+    let other = r#"@Struct([FieldInfo("a", UInt[8])]) == @Struct([FieldInfo("b", UInt[8])])"#;
+    assert_eq!(o(other), "(bool false)");
+    // A declared struct stays nominal.
+    assert_eq!(o("@Struct(@typeInfo(P).fields) == P"), "(bool false)");
+    let round = format!("@Struct(@typeInfo({AB}).fields) == {AB}");
+    assert_eq!(o(&round), "(bool true)");
+}
+
+#[test]
+fn the_cost_of_a_struct_is_exact() {
+    exact(ITEMS, AB, 96);
+    exact(ITEMS, "@Struct([])", 24);
+    exact(
+        ITEMS,
+        r#"@Struct([FieldInfo("a", @Struct([FieldInfo("x", Bool)]))])"#,
+        107,
+    );
+    exact(ITEMS, r#"@Struct([FieldInfo("a", UInt[8])])(7)"#, 72);
+    exact(ITEMS, &format!("{AB}()"), 100);
+    exact(ITEMS, &format!("data_bits({AB})"), 99);
+    exact(ITEMS, "@Struct(@typeInfo(P).fields) == P", 210);
+    exact(
+        ITEMS,
+        r#"@Struct([FieldInfo("a", UInt[8])]) == @Struct([FieldInfo("a", UInt[8])])"#,
+        124,
+    );
+    exact(
+        ITEMS,
+        r#"@typeInfo(@Struct([FieldInfo("a", UInt[8])]))"#,
+        151,
+    );
+}
+
+#[test]
+fn the_errors_of_struct_have_their_positions_and_texts() {
+    let at = |e: &str, code: &str| {
+        assert_eq!(o(e), code, "{e}");
+    };
+    at(r#"@Struct([FieldInfo("1a", Bool)])"#, "S022 1:1");
+    assert_eq!(
+        message(ITEMS, r#"@Struct([FieldInfo("1a", Bool)])"#),
+        "`1a` is not a valid field name; use an ASCII letter or `_`, then letters, digits, or `_`"
+    );
+    at(r#"@Struct([FieldInfo("fn", Bool)])"#, "S022 1:1");
+    assert_eq!(
+        message(ITEMS, r#"@Struct([FieldInfo("fn", Bool)])"#),
+        "`fn` is a keyword, so it cannot be a field name; choose another name"
+    );
+    let twice = r#"@Struct([FieldInfo("a", Bool), FieldInfo("b", Bool), FieldInfo("a", Bool)])"#;
+    at(twice, "S022 1:1");
+    assert_eq!(
+        message(ITEMS, twice),
+        "the field `a` occurs at the indices 0 and 2 of `@Struct`; give each field its own name"
+    );
+    // The tuple names of `@typeInfo` break the name rule.
+    at("@Struct(@typeInfo(BU).fields)", "S022 1:1");
+    assert_eq!(
+        message(ITEMS, "@Struct(@typeInfo(BU).fields)"),
+        "`0` is not a valid field name; use an ASCII letter or `_`, then letters, digits, or `_`"
+    );
+    at("@Struct(3)", "S010 1:9");
+    assert_eq!(
+        message(ITEMS, "@Struct(3)"),
+        "`@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not a value of `Int`; build each field with the prelude `FieldInfo(name, ty)`"
+    );
+    at("@Struct([[]])", "S010 1:9");
+    assert_eq!(
+        message(ITEMS, "@Struct([[]])"),
+        "`@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not `[]`; build each field with the prelude `FieldInfo(name, ty)`"
+    );
+}
+
+#[test]
+fn a_user_field_info_hides_the_prelude_one() {
+    let e = r#"@Struct([FieldInfo("a", Bool)])"#;
+    assert_eq!(out(USER_FIELD_INFO, e, 100_000_000, 1000), "S010 1:9");
+    assert_eq!(
+        message(USER_FIELD_INFO, e),
+        "`@Struct` takes the prelude `FieldInfo`, not a value of `[crate::FieldInfo; 1]`; a user struct `FieldInfo` hides the prelude one, so rename it, or take the fields from `@typeInfo(T).fields`"
+    );
+}
+
+#[test]
+fn a_name_charges_its_characters_before_the_name_rule() {
+    // `aé` has 2 characters and 3 bytes, so the name charges 3 units, not 4.
+    let e = r#"@Struct([FieldInfo("aé", Bool)])"#;
+    let at = |fuel: u64| out(ITEMS, e, fuel, 1000);
+    assert_eq!(at(48), "S022 1:1");
+    assert_eq!(at(47), "S015 1:1");
+    assert_eq!(
+        message(ITEMS, e),
+        "`aé` is not a valid field name; use an ASCII letter or `_`, then letters, digits, or `_`"
+    );
+}
+
+#[test]
+fn a_message_names_a_generated_record_type_by_its_fields() {
+    let m = |e: &str| message(ITEMS, e);
+    assert_eq!(
+        m(&format!("UInt[8]({AB}())")),
+        "expected UInt[8], but the value is @Struct { a: UInt[8], b: Bool }"
+    );
+    assert_eq!(
+        m("UInt[8](@Struct([])())"),
+        "expected UInt[8], but the value is @Struct {}"
+    );
+    assert_eq!(
+        m(r#"UInt[8](@Struct([FieldInfo("a", @Struct([FieldInfo("x", Bool)]))])())"#),
+        "expected UInt[8], but the value is @Struct { a: @Struct { x: Bool } }"
+    );
+    // A name has the limit of a string in a message.
+    let long = "a".repeat(65);
+    assert_eq!(
+        m(&format!(
+            r#"UInt[8](@Struct([FieldInfo("{long}", Bool)])())"#
+        )),
+        format!(
+            "expected UInt[8], but the value is @Struct {{ {}... (65 characters): Bool }}",
+            "a".repeat(64)
+        )
+    );
+    assert_eq!(
+        m(r#"@Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)])(1, 2, 3)"#),
+        "a struct constructor takes 0 or 2 argument(s), but it has 3; pass one value for each field, or none for the zero"
+    );
+}
