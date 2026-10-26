@@ -149,7 +149,8 @@ struct Walked {
 /// `within` holds the type of the container of each step, if it is known, and the first `checked`
 /// steps passed their checks by that type (`Evaluator::checked`). `early` holds a mark for each key
 /// with a call that evaluated before the steps before it passed their checks: the number of the
-/// steps before the key, and the number of the records of `diagnostic` then (`Evaluator::unrecord`).
+/// steps before the key, and the mark of its pending records of `diagnostic`
+/// (`Evaluator::settle_early`).
 struct Keyed<'a> {
     keys: Vec<Key<'a>>,
     waiting: Vec<usize>,
@@ -698,7 +699,8 @@ impl Evaluator<'_> {
             }
             // Lean checks each step before the next key evaluates, and a key with a call can make
             // a record. So the steps before it pass their checks first, by their types, or the key
-            // evaluates early: a failed check of the walk then takes back its records.
+            // evaluates early: its records then wait for the walk, which keeps them if the steps
+            // before the key pass.
             self.mark_early(step, &mut keyed);
             // A key with a call can change a `let mut` local that a waiting key reads, so the
             // waiting keys take their values first.
@@ -757,7 +759,7 @@ impl Evaluator<'_> {
             out,
             at_type,
             string_last,
-        } = self.unrecord(&keyed, passed, followed)?;
+        } = self.settle_early(&keyed, passed, followed)?;
         let out = match moved {
             Some(q) if !string_last => self.renewed(q, out)?,
             _ => out,
@@ -827,24 +829,33 @@ impl Evaluator<'_> {
     /// checks by its type (`checked`). The key then evaluates before the walk checks those steps.
     /// A failed check ends the run, and an error of the key loses to it, because the walk runs
     /// first. So the fuel and the changes of other locals that the key makes before that check
-    /// do not show. Only its records of `diagnostic` would show, and `unrecord` takes them back.
-    /// A check charges nothing, so a run that passes charges in the order of Lean.
-    fn mark_early(&self, step: &Sel<'_>, keyed: &mut Keyed<'_>) {
+    /// do not show. Only its records of `diagnostic` would show, so they wait for the walk
+    /// (`settle_early`). A check charges nothing, so a run that passes charges in the order of
+    /// Lean. A check of the lengths before the key would find each list by its path, a walk from
+    /// the root for each key, and a chain of such keys would take work in the square of its depth.
+    fn mark_early(&mut self, step: &Sel<'_>, keyed: &mut Keyed<'_>) {
         if self.has_call(step) && !self.checked(keyed) {
-            keyed.early.push((keyed.keys.len(), self.records.len()));
+            if keyed.early.is_empty() {
+                self.records.open();
+            }
+            keyed.early.push((keyed.keys.len(), self.records.mark()));
         }
     }
 
-    /// The result of the walk of the steps `keyed`, where the first `passed` steps passed. A step
-    /// that failed comes before each later key, so the records of the early keys after it go, as
-    /// Lean never made them.
-    // TODO(#387): check the waiting list steps before a key with a call, and drop this.
-    fn unrecord<T>(&mut self, keyed: &Keyed<'_>, passed: usize, walked: Res<T>) -> Res<T> {
-        if walked.is_err()
-            && let Some(&(_, records)) = keyed.early.iter().find(|(steps, _)| *steps > passed)
-        {
-            self.records.truncate(records);
+    /// The result of the walk of the steps `keyed`, where the first `passed` steps passed. It
+    /// settles the pending records of the early keys. A step that failed comes before each later
+    /// key, so the records of the early keys after it go, as Lean never made them. The others
+    /// stay.
+    fn settle_early<T>(&mut self, keyed: &Keyed<'_>, passed: usize, walked: Res<T>) -> Res<T> {
+        if keyed.early.is_empty() {
+            return walked;
         }
+        let cut = walked
+            .is_err()
+            .then(|| keyed.early.iter().find(|(steps, _)| *steps > passed))
+            .flatten()
+            .map(|&(_, mark)| mark);
+        self.records.close(cut);
         walked
     }
 
@@ -1488,7 +1499,8 @@ impl Evaluator<'_> {
             }
             // Lean checks each step before the next step charges, and a key with a call can make
             // a record. So the steps before it pass their checks first, by their types, or the key
-            // evaluates early: a failed check of the walk then takes back its records.
+            // evaluates early: its records then wait for the walk, which keeps them if the steps
+            // before the key pass.
             self.mark_early(step, &mut keyed);
             match self.charge(step.pos(), 1).and_then(|()| self.key(step)) {
                 Ok(mut k) => {
@@ -1625,8 +1637,8 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The walk of the steps of `keyed` (`walk`), which then wait no more. A step that fails takes
-    /// back the records of the early keys after it (`unrecord`).
+    /// The walk of the steps of `keyed` (`walk`), which then wait no more. A step that fails drops
+    /// the pending records of the early keys after it (`settle_early`).
     fn walk_keyed(
         &mut self,
         root: Root,
@@ -1636,7 +1648,7 @@ impl Evaluator<'_> {
     ) -> Res<Walked> {
         let mut passed = 0;
         let walked = self.walk(root, st, keyed.keys(), last, &mut passed);
-        let walked = self.unrecord(keyed, passed, walked);
+        let walked = self.settle_early(keyed, passed, walked);
         keyed.clear();
         walked
     }

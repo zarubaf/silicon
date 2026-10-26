@@ -18,6 +18,10 @@
 //! renders from the metadata of its type, and a part without a hardware leaf is its static
 //! zero.
 
+mod records;
+
+pub(super) use records::Records;
+
 use super::{Evaluator, Opnd, Out, Res, at, fail};
 use crate::Code;
 use crate::agg::Agg;

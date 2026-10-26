@@ -230,7 +230,7 @@ struct Evaluator<'a> {
     /// reports at it. A nested level clears it, so it keeps its own positions.
     site: Option<Pos>,
     /// The records of `diagnostic` in evaluation order (section 8.2).
-    records: Vec<String>,
+    records: observe::Records,
     /// The emitted names of the instantiations that started, in order. A record refers to one
     /// by its index, so it copies no text.
     emitted: Vec<String>,
@@ -464,7 +464,7 @@ impl<'a> Evaluator<'a> {
             mode: top.map(|_| Mode::Eval),
             arg: None,
             site: None,
-            records: Vec::new(),
+            records: observe::Records::default(),
             emitted: Vec::new(),
             inst: None,
             calls: Vec::new(),
