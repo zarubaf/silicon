@@ -446,12 +446,17 @@ impl Spec {
     }
 
     /// The field types of a done entry, in order.
+    ///
+    /// # Panics
+    ///
+    /// If the entry is in progress. A struct type exists only for a done entry, so a caller that
+    /// holds the type never sees this.
     #[must_use]
     pub fn field_types(&self) -> &[TyId] {
-        match &self.state {
-            SpecState::Done { fields, .. } => fields,
-            SpecState::InProgress => &[],
-        }
+        let SpecState::Done { fields, .. } = &self.state else {
+            panic!("the specialization `{}` is not done", self.name);
+        };
+        fields
     }
 }
 
