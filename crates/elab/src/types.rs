@@ -323,22 +323,30 @@ enum SpecState {
     Done { ty: TyId, fields: Vec<TyId> },
 }
 
-/// A struct specialization (section 5.6): the struct item, its name, its static arguments
-/// after their typed use, and its state. A done entry holds its struct type and its field
-/// types.
+/// A struct specialization (section 5.6): its key, its name, its static arguments after their
+/// typed use, and its state. A done entry holds its struct type and its field types.
 pub struct Spec {
-    item: usize,
+    key: SpecKey,
     name: String,
     args: Vec<Value>,
     state: SpecState,
     origin: Origin,
 }
 
-/// The origin of a struct type (section 5.6): a struct item of the user, or a prelude struct.
+/// What identifies a struct specialization: a struct item, or the field list of a generated
+/// record type.
+enum SpecKey {
+    Item(usize),
+    Generated(Generated),
+}
+
+/// The origin of a struct type (section 5.6): a struct item of the user, a prelude struct, or a
+/// generated record type of `@Struct`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
     User,
     Prelude,
+    Generated,
 }
 
 impl Origin {
@@ -348,7 +356,64 @@ impl Origin {
         match self {
             Origin::User => "root",
             Origin::Prelude => "prelude",
+            Origin::Generated => "gstruct",
         }
+    }
+}
+
+/// The symbol of a field name as a key of a member map. In the tests, each compare of two keys
+/// counts, so a test sees the work of the map and not only the number of its calls.
+#[derive(Clone, Copy, Debug)]
+pub struct Member(pub Sym);
+
+impl PartialEq for Member {
+    fn eq(&self, other: &Member) -> bool {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Mapped, 1);
+        self.0 == other.0
+    }
+}
+
+impl Eq for Member {}
+
+impl PartialOrd for Member {
+    fn partial_cmp(&self, other: &Member) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Member {
+    fn cmp(&self, other: &Member) -> std::cmp::Ordering {
+        #[cfg(test)]
+        crate::counters::add(crate::counters::Count::Mapped, 1);
+        self.0.cmp(&other.0)
+    }
+}
+
+/// The fields of a generated record type (section 5.6): the name of each field, the symbol of
+/// each name in the order of the fields, and the number of each field by its symbol.
+#[derive(Debug)]
+pub struct Generated {
+    names: Vec<String>,
+    order: Vec<Sym>,
+    members: BTreeMap<Member, usize>,
+}
+
+impl Generated {
+    /// The fields with the names `names`, whose symbols `order` give the member map `members`.
+    #[must_use]
+    pub fn new(names: Vec<String>, order: Vec<Sym>, members: BTreeMap<Member, usize>) -> Self {
+        Generated {
+            names,
+            order,
+            members,
+        }
+    }
+
+    /// The name of each field, in order.
+    #[must_use]
+    pub fn names(&self) -> &[String] {
+        &self.names
     }
 }
 
@@ -359,7 +424,7 @@ impl Spec {
         &self.args
     }
 
-    /// The name of the struct item.
+    /// The name of the struct item. A generated record type has none.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -370,43 +435,69 @@ impl Spec {
     pub fn origin(&self) -> Origin {
         self.origin
     }
+
+    /// The fields of the struct type if it is a generated record type.
+    #[must_use]
+    pub fn generated(&self) -> Option<&Generated> {
+        match &self.key {
+            SpecKey::Generated(g) => Some(g),
+            SpecKey::Item(_) => None,
+        }
+    }
+
+    /// The field types of a done entry, in order.
+    #[must_use]
+    pub fn field_types(&self) -> &[TyId] {
+        match &self.state {
+            SpecState::Done { fields, .. } => fields,
+            SpecState::InProgress => &[],
+        }
+    }
 }
 
 /// What names the parts of a type with named parts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PartNames {
+#[derive(Clone, Copy, Debug)]
+pub enum PartNames<'a> {
     /// The field names of the struct item.
     Struct(usize),
+    /// The field names of a generated record type.
+    Generated(&'a Generated),
     /// The names `tag` and `payload` of an enum.
     Enum,
 }
 
-impl PartNames {
-    /// The struct item whose field names name the parts. An enum has no field.
+impl<'a> PartNames<'a> {
+    /// The struct item whose field names name the parts. An enum and a generated record type
+    /// have none.
     #[must_use]
     pub fn item(self) -> Option<usize> {
         match self {
             PartNames::Struct(item) => Some(item),
-            PartNames::Enum => None,
+            PartNames::Generated(_) | PartNames::Enum => None,
         }
     }
 
-    /// The symbols of the field names of a struct type in the table `order` of the struct items,
-    /// in the order of the fields. An enum has no field.
+    /// The symbols of the field names of a struct type, in the order of the fields: for a
+    /// struct item from the table `order` of the struct items. An enum has no field.
     #[must_use]
-    pub fn order(self, order: &[Vec<Sym>]) -> Option<&[Sym]> {
+    pub fn order<'t>(self, order: &'t [Vec<Sym>]) -> Option<&'t [Sym]>
+    where
+        'a: 't,
+    {
         match self {
             PartNames::Struct(item) => order.get(item).map(Vec::as_slice),
+            PartNames::Generated(g) => Some(&g.order),
             PartNames::Enum => None,
         }
     }
 
-    /// The number of each field of a struct type by the symbol of its name, in the table
-    /// `members` of the struct items. An enum has no field.
+    /// The number of the field with the symbol `y` in a struct type: for a struct item from the
+    /// table `members` of the struct items. An enum has no field.
     #[must_use]
-    pub fn members(self, members: &[BTreeMap<Sym, usize>]) -> Option<&BTreeMap<Sym, usize>> {
+    pub fn number(self, members: &[BTreeMap<Sym, usize>], y: Sym) -> Option<usize> {
         match self {
-            PartNames::Struct(item) => members.get(item),
+            PartNames::Struct(item) => members.get(item)?.get(&y).copied(),
+            PartNames::Generated(g) => g.members.get(&Member(y)).copied(),
             PartNames::Enum => None,
         }
     }
@@ -415,7 +506,7 @@ impl PartNames {
 /// The named parts of a type (`Types::parts`): where their names come from, and their types.
 #[derive(Clone, Copy, Debug)]
 pub struct Parts<'a> {
-    pub names: PartNames,
+    pub names: PartNames<'a>,
     pub types: &'a [TyId],
 }
 
@@ -499,6 +590,18 @@ fn fingerprint<'a>(item: usize, args: impl IntoIterator<Item = &'a Value>) -> u6
     h.finish()
 }
 
+/// The fingerprint of a generated record type: the symbols of its field names and its field
+/// types, in order. A bucket of the index holds the entries with one fingerprint, and the field
+/// lists decide.
+fn gen_fingerprint(order: &[Sym], types: &[TyId]) -> u64 {
+    let mut h = DefaultHasher::new();
+    order.hash(&mut h);
+    for t in types {
+        t.hash_into(&mut h);
+    }
+    h.finish()
+}
+
 /// The work of a hash and a comparison of `v`: 1 for each node and each word of an integer. A
 /// type is an id, so it is 1.
 #[cfg(test)]
@@ -540,6 +643,9 @@ pub struct Types {
     fn_names: BTreeMap<usize, String>,
     /// The specializations by the fingerprint of their item and arguments.
     spec_index: BTreeMap<u64, Vec<SpecId>>,
+    /// The generated record types by the fingerprint of their symbols and field types. Their
+    /// key never holds a value, so the index of types needs no `Vec<Value>`.
+    gen_index: BTreeMap<u64, Vec<SpecId>>,
     /// The instance types, and their ids by the fingerprint of their item and arguments.
     insts: Vec<InstTy>,
     inst_index: BTreeMap<u64, Vec<(InstId, TyId)>>,
@@ -1005,7 +1111,7 @@ impl Types {
             .get(&fingerprint(item, args.iter().copied()))?;
         let found = bucket.iter().copied().find(|s| {
             let spec = self.spec(*s);
-            spec.item == item
+            matches!(spec.key, SpecKey::Item(i) if i == item)
                 && spec.args.len() == args.len()
                 && spec.args.iter().zip(args).all(|(a, b)| a == *b)
         })?;
@@ -1029,7 +1135,7 @@ impl Types {
             .or_default()
             .push(s);
         self.specs.push(Spec {
-            item,
+            key: SpecKey::Item(item),
             name: name.to_owned(),
             args,
             state: SpecState::InProgress,
@@ -1173,6 +1279,76 @@ impl Types {
         ty
     }
 
+    /// The depth of a generated record type with the field types `types`: 1 more than its
+    /// deepest field type. It has no static argument.
+    #[must_use]
+    pub fn generated_depth(types: &[TyId]) -> u64 {
+        1 + types.iter().map(|t| t.depth).max().unwrap_or(0)
+    }
+
+    /// The generated record type with the field symbols `order` and the field types `types`, if
+    /// the table holds it. The fingerprint narrows the search, and the field lists decide. The
+    /// caller charged the size of the type, which pays for the hash and the compare.
+    #[must_use]
+    pub fn find_generated(&self, order: &[Sym], types: &[TyId]) -> Option<TyId> {
+        #[cfg(test)]
+        self.tick(1 + order.len() as u64);
+        let bucket = self.gen_index.get(&gen_fingerprint(order, types))?;
+        let found = bucket.iter().copied().find(|s| {
+            let spec = self.spec(*s);
+            let SpecKey::Generated(g) = &spec.key else {
+                return false;
+            };
+            g.order.len() == order.len()
+                && g.order
+                    .iter()
+                    .zip(order)
+                    .zip(spec.field_types().iter().zip(types))
+                    .all(|((a, b), (x, y))| {
+                        #[cfg(test)]
+                        crate::counters::add(crate::counters::Count::Matched, 1);
+                        a == b && x == y
+                    })
+        })?;
+        self.spec_ty(found)
+    }
+
+    /// The generated record type with the fields `fields`, the field types `types`, the metadata
+    /// `meta`, and the depth `depth`. The caller found no entry for the field list
+    /// (`find_generated`), checked the limit, and paid the charges. The size of the type is 1
+    /// plus 1 and the length of each name plus the size of each field type (Lean `Ty.size`).
+    pub fn make_generated(
+        &mut self,
+        fields: Generated,
+        types: Vec<TyId>,
+        meta: Meta,
+        depth: u64,
+    ) -> TyId {
+        #[cfg(test)]
+        self.tick(1 + types.len() as u64);
+        // A name is an identifier after the name rule, so its length in bytes is its length in
+        // characters.
+        let size = fields
+            .names
+            .iter()
+            .zip(&types)
+            .fold(1u64, |sum, (name, t)| {
+                sum.saturating_add(1 + name.len() as u64)
+                    .saturating_add(t.size)
+            });
+        let print = gen_fingerprint(&fields.order, &types);
+        let s = SpecId(self.specs.len());
+        self.gen_index.entry(print).or_default().push(s);
+        self.specs.push(Spec {
+            key: SpecKey::Generated(fields),
+            name: String::new(),
+            args: Vec::new(),
+            state: SpecState::InProgress,
+            origin: Origin::Generated,
+        });
+        self.seal_spec(s, size, types, meta, depth)
+    }
+
     /// The named parts of the type `t`, in packing order: the field types of a struct type,
     /// from its done entry. An enum type has the parts `tag` of type `UInt[W]` and `payload` of
     /// type `UInt[P]`, without `payload` when `P` is 0. Each walk over the parts of a type with
@@ -1185,7 +1361,10 @@ impl Types {
                 let spec = self.spec(*s);
                 match &spec.state {
                     SpecState::Done { fields, .. } => Some(Parts {
-                        names: PartNames::Struct(spec.item),
+                        names: match &spec.key {
+                            SpecKey::Item(item) => PartNames::Struct(*item),
+                            SpecKey::Generated(g) => PartNames::Generated(g),
+                        },
                         types: fields,
                     }),
                     SpecState::InProgress => None,

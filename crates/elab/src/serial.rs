@@ -8,7 +8,7 @@
 //! types.
 
 use crate::int::{Int, Pow10};
-use crate::types::{Ty, TyId, TyParam, Types};
+use crate::types::{Generated, Ty, TyId, TyParam, Types};
 use crate::value::Value;
 use core_ir::Bits;
 use std::collections::BTreeMap;
@@ -85,8 +85,12 @@ impl Len {
                     parts.push(*ret);
                 }
                 Ty::Struct(s) => {
-                    for arg in tys.spec(*s).args() {
+                    let spec = tys.spec(*s);
+                    for arg in spec.args() {
                         held_types(arg, &mut parts);
+                    }
+                    if spec.generated().is_some() {
+                        parts.extend(spec.field_types().iter().copied());
                     }
                 }
                 Ty::Instance(i) => {
@@ -169,6 +173,8 @@ pub(crate) enum Item<'a> {
     Param(TyParam),
     Text(&'static str),
     Name(&'a str),
+    /// A name as a string with the escapes of the grammar.
+    Quoted(&'a str),
     Int(&'a Int),
     /// The tag and the payload of an enum value after its type, and the closing parenthesis.
     EnumRest(&'a Bits, Option<&'a Bits>),
@@ -191,6 +197,7 @@ pub(crate) fn write<S: Sink>(tys: &Types, first: Item<'_>, out: &mut S) {
     while let Some(item) = work.pop() {
         match item {
             Item::Text(s) | Item::Name(s) => out.write_str(s).unwrap_or_default(),
+            Item::Quoted(s) => out.quoted(s),
             Item::Int(n) => out.int(n),
             Item::EnumRest(tag, payload) => {
                 out.write_str(" ").unwrap_or_default();
@@ -280,6 +287,27 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
             out.write_str("(enum root ").unwrap_or_default();
             out.write_str(tys.enum_name(*e)).unwrap_or_default();
             out.write_str(" ())").unwrap_or_default();
+        }
+        Ty::Struct(s) if tys.spec(*s).generated().is_some() => {
+            let spec = tys.spec(*s);
+            out.write_str("(gstruct (").unwrap_or_default();
+            work.push(Item::Text("))"));
+            let names = spec.generated().map_or(&[][..], Generated::names);
+            let fields = names.iter().zip(spec.field_types());
+            let mut items = Vec::new();
+            for (k, (name, t)) in fields.enumerate() {
+                if k > 0 {
+                    items.push(Item::Text(" "));
+                }
+                items.extend([
+                    Item::Text("("),
+                    Item::Quoted(name),
+                    Item::Text(" "),
+                    Item::Ty(*t),
+                    Item::Text(")"),
+                ]);
+            }
+            work.extend(items.into_iter().rev());
         }
         Ty::Struct(s) => {
             let spec = tys.spec(*s);

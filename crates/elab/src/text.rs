@@ -3,8 +3,8 @@
 //! after `TEXT_LIMIT` bytes, so no message grows with the size of a type or a value.
 
 use crate::int::Int;
-use crate::ops::int_text;
-use crate::types::{Origin, Ty, TyId, TyParam, Types};
+use crate::ops::{int_text, str_text};
+use crate::types::{Generated, Origin, Ty, TyId, TyParam, Types};
 use crate::value::Value;
 use std::fmt::Write;
 
@@ -23,6 +23,9 @@ pub(crate) enum Piece<'a> {
     Tys(&'a [TyId]),
     /// The parameter types of a function type, with `, ` between them.
     Params(&'a [TyParam]),
+    /// The names and the types of the fields of a generated record type, as `a: UInt[8]`, with
+    /// `, ` between them.
+    Fields(&'a [String], &'a [TyId]),
     /// The types of the values of a list, with `, ` between them.
     Values(&'a [Value]),
     /// The literal forms of a list of static arguments, with `, ` between them.
@@ -108,6 +111,17 @@ impl<'a> Text<'a> {
                 }
             }
             Ty::Enum(e) => self.item_name(tys.enum_name(*e), Origin::User),
+            Ty::Struct(s) if tys.spec(*s).generated().is_some() => {
+                let spec = tys.spec(*s);
+                let names = spec.generated().map_or(&[][..], Generated::names);
+                if names.is_empty() {
+                    self.out.push_str("@Struct {}");
+                } else {
+                    self.out.push_str("@Struct { ");
+                    self.work.push(Piece::Text(" }"));
+                    self.work.push(Piece::Fields(names, spec.field_types()));
+                }
+            }
             Ty::Struct(s) => {
                 let spec = tys.spec(*s);
                 self.item_name(spec.name(), spec.origin());
@@ -233,6 +247,21 @@ impl<'a> Text<'a> {
                     if let Some((first, rest)) = xs.split_first() {
                         self.rest(rest, Piece::Params);
                         self.work.push(Piece::Param(*first));
+                    }
+                }
+                Piece::Fields(names, types) => {
+                    if let (Some((name, names)), Some((t, types))) =
+                        (names.split_first(), types.split_first())
+                    {
+                        if !names.is_empty() {
+                            self.work.push(Piece::Fields(names, types));
+                            self.work.push(Piece::Text(", "));
+                        }
+                        self.work.push(Piece::Ty(*t));
+                        let head = format!("{}: ", str_text(name));
+                        #[cfg(test)]
+                        crate::counters::add(crate::counters::Count::TextBytes, head.len() as u64);
+                        self.work.push(Piece::Owned(head));
                     }
                 }
                 Piece::Values(xs) => {

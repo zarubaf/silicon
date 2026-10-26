@@ -325,12 +325,12 @@ impl Evaluator<'_> {
     /// symbols for its fields. It runs once, so a search by name stays within its size.
     pub(super) fn field_number_by(
         &self,
-        names: PartNames,
+        names: PartNames<'_>,
         y: Option<Sym>,
         name: &str,
     ) -> Option<usize> {
         match (y, self.names) {
-            (Some(sym), _) => names.members(&self.syms.struct_fields)?.get(&sym).copied(),
+            (Some(sym), _) => names.number(&self.syms.struct_fields, sym),
             (None, Names::File) => None,
             (None, Names::Top) => match self.file.ast().get(names.item()?)? {
                 Item::Struct { fields, .. } => fields.iter().position(|d| d.name.name == name),
@@ -341,7 +341,7 @@ impl Evaluator<'_> {
 
     /// The number of the field `f` among the parts `names` of a struct type, by the symbol of its
     /// name.
-    pub(super) fn field_number(&self, names: PartNames, f: &Ident) -> Option<usize> {
+    pub(super) fn field_number(&self, names: PartNames<'_>, f: &Ident) -> Option<usize> {
         self.field_number_by(names, self.port_sym(f), &f.name)
     }
 
