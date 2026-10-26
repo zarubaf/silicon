@@ -477,7 +477,7 @@ fn predictions_are_frequent() {
     );
     assert_eq!(
         codes.into_iter().collect::<Vec<_>>(),
-        ["S002", "S003", "S007", "S018"]
+        ["S002", "S003", "S007", "S018", "S019"]
     );
 }
 
