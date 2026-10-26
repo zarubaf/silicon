@@ -599,6 +599,7 @@ struct Stats {
     rec_wires: u32,
     rec_regs: u32,
     rec_chains: u32,
+    double_calls: u32,
     rec_mut_calls: u32,
     field_tuples: u32,
     field_arrays: u32,

@@ -40,7 +40,7 @@ const MAX_GROUPS: u32 = 4;
 /// The slots of `key_fns`: the key function, the key function with a
 /// `diagnostic`, and the function that a place passes its part to.
 const PLAIN: usize = 0;
-const EFFECT: usize = 1;
+pub(super) const EFFECT: usize = 1;
 const PLACE: usize = 2;
 
 impl Builder {
@@ -67,7 +67,7 @@ impl Builder {
 
     /// The function `k<n>(mut a0: Int, x1: Int) -> Int` that adds to the
     /// root and gives an index of `0..2`, with a `diagnostic` or without.
-    fn key_fn(&mut self, slot: usize) -> Built<String> {
+    pub(super) fn key_fn(&mut self, slot: usize) -> Built<String> {
         let effectful = slot == EFFECT;
         if let Some(name) = self.key_fns.get(slot).cloned().flatten() {
             return Ok(name);
@@ -200,7 +200,7 @@ impl Builder {
 
     /// A container of two rows of two integers: a tuple or an array of
     /// arrays.
-    fn small_container(&mut self) -> (STy, SExpr, bool) {
+    pub(super) fn small_container(&mut self) -> (STy, SExpr, bool) {
         let row = STy::Array(Box::new(STy::Int), 2);
         let tuple = self.tape.flag();
         let ty = if tuple {
