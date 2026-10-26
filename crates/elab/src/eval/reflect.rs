@@ -37,6 +37,9 @@ pub(super) enum Part {
     Handle(Handle),
     /// Only a data type.
     Type(TyId),
+    /// A hardware entry of an own family: it keeps only its data type, and a message still names
+    /// a value of that type.
+    Entry(TyId),
 }
 
 /// The end of the operand of a query: the part that the walk reached, or the result of a root that
@@ -260,9 +263,9 @@ impl Evaluator<'_> {
     /// reference keep only their type.
     fn part_of_val(&mut self, pos: Pos, entry: Val) -> Res<Walk<'static>> {
         let part = match entry {
-            Val::Hw(h) => Part::Type(self.tys.mk(self.graph.ty(h))),
+            Val::Hw(h) => Part::Entry(self.tys.mk(self.graph.ty(h))),
             Val::Agg(a) => match *a {
-                Agg::Ref(_, t) => Part::Type(t),
+                Agg::Ref(_, t) => Part::Entry(t),
                 node => return no_type(pos, &self.about(Seen::Agg(&node))),
             },
             Val::Handle(h) => Part::Handle(h),
@@ -512,7 +515,9 @@ impl Evaluator<'_> {
     ) -> Res<Option<usize>> {
         let keys = pending.get(from..).unwrap_or_default();
         let ty = match &mut walk.part {
-            Part::Type(ty) => *ty,
+            // A part with no step left stays as it is: an entry still names a value.
+            Part::Type(_) | Part::Entry(_) if keys.is_empty() => return Ok(None),
+            Part::Type(ty) | Part::Entry(ty) => *ty,
             Part::Handle(handle) => {
                 let Some(key) = keys.first() else {
                     walk.known = Self::known_of(Seen::Handle(handle));
@@ -832,7 +837,7 @@ impl Evaluator<'_> {
 
     /// The text of a part of the data type `ty` in a message: the type, or hardware of the type
     /// if it has a hardware leaf.
-    fn query_part_text(&self, ty: TyId) -> String {
+    pub(super) fn query_part_text(&self, ty: TyId) -> String {
         if self.tys.meta(ty).leaves.is_zero() {
             self.tys.text(ty)
         } else {
@@ -844,7 +849,7 @@ impl Evaluator<'_> {
     /// A part in the store gives its type (`ending`).
     fn query_ty(&mut self, pos: Pos, operand: Operand) -> Res<TyId> {
         let ending = match operand {
-            Operand::Part(Part::Type(t) | Part::Held(_, Some(t))) => return Ok(t),
+            Operand::Part(Part::Type(t) | Part::Entry(t) | Part::Held(_, Some(t))) => return Ok(t),
             Operand::Part(Part::Held(r, None)) => Self::ending(
                 &self.graph,
                 &mut self.tys,

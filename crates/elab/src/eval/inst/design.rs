@@ -6,6 +6,7 @@ use super::public::{PubKey, Public};
 use crate::agg::Agg;
 use crate::eval::Let;
 use crate::hw::{Graph, Kind, Port, PortId};
+use crate::layout;
 #[cfg(test)]
 use crate::names::encode;
 use crate::names::{Name, PathId, Paths, Sym};
@@ -116,7 +117,9 @@ impl Body {
 }
 
 /// The interface of a done instantiation: its emitted name, its ports by their identity, its
-/// number of inputs, and its domain. `item` is the module item. Its port families are the static
+/// number of inputs, its domain, and its `schema`: each port in the order of the port layout
+/// (section 7.5), inputs first, also an empty port. The interface sorts it once, so a query
+/// reads it with no sort. `item` is the module item. Its port families are the static
 /// families of the resolver (`Syms::families`), which include a family without an entry, and the
 /// families of the public names of its body (`families`).
 pub(crate) struct Iface {
@@ -124,6 +127,7 @@ pub(crate) struct Iface {
     pub(super) ports: BTreeMap<PortId, Port>,
     pub item: usize,
     pub(super) inputs: usize,
+    pub(crate) schema: Vec<Port>,
     pub domain: Option<Sym>,
     pub(super) families: BTreeSet<Sym>,
 }
@@ -134,28 +138,35 @@ impl Iface {
         b: &Body,
         item: usize,
         publics: &BTreeMap<PubKey, (Public, Pos, usize)>,
+        texts: &[String],
     ) -> Iface {
         let mut ports = BTreeMap::new();
+        let mut schema = Vec::with_capacity(b.ports.len());
         let mut inputs = 0;
         for (order, q) in b.ports.iter().enumerate() {
-            ports.insert(
-                (q.sym, q.key),
-                Port {
-                    sym: q.sym,
-                    key: q.key,
-                    input: q.input,
-                    ty: q.tid,
-                    pos: q.pos,
-                    order,
-                },
-            );
+            let port = Port {
+                sym: q.sym,
+                key: q.key,
+                input: q.input,
+                ty: q.tid,
+                pos: q.pos,
+                order,
+            };
+            schema.push(port.clone());
+            ports.insert(port.id(), port);
             inputs += usize::from(q.input);
         }
+        schema.sort_by(|x, y| {
+            y.input
+                .cmp(&x.input)
+                .then_with(|| layout::port_order(x.id(), y.id(), texts))
+        });
         Iface {
             name,
             ports,
             item,
             inputs,
+            schema,
             domain: b.domain,
             families: publics
                 .iter()
