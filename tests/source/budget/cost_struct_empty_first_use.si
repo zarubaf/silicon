@@ -1,0 +1,10 @@
+// `@Struct([])` as the first use of `FieldInfo`: the typed use of `[]` at `[FieldInfo; 0]` completes the prelude struct and charges for it. With the depth one unit below, the `S015` of that use is at the `@`.
+// FUEL 81
+// DEPTH 3
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let t = @Struct([]);
+    o := x;
+}

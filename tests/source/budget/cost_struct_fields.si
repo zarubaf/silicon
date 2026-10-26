@@ -1,0 +1,9 @@
+// `@Struct` charges its node, the first use of `FieldInfo`, the copy of the argument, 1 plus the length for each name, the size of the new type term, and the metadata sums. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 153
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let t = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]);
+    o := x;
+}
