@@ -30,7 +30,7 @@ The module `prelude` owns the prelude names. It also owns the parameter modes of
 
 - The function name of a receiver call resolves in the item scope, then in the prelude, and never to a local. A name there that is not a function is `S003` at the name. Check: `cargo nextest run -p resolve`.
 
-- A builtin `@TypeOf(x)`, `@typeInfo(T)`, or `@field(x, k)` resolves its operands in source order, as ordinary expressions. It has no target and no call site of its own. An unknown name in an operand is `S003`. A builtin in the signature of a `fn` makes it generic when it names a parameter. Check: `cargo nextest run -p resolve`.
+- A builtin `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, or `@field(x, k)` resolves its operands in source order, as ordinary expressions, also in a type position. It has no target and no call site of its own. An unknown name in an operand is `S003`. A builtin in the signature of a `fn` makes it generic when its operands name a parameter, also in a type: `fn f(x: UInt[8]) -> @TypeOf(x)` is generic. Check: `cargo nextest run -p resolve`.
 
 - The call site of a call or a receiver call is its number in the pre-order of its item body, from 0. Lean `Resolve` gives the same number. A node comes before its children, and the receiver comes before the arguments. Check: `cargo nextest run -p resolve` and the comparison with `silicon-check elab`.
 

@@ -54,7 +54,7 @@ impl Parser<'_> {
             Some(LBracket) => self.array_type()?,
             // The result type of a function type takes the suffixes, so the chain ends here.
             Some(FnKw) => return self.fn_chain(FnType),
-            Some(At) => return self.later_builtin(),
+            Some(At) => self.builtin(BuiltinType)?,
             _ => {
                 self.syntax_error("expected a type");
                 return None;
@@ -529,7 +529,7 @@ impl Parser<'_> {
             }
             Some(LParen) => return self.paren(),
             Some(LBracket) => return self.array(),
-            Some(At) => return self.builtin_expr(),
+            Some(At) => return self.builtin(BuiltinExpr),
             _ => {
                 self.syntax_error("expected an expression");
                 return None;
@@ -560,11 +560,12 @@ impl Parser<'_> {
         None
     }
 
-    /// `@TypeOf(x)`, `@typeInfo(T)`, or `@field(x, k)`, a primary. It reads all operands, then
-    /// checks their number at the name, then the form of the operand of `@TypeOf` at its first token. Thus
-    /// a syntax error in an operand comes first. The operand of `@typeInfo` is any expression.
-    /// Another builtin is `S004`.
-    fn builtin_expr(&mut self) -> Res {
+    /// `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, or `@field(x, k)`, a primary, and a builtin in
+    /// a type position. The node has the `kind`. It reads all operands, then checks their number
+    /// at the name, then the form of the operand of `@TypeOf` at its first token. Thus a syntax
+    /// error in an operand comes first. The operand of `@typeInfo` and of `@Struct` is any
+    /// expression. `@ports` is `S004`.
+    fn builtin(&mut self, kind: SyntaxKind) -> Res {
         let known = (self.next() == Some(Ident))
             .then(|| Builtin::of_name(self.next_text()))
             .flatten();
@@ -573,7 +574,7 @@ impl Parser<'_> {
         };
         let name_offset = self.offset_of(1);
         let mut operands = Vec::new();
-        self.node(BuiltinExpr, |p| {
+        self.node(kind, |p| {
             p.bump();
             p.bump();
             p.arg_list_with(RParen, true, |p, start| operands.push((start, p.ast_place)))

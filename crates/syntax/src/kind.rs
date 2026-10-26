@@ -142,6 +142,8 @@ kinds! {
     ArrayTypeExpr,
     /// `(T)`: a grouped type. It makes no node of the AST.
     ParenType,
+    /// `@name(args)` in a type position: like `BuiltinExpr`.
+    BuiltinType,
     /// `fn (P, mut Q) -> R`: the `FnTypeParam` children, then the result type, which is a
     /// `FnType` for a chain.
     FnType,

@@ -118,12 +118,12 @@ fn static_at(is_static: bool, callee: Option<&Callee<'_>>, k: usize) -> bool {
 }
 
 /// Whether operand `k` of a builtin is a static position. The operand of `@TypeOf` is none,
-/// also in a static position, so it can name a resource. The argument of `@typeInfo` is none
-/// either (ADR 0031), so a register there gets the `S010` of pass 5. The base of `@field` takes
+/// also in a static position, so it can name a resource. The argument of `@typeInfo` and of
+/// `@Struct` is none either (ADR 0031), so a register there gets the `S010` of pass 5. The base of `@field` takes
 /// the context of the builtin. The key of `@field` is always a static position (design section 9.2).
 fn builtin_operand_is_static(builtin: Builtin, k: usize, is_static: bool) -> bool {
     match builtin {
-        Builtin::TypeOf | Builtin::TypeInfo => false,
+        Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct => false,
         Builtin::Field => k == 1 || is_static,
     }
 }
@@ -735,12 +735,17 @@ impl<'a> Walker<'a> {
             }
             Expr::Match { scrut, arms, .. } => self.matched(is_static, scrut, arms),
             Expr::Builtin { args, .. } => {
-                for (k, arg) in args.operands().enumerate() {
-                    self.expr(builtin_operand_is_static(args.builtin(), k, is_static), arg);
-                }
+                self.builtin_operands(is_static, args);
                 None
             }
             Expr::FnType { params, ret, .. } => Some(self.fn_type_head(params, ret)),
+        }
+    }
+
+    /// The operands of a builtin, in an expression or in a type position.
+    fn builtin_operands(&mut self, is_static: bool, args: &BuiltinArgs) {
+        for (k, arg) in args.operands().enumerate() {
+            self.expr(builtin_operand_is_static(args.builtin(), k, is_static), arg);
         }
     }
 
@@ -845,6 +850,9 @@ impl<'a> Walker<'a> {
                 self.expr(true, len);
             }
             TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
+            // A builtin in a type position is no static position, and its operands keep the
+            // rules of the builtin in an expression.
+            TypeExpr::Builtin { args, .. } => self.builtin_operands(false, args),
         }
     }
 

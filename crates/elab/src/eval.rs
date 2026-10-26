@@ -385,7 +385,8 @@ fn type_pos(t: &TypeExpr) -> Pos {
         | TypeExpr::Unit { pos }
         | TypeExpr::Tuple { pos, .. }
         | TypeExpr::Array { pos, .. }
-        | TypeExpr::Fn { pos, .. } => *pos,
+        | TypeExpr::Fn { pos, .. }
+        | TypeExpr::Builtin { pos, .. } => *pos,
     }
 }
 
@@ -977,6 +978,15 @@ impl Evaluator<'_> {
                 pos,
                 args: BuiltinArgs::TypeInfo(arg),
             } => Ok(Some(self.type_info(*pos, arg)?)),
+            // TODO(#381): evaluate `@Struct` (design section 9.3).
+            Expr::Builtin {
+                pos,
+                args: BuiltinArgs::Struct(_),
+            } => fail(
+                Code::S004,
+                *pos,
+                "a builtin is not supported yet".to_owned(),
+            ),
             Expr::Unary { pos, op, arg } => self.unary_expr(*pos, *op, arg),
             Expr::Binary {
                 pos,

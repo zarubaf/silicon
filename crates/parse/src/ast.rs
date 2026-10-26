@@ -101,6 +101,7 @@ pub enum UnOp {
 pub enum BuiltinArgs {
     TypeOf(Box<Expr>),
     TypeInfo(Box<Expr>),
+    Struct(Box<Expr>),
     Field(Box<Expr>, Box<Expr>),
 }
 
@@ -111,6 +112,7 @@ impl BuiltinArgs {
         match self {
             BuiltinArgs::TypeOf(_) => Builtin::TypeOf,
             BuiltinArgs::TypeInfo(_) => Builtin::TypeInfo,
+            BuiltinArgs::Struct(_) => Builtin::Struct,
             BuiltinArgs::Field(..) => Builtin::Field,
         }
     }
@@ -118,7 +120,7 @@ impl BuiltinArgs {
     /// The operands in source order.
     pub fn operands(&self) -> impl Iterator<Item = &Expr> {
         let (first, second) = match self {
-            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) => (x, None),
+            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) | BuiltinArgs::Struct(x) => (x, None),
             BuiltinArgs::Field(b, k) => (b, Some(k)),
         };
         std::iter::once(&**first).chain(second.map(|k| &**k))
@@ -133,13 +135,16 @@ impl BuiltinArgs {
         Some(match builtin {
             Builtin::TypeOf => BuiltinArgs::TypeOf(args.next()?),
             Builtin::TypeInfo => BuiltinArgs::TypeInfo(args.next()?),
+            Builtin::Struct => BuiltinArgs::Struct(args.next()?),
             Builtin::Field => BuiltinArgs::Field(args.next()?, args.next()?),
         })
     }
 
     fn take_children(&mut self, work: &mut Vec<Pending>) {
         match self {
-            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) => take_expr(x, work),
+            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) | BuiltinArgs::Struct(x) => {
+                take_expr(x, work);
+            }
             BuiltinArgs::Field(b, k) => {
                 take_expr(b, work);
                 take_expr(k, work);
@@ -148,12 +153,13 @@ impl BuiltinArgs {
     }
 }
 
-/// A builtin of slice 4: `@TypeOf`, `@typeInfo`, and `@field`. `@Struct` and `@ports` are not
-/// names here until their phases.
+/// A builtin of slice 4: `@TypeOf`, `@typeInfo`, `@Struct`, and `@field`. `@ports` is not a
+/// name here until its phase.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Builtin {
     TypeOf,
     TypeInfo,
+    Struct,
     Field,
 }
 
@@ -164,6 +170,7 @@ impl Builtin {
         match self {
             Builtin::TypeOf => "TypeOf",
             Builtin::TypeInfo => "typeInfo",
+            Builtin::Struct => "Struct",
             Builtin::Field => "field",
         }
     }
@@ -178,6 +185,7 @@ impl Builtin {
         match name {
             "TypeOf" => Some(Builtin::TypeOf),
             "typeInfo" => Some(Builtin::TypeInfo),
+            "Struct" => Some(Builtin::Struct),
             "field" => Some(Builtin::Field),
             _ => None,
         }
@@ -186,7 +194,7 @@ impl Builtin {
     /// The number of operands: 2 for `@field`, 1 for each other builtin.
     pub(crate) fn arity(self) -> usize {
         match self {
-            Builtin::TypeOf | Builtin::TypeInfo => 1,
+            Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct => 1,
             Builtin::Field => 2,
         }
     }
@@ -196,6 +204,7 @@ impl Builtin {
         match self {
             Builtin::TypeOf => "@TypeOf(x)",
             Builtin::TypeInfo => "@typeInfo(T)",
+            Builtin::Struct => "@Struct(fs)",
             Builtin::Field => "@field(x, k)",
         }
     }
@@ -407,6 +416,11 @@ pub enum TypeExpr {
         pos: Pos,
         params: Vec<FnParam>,
         ret: Box<TypeExpr>,
+    },
+    /// A builtin in a type position, such as `@TypeOf(x)`: the same form as in an expression.
+    Builtin {
+        pos: Pos,
+        args: BuiltinArgs,
     },
 }
 
@@ -778,6 +792,7 @@ impl TypeExpr {
                 take_params(params, work);
                 take_type(ret, work);
             }
+            TypeExpr::Builtin { args, .. } => args.take_children(work),
             TypeExpr::Name { .. } | TypeExpr::Unit { .. } => {}
         }
     }

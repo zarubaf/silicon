@@ -405,6 +405,9 @@ impl Walk<'_> {
                 self.expr(len, depth + 1);
             }
             TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret, depth + 1),
+            TypeExpr::Builtin { args, .. } => {
+                self.builtin(args, depth + 1);
+            }
         }
     }
 
