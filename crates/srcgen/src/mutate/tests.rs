@@ -91,7 +91,11 @@ fn all(p: &Program, kind: Kind) -> Vec<Mutant> {
 fn index(kind: Kind) -> u32 {
     let at = KINDS.iter().position(|&k| k == kind).unwrap();
     let queries = KINDS.len() - QUERY_KINDS;
-    let draw = if at >= queries {
+    let gaps = OLD_KINDS + PORT_KINDS + FIELD_KINDS;
+    let draw = if (gaps..queries).contains(&at) {
+        // The digit above those of the queries picks the kind of the gaps.
+        (at - gaps) * GAP_SPLIT * GAP_ODDS + (GAP_ODDS - 1) * GAP_SPLIT
+    } else if at >= queries {
         // The digit above those of `EarlyStep` picks the kind of queries.
         (at - queries) * QUERY_SPLIT * QUERY_ODDS + (QUERY_ODDS - 1) * QUERY_SPLIT
     } else if at >= OLD_KINDS + PORT_KINDS {
@@ -2245,5 +2249,39 @@ fn the_kinds_of_queries_get_predictions() {
             codes.is_empty() || predicted >= 5,
             "{kind:?} predicted {predicted} mutants"
         );
+    }
+}
+
+/// The kinds of the gaps of `@field`, with the code that their mutants
+/// predict.
+const GAP_CODES: [(Kind, &[&str]); 5] = [
+    (Kind::KeyValue, &["S011"]),
+    (Kind::TargetMutation, &["S016"]),
+    (Kind::TargetBase, &["S017"]),
+    (Kind::PortPlace, &["S010"]),
+    (Kind::InstanceData, &["S010"]),
+];
+
+/// Each kind of the gaps gets at least 5 mutants and 5 predictions over the
+/// fixed programs, and each prediction is one of its codes.
+#[test]
+fn the_kinds_of_the_gaps_get_predictions() {
+    let ps = programs();
+    for (kind, codes) in GAP_CODES {
+        let (mut mutants, mut predicted) = (0, 0);
+        for p in &ps {
+            for site in 0..sites(kind, &p.items, &p.top).min(4) {
+                let m = mutate(p, index(kind), u32::try_from(site).unwrap());
+                let own = apply(kind, &mut p.items.clone(), &p.top, site).map(|(what, _)| what);
+                assert_eq!(own.as_deref(), Some(m.what.as_str()), "{kind:?}");
+                mutants += 1;
+                if let Some(code) = m.expect {
+                    assert!(codes.contains(&code), "{kind:?} predicted {code}");
+                    predicted += 1;
+                }
+            }
+        }
+        assert!(mutants >= 5, "{kind:?} has {mutants} mutants");
+        assert!(predicted >= 5, "{kind:?} predicted {predicted} mutants");
     }
 }

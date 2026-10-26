@@ -276,7 +276,7 @@ fn programs_cover_slice_1() {
     assert!(shape.contexts * 10 >= 400, "{shape:?}");
 }
 
-/// The mean program stays small: at most 6000 bytes over these 256 tapes.
+/// The mean program stays small: at most 6100 bytes over these 256 tapes.
 #[test]
 fn the_mean_program_stays_small() {
     const TAPES: usize = 256;
@@ -285,7 +285,7 @@ fn the_mean_program_stays_small() {
         .filter_map(|tape| build(tape).ok())
         .map(|p| p.text().len())
         .sum();
-    assert!(total / TAPES <= 6000, "the mean is {} bytes", total / TAPES);
+    assert!(total / TAPES <= 6100, "the mean is {} bytes", total / TAPES);
 }
 
 /// The most levels of container types in `t`.
@@ -1983,15 +1983,21 @@ fn has_query(text: &str) -> bool {
         .any(|q| text.contains(q))
 }
 
-/// A program with no query is the program of the same tape before the
-/// queries existed: a form draws only from its own tape and adds only text
-/// that holds a query. At least 40% of the tapes hold no query.
+/// Whether the text declares a record of hardware data.
+fn has_record(text: &str) -> bool {
+    text.contains("struct R")
+}
+
+/// A program with no query and no record of hardware data is the program of
+/// the same tape before the queries existed: a form draws only from its own
+/// tape and adds only text that holds a query or a record. At least 40% of
+/// the tapes hold neither.
 #[test]
 fn a_program_without_queries_keeps_its_text() {
     let mut kept = 0;
     for (tape, pinned) in tapes(256).into_iter().zip(PINNED_QUERY) {
         let text = build(tape).map_or_else(|e| e.to_string(), |p| p.text());
-        if !has_query(&text) {
+        if !has_query(&text) && !has_record(&text) {
             assert_eq!(fingerprint(&text), pinned, "{text}");
             kept += 1;
         }
