@@ -167,6 +167,12 @@ impl Resolved {
         Some(self.users + k)
     }
 
+    /// The index in [`Resolved::ast`] of the prelude struct `FieldInfo`. It always exists.
+    #[must_use]
+    pub fn field_info_struct(&self) -> usize {
+        self.users + prelude::FIELD_INFO
+    }
+
     /// The syntax depth of the parse, which sizes the stack of each pass over the AST.
     #[must_use]
     pub fn depth(&self) -> usize {
