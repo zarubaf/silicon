@@ -1,0 +1,18 @@
+// T3 of the work-counter tests of `@Struct` (issue #345). The argument is a list of N fields, and the module builds the
+// generated record type from it 8 times. Each call charges the size of the argument, 1 plus the length for each name,
+// the size of the new type term, and the metadata sums. A scan of the member map for each name, or a full compare of
+// the key at each look-up, makes more work than the charge pays for, and the work escapes the bound.
+// SCALE struct_fields 16 32 64 128 256
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut fs = list(FieldInfo);
+// REPEAT i {N}
+    push(fs, FieldInfo("f{i}", UInt[8]));
+// END
+// REPEAT i 8
+    let t{i} = @Struct(fs);
+// END
+    o := x;
+}
