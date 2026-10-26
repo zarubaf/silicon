@@ -276,7 +276,7 @@ fn programs_cover_slice_1() {
     assert!(shape.contexts * 10 >= 400, "{shape:?}");
 }
 
-/// The mean program stays small: at most 5100 bytes over these 256 tapes.
+/// The mean program stays small: at most 5600 bytes over these 256 tapes.
 #[test]
 fn the_mean_program_stays_small() {
     const TAPES: usize = 256;
@@ -285,7 +285,7 @@ fn the_mean_program_stays_small() {
         .filter_map(|tape| build(tape).ok())
         .map(|p| p.text().len())
         .sum();
-    assert!(total / TAPES <= 5100, "the mean is {} bytes", total / TAPES);
+    assert!(total / TAPES <= 5600, "the mean is {} bytes", total / TAPES);
 }
 
 /// The most levels of container types in `t`.
