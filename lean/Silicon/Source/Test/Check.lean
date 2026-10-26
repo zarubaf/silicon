@@ -797,18 +797,23 @@ builtin is `S007` "Index of a builtin type" at the `@`, at 1, 2, and 3 levels.
 #guard fails (modBody "wire w: UInt[1];\nlet xs = [1, 2];\nlet y: @field(xs, w) = 0;") .S005 4 19
 #guard fails (modBody "let x = 1;\nlet y: @TypeOf(x)[8] = x;") .S007 3 8
 #guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[8] = x;") ==
-  "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+  "`@TypeOf(...)` in a type position takes 0 argument(s), but it has 1; the type is " ++
+    "complete, so remove the index"
 #guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[8][2] = x;") ==
-  "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+  "`@TypeOf(...)` in a type position takes 0 argument(s), but it has 1; the type is " ++
+    "complete, so remove the index"
 /-! In a chain of indices, only the first index after the builtin reports, at each depth. -/
 #guard fails (modBody "let x = 1;\nlet y: @TypeOf(x)[1][2][3] = x;") .S007 3 8
 #guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[1][2, 3][4] = x;") ==
-  "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+  "`@TypeOf(...)` in a type position takes 0 argument(s), but it has 1; the type is " ++
+    "complete, so remove the index"
 #guard message (modBody "let fs = [];\nlet y: @Struct(fs)[1, 2][3][4][5] = 0;") ==
-  "a type from `@Struct` takes 0 argument(s), but it has 2; remove the index after `@Struct(...)`"
+  "`@Struct(...)` in a type position takes 0 argument(s), but it has 2; the type is " ++
+    "complete, so remove the index"
 #guard fails (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") .S007 3 9
 #guard message (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") ==
-  "a type from `@Struct` takes 0 argument(s), but it has 2; remove the index after `@Struct(...)`"
+  "`@Struct(...)` in a type position takes 0 argument(s), but it has 2; the type is " ++
+    "complete, so remove the index"
 
 /-! `@ports` gives a list and not a type, so its index in a type has its own text (section 6.2). -/
 #guard fails (modBody "let u = 1;\nlet y: @ports(u)[0] = 0;") .S007 3 8

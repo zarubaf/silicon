@@ -661,13 +661,13 @@ theorem field_f (p : Pos) (f : Ident) (v : Val) :
 theorem tyStep_f (t : Ty) (s : QueryStep) : Follows cap (tyStep t s) (tyStep t s) := by
   unfold tyStep; follows [noEnumField_f, fieldBy_f, within_f]
 
-theorem valueStep_f (v : Val) (s : QueryStep) :
-    Follows cap (valueStep v s) (valueStep v s) := by
+theorem valueStep_f (g : Builtin) (v : Val) (s : QueryStep) :
+    Follows cap (valueStep g v s) (valueStep g v s) := by
   unfold valueStep
   follows [noEnumField_f, fieldBy_f, within_f, pickKey_f, selectKey_f, fieldKeyBy_f]
 
-theorem queryStep_f (q : Query) (s : QueryStep) :
-    Follows cap (queryStep q s) (queryStep q s) := by
+theorem queryStep_f (g : Builtin) (q : Query) (s : QueryStep) :
+    Follows cap (queryStep g q s) (queryStep g q s) := by
   unfold queryStep; follows [tyStep_f, valueStep_f]
 
 mutual
@@ -700,6 +700,13 @@ theorem counts_f (p : Pos) (t : Ty) : Follows cap (counts p t) (counts p t) := b
 
 theorem typeInfo_f (p : Pos) (ti t : Ty) : Follows cap (typeInfo p ti t) (typeInfo p ti t) := by
   unfold typeInfo; follows [counts_f, infoOf_f, bounded_f]
+
+theorem portsArg_f (pos : Pos) (q : Query) : Follows cap (portsArg pos q) (portsArg pos q) := by
+  unfold portsArg; follows
+
+theorem portsOf_f (p : Pos) (pi : Ty) (c : Iface) :
+    Follows cap (portsOf p pi c) (portsOf p pi c) := by
+  unfold portsOf; follows [bounded_f]
 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
   unfold zero; follows [bounded_f]
@@ -1097,8 +1104,8 @@ theorem fieldOut_f (p : Pos) (b : Resolve.Expr) (kp : Pos) (o : Out) (key : Valu
   unfold fieldOut
   follows [baseData_f, fieldKeyOf_f, fieldKeyBy_f, pick_f, keyPort_f, portPart_f]
 
-theorem queryField_f (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) :
-    Follows cap (queryField p b kp q key) (queryField p b kp q key) := by
+theorem queryField_f (g : Builtin) (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query)
+    (key : Value) : Follows cap (queryField g p b kp q key) (queryField g p b kp q key) := by
   unfold queryField; follows [fieldKeyOf_f, queryStep_f, keyPort_f]
 
 theorem childEntry_f (p kp : Pos) (id : Nat) (path : Names.Path) (i : Iface) (t : Ty) (y : Nat)

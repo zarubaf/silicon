@@ -24,7 +24,9 @@ fields of a struct entry and the variants of an enum entry. It charges them and 
 result before the record exists.
 `@Struct(fs)` checks the kind of its argument here (`structArg`), and it makes its generated
 record type here (`generated`), after the copy of its argument (section 6.2, **`@Struct`
-order**). A builtin in a type position checks its value here (`builtinTy`).
+order**). `@ports(h)` checks the kind of the part of its operand here (`portsArg`). It builds its
+list of `PortInfo` records here (`portsOf`), in the order of the schema of the interface. A
+builtin in a type position checks its value here (`builtinTy`).
 -/
 namespace Silicon.Source.Eval
 
@@ -101,15 +103,25 @@ def tyStep (t : Ty) : QueryStep → M Ty
     | _ => fail .S010 q s!"an index needs an array, a list, or a tuple, not {partText t}"
 
 /-!
+The fix `{h}` of "String index in a query" for the query `g` (section 6.2). Only `@TypeOf` and
+`@ports` have an operand with steps.
+-/
+def stringIndexHint : Builtin → String
+  | .ports => "`@ports` takes an instance handle, so pass the name of an instance"
+  | .typeOf | .typeInfo | .struct | .field =>
+    "an index of a string has the type `String`, so write `String` instead of the query"
+
+/-!
 The step `s` on the value `v` that holds its parts (section 9.3). A container node gives its
 element as it is, so a reference in it charges no zero size. A list node checks the index
 against its own length. Each other value takes the step of a place (`pickKey`, `selectKey`,
 `fieldKeyBy`). A static value selects there with no charge, and another value fails there, for
 example a memory with `S010`. An index of a string is "String index in a query", because the
 walk selects in types and a `String` has no element type. The text names no value of the
-string. The result is the number of the part, the part, and the field type of a field.
+string, and its fix names the query `g` (`stringIndexHint`). The result is the number of the
+part, the part, and the field type of a field.
 -/
-def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
+def valueStep (g : Builtin) (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
   match s, v with
   | .index _ q k, .agg (.array _ xs) | .index _ q k, .agg (.tuple _ xs)
   | .index _ q k, .agg (.list _ _ xs) => do
@@ -126,8 +138,7 @@ def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
     | some x => return (k, x.val, some ft)
     | none => fail .S010 q s!"{v.text} has no field `{shown}`"
   | .index p _ _, .static (.str _) =>
-    fail .S010 p ("a query cannot index a string; an index of a string has the type `String`, " ++
-      "so write `String` instead of the query")
+    fail .S010 p s!"a query cannot index a string; {stringIndexHint g}"
   | .index p q k, v => do
     let (j, w) ← pickKey p q v k
     return (j, w, none)
@@ -139,19 +150,19 @@ def valueStep (v : Val) (s : QueryStep) : M (Nat × Val × Option Ty) := do
     return (k, w, some ft)
 
 /-!
-The step `s` on the part `q` (section 9.3). A part that keeps only its type selects in the type
-(`tyStep`). Another part selects in its value (`valueStep`). A field gives its field type as
-the declared type of the part. Another step gives the part of the declared type, else of the
-stored type of the container. A static tuple without a declared type has none.
+The step `s` of an operand of the query `g` on the part `q` (section 9.3). A part that keeps only
+its type selects in the type (`tyStep`). Another part selects in its value (`valueStep`). A field
+gives its field type as the declared type of the part. Another step gives the part of the declared
+type, else of the stored type of the container. A static tuple without a declared type has none.
 -/
-def queryStep (q : Query) (s : QueryStep) : M Query := do
+def queryStep (g : Builtin) (q : Query) (s : QueryStep) : M Query := do
   match q with
   | .type t => return .type (← tyStep t s)
   | .value v decl =>
     match v.typeOnly? with
     | some t => return .type (← tyStep t s)
     | none => do
-      let (k, w, ft) ← valueStep v s
+      let (k, w, ft) ← valueStep g v s
       return .value w (ft <|> ((decl <|> v.stored?).bind (partTy · k)))
 
 /-!
@@ -444,6 +455,62 @@ def generated (p : Pos) (xs : List (String × Ty)) : M Ty := do
   let (specs, t) := (← get).specs.generate fs ms
   modify fun s => { s with specs }
   return t
+
+/-!
+The fix `{h}` of "`@ports` of a non-instance" for the part `q` (section 6.2). It reads only the
+part and its type. The three cases are a container of a type with the handle flag, a `Type`
+value of an `Instance` type, and each other part.
+-/
+def portsHint : Query → String
+  | .value (.agg a) _ =>
+    if a.ty?.any (·.info.handles) then "select one instance, for example `xs[0]`" else instHint
+  | .value (.static (.type (.inst ..))) _ =>
+    "a type has no ports; pass the handle of `instance u = M(...);`"
+  | _ => instHint
+where
+  instHint := "pass the name of an instance, for example `u` of `instance u = M(...);`"
+
+/-!
+The interface of the part `q` at the end of the operand walk of `@ports`, at the operand `pos`
+(section 6.2, **`@ports` order**, step 3). An `Instance` handle gives its interface, with no
+copy. Each other part is `S010` "`@ports` of a non-instance". A part that keeps only its type
+names its type (`partText`), and a value names itself in the form of slice 3b.
+-/
+def portsArg (pos : Pos) : Query → M Iface
+  | .value (.handle (.inst _ _ c _)) _ => pure c
+  | q => do
+    let a := match q with
+      | .type t => partText t
+      | .value v _ => v.about
+    fail .S010 pos s!"`@ports` takes an instance handle, not {a}; {portsHint q}"
+
+/-!
+The `PortInfo` record of the port `q` of an interface with the domain `d` (section 9.3). `pi` and
+`pk` are the struct types `PortInfo` and `PortKey`. The name is the public name, never the core
+name. The type is the data type, also for an input.
+-/
+def portInfo (pi pk : Ty) (d : String) (q : Port) : Value :=
+  let key : Value := match q.key with
+    | some k => .record pk #[.str q.name, .bool true, .int k]
+    | none => .record pk #[.str q.name, .bool false, .int 0]
+  .record pi #[key, .type q.ty, .bool q.input, .str d]
+
+/-!
+`@ports` of the interface `c` at its `@` `p`, after the use of `PortInfo` gave `pi` (section 6.2,
+**`@ports` order**, steps 5 to 8). The field type of `key` gives `PortKey`. The call charges 1 for
+each port, from the stored schema. Then the result gets its depth check (`S015`), and its
+recursive size charges. A name and a domain are ASCII, so a string has the size 1 plus its
+length. Only then the list exists, in the order of the schema. The domain is the name of the
+`domains(d)` clause of the child, `clock` without a clause, and empty for `domains()`.
+-/
+def portsOf (p : Pos) (pi : Ty) (c : Iface) : M Value := do
+  let some (_, pk) := ((← get).specs.parts pi).bind (·[0]?)
+    | fail .S010 p s!"{pi.text} has no entry"
+  charge p c.schema.size
+  let v : Value := .list pi (c.schema.map (portInfo pi pk (c.domain.getD "")))
+  bounded p v.depth
+  charge p v.size
+  return v
 
 /-!
 The fix `{h}` of "Builtin as a type" for the builtin `q` (section 6.2). `@TypeOf` and `@Struct`

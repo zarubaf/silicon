@@ -2422,13 +2422,14 @@ def fieldOut (p : Pos) (b : Resolve.Expr) (kp : Pos) (o : Out) (key : Value) : M
   | .port id path iface ty y name k => portPart p id path (← keyPort kp iface ty b y name k)
 
 /-!
-Steps 5 to 9 of an `@field` step at `p` of a query operand (section 6.2, **`@TypeOf` order**). The
-step is on the part `q`, with the base `b` and the static key `key` at `kp`. It reads no register
-and no wire: a part that keeps only its type selects in the type. The base kind and the key kind
-check as in an expression (`fieldKeyOf`). Then the step selects as a field, an index, or a child
-port of a query (`queryStep`, `keyPort`, `portQuery`).
+Steps 5 to 9 of an `@field` step at `p` of an operand of the query `g` (section 6.2, **`@TypeOf`
+order**). The step is on the part `q`, with the base `b` and the static key `key` at `kp`. It reads
+no register and no wire: a part that keeps only its type selects in the type. The base kind and the
+key kind check as in an expression (`fieldKeyOf`). Then the step selects as a field, an index, or a
+child port of a query (`queryStep`, `keyPort`, `portQuery`).
 -/
-def queryField (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) : M Query := do
+def queryField (g : Builtin) (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) :
+    M Query := do
   let (base, a) : Option FieldBase × (Unit → String) := match q with
     | .type t => (Ty.fieldBase? t, fun _ => Ty.about t)
     | .value v _ =>
@@ -2437,8 +2438,8 @@ def queryField (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value)
       | none => (v.fieldBase?, fun _ => v.about)
   let some base := base | fail .S010 b.pos (fieldBaseText (a ()))
   match ← fieldKeyOf kp base a key with
-  | .field y name => queryStep q (.field kp y name (strText name))
-  | .index k => queryStep q (.index p kp k)
+  | .field y name => queryStep g q (.field kp y name (strText name))
+  | .index k => queryStep g q (.index p kp k)
   | .port id path iface ty y name k => return portQuery id path (← keyPort kp iface ty b y name k)
 
 /-!
@@ -2617,7 +2618,7 @@ def queryWalk (ev : Resolve.Expr → M (Option Out)) (q : Builtin) : Query → L
       queryWalk ev q (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
     else
       let port ← portFind fp iface ty ((← read).field f.pos) f.name
-      let r ← queryStep (portQuery id path port) (.index ip k.pos (← queryKey ev q k))
+      let r ← queryStep q (portQuery id path port) (.index ip k.pos (← queryKey ev q k))
       queryWalk ev q r rest
   | .value (.handle (.inst id path iface ty)) _, .field fp f :: rest => do
     charge fp 1
@@ -2625,19 +2626,19 @@ def queryWalk (ev : Resolve.Expr → M (Option Out)) (q : Builtin) : Query → L
     queryWalk ev q (portQuery id path port) rest
   | cur, .index p [i] :: rest => do
     charge p 1
-    queryWalk ev q (← queryStep cur (.index p i.pos (← queryKey ev q i))) rest
+    queryWalk ev q (← queryStep q cur (.index p i.pos (← queryKey ev q i))) rest
   | _, .index p _ :: _ => do
     charge p 1
     fail .S010 p "an index of a value has one argument"
   | cur, .select p r i :: rest => do
     charge p 1
-    queryWalk ev q (← queryStep cur (.select p r i)) rest
+    queryWalk ev q (← queryStep q cur (.select p r i)) rest
   | cur, .field p f :: rest => do
     charge p 1
-    queryWalk ev q (← queryStep cur (.field p ((← read).field f.pos) f.name f.name)) rest
+    queryWalk ev q (← queryStep q cur (.field p ((← read).field f.pos) f.name f.name)) rest
   | cur, .key p b k :: rest => do
     charge p 1
-    queryWalk ev q (← queryField p b k.pos cur (← queryKey ev q k)) rest
+    queryWalk ev q (← queryField q p b k.pos cur (← queryKey ev q k)) rest
 termination_by _ sels => sels.length
 
 /-!
@@ -3056,8 +3057,12 @@ mutual
           if (← changesOf o) == c then return some r
           charge p r.value.size
           return some ⟨r.value, false, none⟩
-        -- TODO(#346): evaluate `@ports` (section 9.3).
-        | .builtin (.ports p _) => fail .S004 p "a builtin is not supported yet"
+        | .builtin (.ports p x) => do
+          -- Steps 2 to 4 of the `@ports` order (section 6.2): the operand walk, the kind, then
+          -- the use of `PortInfo`, which completes `PortKey`.
+          let c ← portsArg x.pos (← queryPart n .ports x)
+          let pi ← spec n p (Resolve.portInfoIndex (← read).items.size) []
+          return some ⟨.static (← portsOf p pi c), false, none⟩
         | .«match» p x as => do
           let v ← operand x.pos x (← need x (← eval n x)).value
           let t ← scrutTy x.pos v
