@@ -1312,7 +1312,11 @@ impl<'a> Walk<'a> {
             return;
         }
         match e {
-            SExpr::Int(..) | SExpr::Bool(_) | SExpr::Str(_) | SExpr::NewList(_) => {}
+            SExpr::Int(..)
+            | SExpr::Bool(_)
+            | SExpr::Str(_)
+            | SExpr::NewList(_)
+            | SExpr::Query(_) => {}
             SExpr::Name(n) => self.rename(n),
             SExpr::Call(f, args) => {
                 self.rename(f);

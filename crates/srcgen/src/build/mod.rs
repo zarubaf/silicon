@@ -71,7 +71,9 @@ mod lists;
 mod matches;
 mod mutcalls;
 mod ports;
+mod query;
 mod record;
+mod reflect;
 mod stat;
 mod strings;
 mod temps;
@@ -182,6 +184,7 @@ enum Lane {
     Port,
     Temp,
     Field,
+    Query,
 }
 
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
@@ -226,6 +229,13 @@ impl Names {
         *n += 1;
         name
     }
+}
+
+/// Whether the static expression `e` names the root `root`.
+fn reads_root(e: &SExpr, root: &str) -> bool {
+    crate::program::sexpr(e)
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|token| token == root)
 }
 
 /// A hardware name in scope: its expression (`x` or `u.q`), its type
@@ -295,9 +305,7 @@ impl Ctx {
     fn forget(&mut self, root: &str) {
         for h in &mut self.hw {
             let reads = h.ty.as_ref().is_some_and(|t| match t {
-                Ty::UInt(w) | Ty::SInt(w) => crate::program::sexpr(w)
-                    .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-                    .any(|token| token == root),
+                Ty::UInt(w) | Ty::SInt(w) => reads_root(w, root),
                 Ty::Bool | Ty::Enum(_) => false,
             });
             if reads {
@@ -570,6 +578,9 @@ struct Stats {
     early_groups: u32,
     field_scalar_keys: u32,
     field_entry_keys: u32,
+    query_groups: u32,
+    query_widths: u32,
+    query_mixes: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -595,6 +606,9 @@ struct Builder {
     /// The same numbers from the end, mixed with a fourth constant. The
     /// `@field` spellings of a read draw from it.
     field: Tape,
+    /// The same numbers from the end, mixed with a fifth constant. The
+    /// queries draw from it.
+    query: Tape,
     /// The tape that `on_side`, `on_hand`, or `on_port` has swapped into
     /// `tape`, if any.
     swapped: Option<Lane>,
@@ -629,6 +643,10 @@ struct Builder {
     /// `diagnostic`, and the groups of statements that use them.
     key_fns: [Option<String>; 3],
     key_groups: u32,
+    /// The names that a query can read in the frames that are open, and the
+    /// groups of queries made so far.
+    ops: Vec<query::Op>,
+    queries: u32,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
@@ -691,6 +709,7 @@ impl Builder {
             Lane::Port => &mut self.port,
             Lane::Temp => &mut self.temp,
             Lane::Field => &mut self.field,
+            Lane::Query => &mut self.query,
         };
         std::mem::swap(&mut self.tape, parked);
     }
@@ -741,6 +760,17 @@ impl Builder {
                     .collect::<Vec<_>>()
                     .into_iter(),
             },
+            query: Tape {
+                numbers: tape
+                    .iter()
+                    .rev()
+                    .map(|n| {
+                        let m = n.wrapping_mul(0x27D4_EB2F);
+                        m ^ (m >> 14)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            },
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -763,6 +793,8 @@ impl Builder {
             max_fields: field::MAX_FIELDS,
             key_fns: [None, None, None],
             key_groups: 0,
+            ops: Vec::new(),
+            queries: 0,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
             port_helpers: Vec::new(),

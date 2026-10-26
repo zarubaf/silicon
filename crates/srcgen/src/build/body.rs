@@ -3,6 +3,7 @@
 //! statements.
 
 use super::hw::{DEPTH, Want};
+use super::reflect::RTy;
 use super::stat::{self, Kind, Reach};
 use super::{
     Builder, Built, COUNT, Ctx, ENVS, HELPERS, Helper, Hw, HwEnum, INPUTS, INSTANCES, MODULE_STMTS,
@@ -414,8 +415,10 @@ impl Builder {
             instances: Vec::new(),
         };
         let mut body = Vec::new();
+        self.ops.clear();
         for (n, t) in &sig.inputs {
             body.push(Stmt::Input(n.clone(), t.clone()));
+            self.add_op(n, RTy::of(t));
             let types = self.types(t, &ctx.envs)?;
             ctx.hw.push(Hw {
                 expr: HExpr::Name(n.clone()),
@@ -475,6 +478,7 @@ impl Builder {
             values.push((n, w, value));
         }
         self.mix_port(&ctx, &mut values);
+        self.mix_query(&mut values);
         for (n, _, value) in values {
             body.push(Stmt::Connect(Place::Name(n), value));
         }
@@ -498,6 +502,7 @@ impl Builder {
             NESTED_STMTS
         };
         let mut out = Vec::new();
+        let ops = self.ops.len();
         let mut regs = Vec::new();
         let mut eregs = Vec::new();
         let mut instances = 0;
@@ -544,6 +549,7 @@ impl Builder {
                 _ => self.binding(ctx, &mut m.names, &mut out, false)?,
             }
             self.key_group(ctx, &mut m.names, &mut out)?;
+            self.query_group(ctx, &mut m.names, &mut out)?;
         }
         for _ in 0..extra {
             self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
@@ -554,6 +560,9 @@ impl Builder {
         self.close_regs(ctx, regs, &mut out)?;
         self.close_enum_regs(ctx, eregs, &mut out);
         self.close_pending(ctx, &mut out)?;
+        if level > 0 {
+            self.ops.truncate(ops);
+        }
         Ok(out)
     }
 
@@ -688,7 +697,9 @@ impl Builder {
     fn wire(&mut self, ctx: &mut Ctx, names: &mut Names, out: &mut Vec<Stmt>) -> Built {
         let (ty, want) = self.decl(ctx)?;
         let name = names.fresh("w");
-        out.push(Stmt::Wire(name.clone(), ty));
+        let shown = self.query_ty(ctx, ty.clone(), &want);
+        out.push(Stmt::Wire(name.clone(), shown));
+        self.add_op(&name, RTy::of(&ty).map(|t| RTy::Wire(Box::new(t))));
         let value = self.driver(ctx, &want);
         out.push(Stmt::Connect(Place::Name(name.clone()), value));
         ctx.hw.push(Hw {
@@ -711,7 +722,9 @@ impl Builder {
         let (ty, want) = self.decl(ctx)?;
         let reset = self.fit(&want.types, self.reach(ctx), &ctx.envs);
         let name = names.fresh("r");
-        out.push(Stmt::Reg(name.clone(), ty, reset));
+        let shown = self.query_ty(ctx, ty.clone(), &want);
+        out.push(Stmt::Reg(name.clone(), shown, reset));
+        self.add_op(&name, RTy::of(&ty).map(|t| RTy::Reg(Box::new(t))));
         ctx.hw.push(Hw {
             expr: HExpr::Name(name.clone()),
             ty: want.ty.clone(),
