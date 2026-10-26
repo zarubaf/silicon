@@ -1,0 +1,9 @@
+// S022: two fields with one name. The text names both indices, counted from 0.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S022 @+2
+    // expected-message: the field `a` occurs at the indices 0 and 2 of `@Struct`; give each field its own name
+    let t = @Struct([FieldInfo("a", Bool), FieldInfo("b", Bool), FieldInfo("a", UInt[8])]);
+    o := true;
+}

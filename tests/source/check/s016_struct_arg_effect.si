@@ -1,0 +1,13 @@
+// S016: an argument of `@Struct` has no graph effect such as `diagnostic`. The error is at the effect inside the call.
+// TOP M()
+fn note() -> List[FieldInfo] {
+    // expected-error S016 @+2
+    // expected-message: an argument of `@Struct` has no graph effect such as `diagnostic`; call `diagnostic` before `@Struct`, keep the result in a `let`, and use that name in the argument
+    diagnostic("k", 0);
+    return list(FieldInfo);
+}
+module M() domains() {
+    output o: Bool;
+    let t = @Struct(note());
+    o := true;
+}

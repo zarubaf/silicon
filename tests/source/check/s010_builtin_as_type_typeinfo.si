@@ -1,0 +1,9 @@
+// S010: a type position needs a `Type`, and `@typeInfo` gives a record. The fix selects a `Type` from it.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: a type position needs a `Type`, but `@typeInfo` gives a value of `TypeInfo`; select a `Type` from it, for example `@field(@typeInfo(T), "element")`
+    let y: @typeInfo(Bool) = true;
+    o := true;
+}

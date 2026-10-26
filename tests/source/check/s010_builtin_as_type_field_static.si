@@ -1,0 +1,10 @@
+// S010: `@field(xs, 0)` of a static list gives a `Nat`, not a `Type`. The text names the value.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    let xs = [1, 2];
+    // expected-error S010 @+2
+    // expected-message: a type position needs a `Type`, but `@field` gives a value of `Int`; select a part of type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part
+    let y: @field(xs, 0) = true;
+    o := true;
+}

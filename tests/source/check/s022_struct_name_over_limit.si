@@ -1,0 +1,9 @@
+// S022: a name of 65 characters that breaks the name rule prints its first 64 characters, then `...` and its number of characters.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S022 @+2
+    // expected-message: `1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (65 characters)` is not a valid field name; use an ASCII letter or `_`, then letters, digits, or `_`
+    let t = @Struct([FieldInfo("1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Bool)]);
+    o := true;
+}

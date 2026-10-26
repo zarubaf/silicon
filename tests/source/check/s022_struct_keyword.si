@@ -1,0 +1,9 @@
+// S022: a field name of `@Struct` is not a keyword.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S022 @+2
+    // expected-message: `let` is a keyword, so it cannot be a field name; choose another name
+    let t = @Struct([FieldInfo("let", Bool)]);
+    o := true;
+}

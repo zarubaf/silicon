@@ -1,0 +1,10 @@
+// S019: `type R = @Struct([FieldInfo("a", R)]);` uses the alias while it is in progress. The error is at that use.
+// TOP M()
+// expected-error S019 @+2
+// expected-message: `R` depends on itself
+type R = @Struct([FieldInfo("a", R)]);
+module M() domains() {
+    output o: Bool;
+    let r: R = R(true);
+    o := true;
+}

@@ -1,0 +1,15 @@
+// S007: a builtin in a type position gives a complete type, so an index after it is an error in pass 4. The index `key()` never evaluates, so its `diagnostic` makes no record.
+// TOP M()
+// OBSERVE-NOT: (record
+fn key() -> Nat {
+    diagnostic("key", 0);
+    return 8;
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: Bool;
+    // expected-error S007 @+2
+    // expected-message: a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`
+    let y: @TypeOf(x)[key()] = x;
+    o := true;
+}

@@ -1,0 +1,10 @@
+// S007: a builtin in a type position gives a complete type, so an index after it is an error. Only the first index of a chain reports.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: Bool;
+    // expected-error S007 @+2
+    // expected-message: a type from `@TypeOf` takes 0 argument(s), but it has 2; remove the index after `@TypeOf(...)`
+    let y: @TypeOf(x)[1, 2][3][4] = x;
+    o := true;
+}

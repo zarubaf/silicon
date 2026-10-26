@@ -1,0 +1,13 @@
+// S010: a bare record of a user struct `FieldInfo` gives the same text as an array of its records.
+// TOP M()
+struct FieldInfo {
+    name: String,
+    ty: Type,
+}
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@Struct` takes the prelude `FieldInfo`, not a value of `crate::FieldInfo`; a user struct `FieldInfo` hides the prelude one, so rename it, or take the fields from `@typeInfo(T).fields`
+    let t = @Struct(FieldInfo("a", Bool));
+    o := true;
+}

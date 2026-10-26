@@ -1,0 +1,9 @@
+// S010: a single `FieldInfo` is a record, not a list. `@Struct` takes the list or the array.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not a value of `FieldInfo`; build each field with the prelude `FieldInfo(name, ty)`
+    let t = @Struct(FieldInfo("a", Bool));
+    o := true;
+}
