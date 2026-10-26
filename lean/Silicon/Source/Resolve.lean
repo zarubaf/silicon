@@ -564,6 +564,9 @@ so the read takes constant work.
 -/
 def responseIndex (size : Nat) : Nat := size - preludeCount
 
+/-! The index of `FieldInfo`, the second prelude struct, in a resolved file of `size` items. -/
+def fieldInfoIndex (size : Nat) : Nat := responseIndex size + 1
+
 /-! The index of `TypeInfo`, the third prelude struct, in a resolved file of `size` items. -/
 def typeInfoIndex (size : Nat) : Nat := responseIndex size + 2
 

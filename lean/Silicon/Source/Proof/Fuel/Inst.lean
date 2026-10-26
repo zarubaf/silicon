@@ -64,6 +64,24 @@ theorem nameRule_f (p : Pos) (x kind : String) : Follows cap (nameRule p x kind)
     (nameRule p x kind) := by
   unfold nameRule; follows
 
+theorem structArg_f (p : Pos) (v : Val) : Follows cap (structArg p v) (structArg p v) := by
+  unfold structArg; follows
+
+theorem genFields_f (p : Pos) : ∀ (xs : List Value) (ms : Std.TreeMap Nat Nat compare)
+    (fs : Array (String × Ty)), Follows cap (genFields p xs ms fs) (genFields p xs ms fs)
+  | [], ms, fs => by rw [genFields]; follows
+  | x :: xs, ms, fs => by
+    rw [genFields]
+    follows [nameRule_f, symbolOf_f, fun ms fs => genFields_f p xs ms fs]
+
+theorem generated_f (p : Pos) (xs : List Value) :
+    Follows cap (generated p xs) (generated p xs) := by
+  unfold generated; follows [genFields_f, bounded_f, sums_f]
+
+theorem builtinTy_f (p : Pos) (q : Builtin) (v : Val) :
+    Follows cap (builtinTy p q v) (builtinTy p q v) := by
+  unfold builtinTy; follows
+
 theorem keyed_f (p : Pos) (input : Bool) (b : Binder) (t : Ty) (kp : Pos) (v : Value) :
     Follows cap (Elab.keyed p input b t kp v) (Elab.keyed p input b t kp v) := by
   unfold Elab.keyed; follows [nameRule_f, symbolOf_f, port_f, entry_f, bindLocal_f]
@@ -253,7 +271,8 @@ theorem follows_all : ∀ n,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
           familySel_f (he k), typeOfPart_f (he k) (ht k), staticValue_f, fieldOut_f,
-          argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f]
+          argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f,
+          structArg_f, generated_f, atUse_f, conformVal_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -266,20 +285,21 @@ theorem follows_all : ∀ n,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
           familySel_f (he m), typeOfPart_f (he m) (ht m), staticValue_f, fieldOut_f,
-          argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f]
+          argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f,
+          structArg_f, generated_f, atUse_f, conformVal_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
         intro _
         follows [he k, ht k, index_f (he k) (ht k), name_f (he k) (ht k), spec_f (he k) (ht k),
           typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht k), fnTy_f,
-          structural_f]
+          structural_f, builtinTy_f]
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
         follows [he m, ht m, index_f (he m) (ht m), name_f (he m) (ht m), spec_f (he m) (ht m),
           typeOf_f, tupleTy_f, arrayTy_f, static_f, need_f, params_f (ht m), fnTy_f,
-          structural_f]
+          structural_f, builtinTy_f]
     · rcases n' with _ | m
       · rw [stmt.eq_def (k + 1), stmt.eq_def 0]
         apply Follows.exhaust (cap := k)
