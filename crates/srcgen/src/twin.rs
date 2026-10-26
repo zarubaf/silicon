@@ -1153,6 +1153,10 @@ impl Writer<'_> {
         fr: &mut Frame,
         out: &mut Vec<Stmt>,
     ) {
+        if let (Some(Ty::Rec(def)), HExpr::Record(..)) = (ty, value) {
+            self.record_let(name, mutable, def, value, fr, out);
+            return;
+        }
         let ty = ty.map(|t| self.ty(t, fr));
         // The twin keeps no container of handles: it selects from them.
         if matches!(value, HExpr::Tuple(_) | HExpr::Array(_) | HExpr::Record(..)) {
@@ -1206,6 +1210,36 @@ impl Writer<'_> {
                 FieldTy::Static(_) | FieldTy::Handle(_) => self.fault.set(true),
             }
             path.pop();
+        }
+    }
+
+    /// `let mut v: R = R(..);` as one `let` for each leaf.
+    fn record_let(
+        &mut self,
+        n: &str,
+        mutable: bool,
+        def: &str,
+        value: &HExpr,
+        fr: &mut Frame,
+        out: &mut Vec<Stmt>,
+    ) {
+        let mut leaves = Vec::new();
+        self.record_leaves(def, fr, &mut Vec::new(), &mut leaves);
+        let mut values = Vec::new();
+        self.record_values(value, &mut Vec::new(), &mut values);
+        let name = fr.declare(n);
+        fr.records.insert(n.to_owned(), def.to_owned());
+        for (path, t) in leaves {
+            let Some((_, v)) = values.iter().find(|(p, _)| *p == path) else {
+                self.fault.set(true);
+                continue;
+            };
+            out.push(Stmt::Let {
+                name: format!("{name}_{}", path.join("_")),
+                mutable,
+                ty: Some(t),
+                value: self.hexpr(v, fr),
+            });
         }
     }
 

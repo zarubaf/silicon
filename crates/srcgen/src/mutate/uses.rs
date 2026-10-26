@@ -65,8 +65,19 @@ fn stmts(root: &str, body: &[Stmt], callees: &Callees, uses: &mut Uses) {
     }
 }
 
+/// The root of a place: the name under its steps.
+fn place_root(e: &HExpr) -> Option<&str> {
+    match e {
+        HExpr::Name(n) => Some(n),
+        HExpr::Index(b, _) | HExpr::Select(b, _) | HExpr::Member(b, _) | HExpr::FieldOf(b, _) => {
+            place_root(b)
+        }
+        _ => None,
+    }
+}
+
 fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
-    let is_root = |e: &HExpr| matches!(e, HExpr::Name(n) if n == root);
+    let is_root = |e: &HExpr| place_root(e) == Some(root);
     match e {
         HExpr::Name(_)
         | HExpr::Field(..)
