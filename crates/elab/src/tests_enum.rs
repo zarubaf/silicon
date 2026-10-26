@@ -4,7 +4,7 @@
 //! texts of the `S010` cases. The numbers come from the Lean binary. The work tests count the
 //! steps of the walks and not the time.
 
-use crate::counters::of;
+use crate::counters::last;
 use crate::tests::{cost, exact, message, out, run, serialized_len, type_work};
 use crate::tests_elab::{cost as elab_cost, cost_fuel, names, order, total};
 use std::fmt::Write as _;
@@ -533,7 +533,7 @@ fn a_hardware_if_walks_enum_arms_as_a_container_pair() {
 fn measure(src: &str, expr: &str, fuel: u64) -> [u64; 8] {
     let (text, used) = run(src, expr, fuel, 1000);
     assert!(text.starts_with("(int 0)"), "{text}");
-    let c = of(fuel);
+    let c = last();
     [
         type_work(src, expr),
         c.compared,
@@ -585,7 +585,7 @@ fn w2_equality_on_a_large_array_of_enums_walks_nothing() {
     let fuel = 710_000_000;
     let (text, _) = run(&src, "A() == A()", fuel, 1000);
     assert_eq!(text, "S010 1:1");
-    let c = of(fuel);
+    let c = last();
     assert_eq!((c.compared, c.visited), (0, 0));
     assert!(c.flagged <= 4, "{}", c.flagged);
 }
@@ -610,7 +610,7 @@ fn w3_the_zero_of_a_wide_payload_costs_the_words_of_its_width() {
     let fuel = 720_000_000;
     let (text, _) = run(src, "E()", fuel, 1000);
     assert!(text.starts_with("(enum (enum root E ()) 0 (uint 65536 0))"));
-    let c = of(fuel);
+    let c = last();
     assert!(c.compared == 0 && c.walked <= 16 && c.cloned <= 16, "{c:?}");
 }
 
@@ -623,7 +623,7 @@ fn w4_an_enum_argument_serializes_once() {
     );
     let fuel = 730_000_000;
     assert!(cost_fuel(&src, "T", fuel).starts_with("total"));
-    assert_eq!(of(fuel).serialized, ZERO.len() as u64);
+    assert_eq!(last().serialized, ZERO.len() as u64);
     let text = format!("(instantiation root M ({ZERO}))");
     let digest = format!("M$0h{}", crate::names::sha16(&text));
     assert_eq!(order(&src, "T"), [digest, "T".to_owned()]);

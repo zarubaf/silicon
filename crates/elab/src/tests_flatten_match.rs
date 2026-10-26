@@ -4,7 +4,7 @@
 //! leaf statement, the order of the temporaries, and the two chains that build in a loop.
 
 use crate::Budget;
-use crate::counters::of;
+use crate::counters::last;
 use crate::tests_flatten::{elab_used, enum_lets, op_module, total};
 use std::fmt::Write as _;
 
@@ -218,7 +218,7 @@ fn w8_the_lowering_of_a_wide_match_is_a_loop() {
             panic!("the elaboration must succeed")
         };
         assert!(design.lower().unwrap().is_ok());
-        of(fuel).chained
+        last().chained
     };
     // The select of each arm lowers once, in the first leaf statement.
     assert_eq!(steps(10, 1), 1024 * 64);

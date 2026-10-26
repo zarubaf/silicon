@@ -5,7 +5,7 @@
 //! must stay within a constant times the fuel that the run used. The tests count the steps of the
 //! walks and not the time.
 
-use crate::counters::{Counts, of};
+use crate::counters::{Counts, last};
 use crate::tests_elab::load;
 use crate::{Abort, Budget, elaborate};
 use std::fmt::Write;
@@ -31,12 +31,12 @@ pub(crate) fn run_with(fuel: u64, depth: u64, src: &str) -> Run {
     let budget = Budget { fuel, depth };
     match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
         Ok(Ok(design)) => Run {
-            counts: of(fuel),
+            counts: last(),
             used: design.used(),
             error: None,
         },
         Ok(Err(e)) => Run {
-            counts: of(fuel),
+            counts: last(),
             used: 0,
             error: Some((e.code.to_string(), e.message)),
         },
@@ -195,12 +195,12 @@ fn run_fuel(fuel: u64, depth: u64, src: &str) -> Run {
     let budget = Budget { fuel, depth };
     match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
         Ok(Ok(design)) => Run {
-            counts: of(fuel),
+            counts: last(),
             used: design.used(),
             error: None,
         },
         Ok(Err(e)) => Run {
-            counts: of(fuel),
+            counts: last(),
             used: 0,
             error: Some((e.code.to_string(), e.message)),
         },

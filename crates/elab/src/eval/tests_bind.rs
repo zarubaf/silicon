@@ -182,7 +182,7 @@ fn a_typed_use_of_a_reference_at_its_type_takes_one_step() {
         reference(ev, "r", t).into_val()
     });
     assert_eq!(huge, "ref r 0");
-    let c = counters::of(run);
+    let c = counters::last();
     assert_eq!((c.typed, c.nodes, c.bound, c.expanded), (0, 0, 0, 0));
     let other = typed_use("", "[UInt[4]; 4]", run + 1, 0, |ev, _| {
         let t = ev.tys.mk(Ty::UInt(8));
@@ -339,8 +339,16 @@ pub(super) fn run_shown(
     base: impl FnOnce(&mut Evaluator<'_>, PathId, TyId) -> Val + Send,
     shown: Shown,
 ) -> String {
-    parse::on_stack(1024, move || run_shown_here(src, run, fuel, base, shown))
-        .unwrap_or_else(|_| "stack".to_owned())
+    let started = counters::Handoff::new(None);
+    let slot = &started;
+    let text = parse::on_stack(1024, move || {
+        let text = run_shown_here(src, run, fuel, base, shown);
+        counters::report(slot);
+        text
+    })
+    .unwrap_or_else(|_| "stack".to_owned());
+    counters::adopt(&started);
+    text
 }
 
 /// `run_shown` on the thread that calls it.
@@ -442,7 +450,7 @@ fn a_huge_reference_root_fails_at_the_rebind_before_it_expands() {
     let run = 700_000_250;
     let src = assign_in("[UInt[8]; 1 << 40]", "x[5] = 7;");
     assert_eq!(run_f(&src, run, 1_000_000, ref_x), "S015 2:3");
-    let c = counters::of(run);
+    let c = counters::last();
     assert_eq!((c.expanded, c.nodes, c.bound, c.typed), (0, 0, 0, 0));
 }
 
@@ -457,7 +465,7 @@ fn only_the_references_on_the_path_expand() {
         "x$1v$0e$0e=x$0e$0e x$1v$0e$1e=x$0e$1e x$1v$1e$0e=x$0e$1e x$1v$1e$1e=x$1e$1e | \
          [ref x$1v$0e, [x$1v$1e$0e, x$1v$1e$1e]] | 26"
     );
-    assert_eq!(counters::of(run).expanded, 4);
+    assert_eq!(counters::last().expanded, 4);
 }
 
 /// A new root without a hardware leaf is a static value with no rebind charge. A static part of
@@ -640,5 +648,5 @@ fn a_huge_empty_part_fails_at_the_charge_before_it_expands() {
     let run = 700_000_310;
     let src = assign_in("(UInt[8], [(); 1 << 40])", "x.0 = 5;");
     assert_eq!(run_f(&src, run, 1000, ref_x), "S015 2:3");
-    assert_eq!(counters::of(run).expanded, 0);
+    assert_eq!(counters::last().expanded, 0);
 }

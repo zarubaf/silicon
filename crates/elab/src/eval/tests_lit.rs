@@ -113,7 +113,7 @@ fn a_literal_of_huge_references_fails_at_the_charge_before_it_expands() {
     let run = 700_000_530;
     let src = assign_in("([UInt[8]; 1 << 40], Bool)", "let y = (x.0, x.0);");
     assert_eq!(run_f(&src, run, 1_000_000, ref_x), "S015 2:11");
-    let c = counters::of(run);
+    let c = counters::last();
     assert_eq!(
         (c.expanded, c.bound, c.typed),
         (0, 0, 0),
@@ -259,14 +259,14 @@ fn a_push_refreshes_each_node_on_the_path_once() {
         1_000_000,
     );
     assert_eq!(one, "t$0e=x$0e | ref x | 25");
-    let before = counters::of(run).nodes;
+    let before = counters::last().nodes;
     let two = on_x(
         "let mut t = (x.0, x.0, x.0, list(Int));\n  t.3.push(3);",
         run + 1,
         1_000_000,
     );
     assert_eq!(two, "t$0e=x$0e t$1e=x$0e t$2e=x$0e | ref x | 33");
-    let after = counters::of(run + 1).nodes;
+    let after = counters::last().nodes;
     assert!(after > before, "{before} {after}");
     assert!(after - before <= 12, "{before} {after}");
 }

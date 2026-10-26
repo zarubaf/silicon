@@ -5,7 +5,7 @@
 //! most the work that the bound allows, and the work must stay within a constant times the fuel
 //! that the run used. The tests count the steps of the walks and not the time.
 
-use crate::counters::of;
+use crate::counters::last;
 use crate::tests_flatten::lowered;
 use crate::tests_work_handles::{Run, passing, run};
 use std::fmt::Write;
@@ -17,7 +17,7 @@ const KEY: u64 = 9000;
 fn lowered_work(key: u64, src: &str) -> u64 {
     let fuel = 930_000_000 + key;
     lowered(src, "M", fuel).unwrap_or_else(|e| panic!("{e}\n{src}"));
-    of(fuel).total()
+    last().total()
 }
 
 /// The error of a run, as the pair of its code and its message.

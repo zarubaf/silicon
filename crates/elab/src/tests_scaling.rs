@@ -20,7 +20,7 @@
 //! `a[z()][z()]`. A line can hold more than one `NEST`. Each budget fix adds a template that
 //! makes the extreme shape of the fix and grows it.
 
-use crate::counters::of;
+use crate::counters::last;
 use crate::tests_flatten::lowered;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -124,7 +124,7 @@ static RUNS: AtomicU64 = AtomicU64::new(0);
 fn measure(src: &str, top: &str) -> Result<Point, String> {
     let fuel = (1u64 << 40) + RUNS.fetch_add(1, Ordering::Relaxed);
     let (_, run) = lowered(src, top, fuel)?;
-    let counts = of(fuel);
+    let counts = last();
     Ok(Point {
         w: counts.total(),
         f: run.used(),
@@ -276,10 +276,10 @@ fn capped(src: &str, top: &str, fuel: u64) -> Result<Point, String> {
     match lowered(src, top, fuel) {
         Ok(_) => Err(format!("the run with the fuel {fuel} succeeds")),
         Err(e) if e.starts_with("S015") => Ok(Point {
-            w: of(fuel).total(),
+            w: last().total(),
             f: fuel,
             s: src.len() as u64,
-            scan: of(fuel).ast,
+            scan: last().ast,
         }),
         Err(e) => Err(format!("the run with the fuel {fuel} gives {e}")),
     }

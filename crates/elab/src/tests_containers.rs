@@ -662,7 +662,7 @@ fn a_module_argument_copies_after_its_charge() {
     // The 1,000 arguments cost far more than this fuel, and their copies would too.
     let fuel = 100_003;
     assert!(cost_fuel(&src, "T", fuel).starts_with("S015"));
-    let copies = crate::counters::run(fuel).map(|c| c.copies);
+    let copies = crate::counters::last_run().map(|c| c.copies);
     assert!(copies.is_some_and(|c| 0 < c && c <= fuel), "{copies:?}");
 }
 

@@ -5,7 +5,7 @@
 //! arm. A binder unpacks its payload once for each part of its type, which its zero size paid
 //! for. The tests count the steps of the walks and not the time.
 
-use crate::counters::{Counts, of};
+use crate::counters::{Counts, last};
 use crate::tests::run;
 use crate::{Abort, Budget, elaborate};
 use std::fmt::Write as _;
@@ -15,7 +15,7 @@ use std::fmt::Write as _;
 fn counted(key: u64, src: &str, expr: &str) -> (String, u64, Counts) {
     let fuel = 960_000_000 + key;
     let (text, used) = run(src, expr, fuel, 1000);
-    (text, used, of(fuel))
+    (text, used, last())
 }
 
 /// A `match` on a `UInt[16]` with the arms `0`, ..., `n - 1`, and `_` unless `n` is `2^16`.
@@ -128,7 +128,7 @@ fn elaborated(key: u64, depth: u64, src: &str) -> (Counts, u64) {
     let file = crate::tests_elab::load(src).unwrap();
     let budget = Budget { fuel, depth };
     match elaborate(&file, "M", parse::DEFAULT_SYNTAX_DEPTH, budget) {
-        Ok(Ok(design)) => (of(fuel), design.used()),
+        Ok(Ok(design)) => (last(), design.used()),
         Ok(Err(e)) => panic!("{} {}:{} {}", e.code, e.pos.line, e.pos.col, e.message),
         Err(Abort::Usage(m)) => panic!("{m}"),
         Err(Abort::Stack(e)) => panic!("{e}"),

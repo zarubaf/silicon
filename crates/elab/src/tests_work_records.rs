@@ -7,7 +7,7 @@
 //! or a replay of records breaks one of these. The tests count the steps of the walks and not
 //! the time.
 
-use crate::counters::{Counts, of};
+use crate::counters::{Counts, last};
 use crate::int::Int;
 use crate::tests_elab::load;
 use crate::{Budget, observe_with};
@@ -45,7 +45,7 @@ fn run(src: &str, depth: u64, family: u64, k: usize) -> Run {
         );
     }
     Run {
-        counts: of(fuel),
+        counts: last(),
         bytes: done.records.iter().map(|r| r.len() as u64).sum(),
     }
 }
@@ -267,7 +267,7 @@ fn the_records_of_a_shared_hierarchy_are_linear_in_its_depth() {
         };
         assert!(done.outcome.is_ok(), "{d}");
         assert_eq!(done.records.len() as u64, d + 1);
-        of(fuel)
+        last()
     };
     let (a, b, c) = (counts(15, 0), counts(30, 1), counts(60, 2));
     assert_eq!((a.recorded, b.recorded, c.recorded), (16, 31, 61));
@@ -292,7 +292,7 @@ fn run_at(src: &str, fuel: u64) -> (usize, Option<crate::Code>, Counts) {
     (
         done.records.len(),
         done.outcome.err().map(|e| e.code),
-        of(fuel),
+        last(),
     )
 }
 
