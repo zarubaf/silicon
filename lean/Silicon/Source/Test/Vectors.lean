@@ -258,4 +258,27 @@ def keyed : String :=
    [("g[7]", "g$7f")])
 #guard run keyed "K" ["in=(clock$0rst false _z 1 assign 2 b0 3)"] == "out=(g[7] 6)\n"
 
+/-!
+Each field name of a generated record type is a user field of a leaf name, as in a declared
+struct (section 7.2). Thus the field `a` of the port `p` is the core port `p$a`.
+The source vectors name it `p.a`. A field name that is a core keyword gets no `0k`, because the
+leaf name has two fields. A nested generated record adds one user field for each level.
+-/
+def genLeaves (fs : List (String × Ty)) : List (String × String) :=
+  let (s, t) := ({} : Eval.Specs).generate fs {}
+  let q : Elab.PortDecl := ⟨"p", 0, none, true, t, ⟨1, 1⟩⟩
+  (Id.run (Layout.foldPort (Elab.fieldsOf s (Elab.leafFields s)) q #[]
+    (fun es l => pure (es.push (l.entry, Names.encode l.name))) fun es _ => pure es)).toList
+#guard genLeaves [("a", .uint 8), ("b", .bool)] == [("p.a", "p$a"), ("p.b", "p$b")]
+#guard genLeaves [("mux", .bool)] == [("p.mux", "p$mux")]
+#guard genLeaves [("a", .array .bool 2)] == [("p.a.0", "p$a$0e"), ("p.a.1", "p$a$1e")]
+#guard genLeaves [] == []
+def nestedLeaves : List (String × String) :=
+  let (s, inner) := ({} : Eval.Specs).generate [("c", .bool)] {}
+  let (s, t) := s.generate [("a", inner)] {}
+  let q : Elab.PortDecl := ⟨"p", 0, none, false, t, ⟨1, 1⟩⟩
+  (Id.run (Layout.foldPort (Elab.fieldsOf s (Elab.leafFields s)) q #[]
+    (fun es l => pure (es.push (l.entry, Names.encode l.name))) fun es _ => pure es)).toList
+#guard nestedLeaves == [("p.a.c", "p$a$c")]
+
 end Silicon.Source.Test.Vectors

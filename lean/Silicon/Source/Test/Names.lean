@@ -149,4 +149,13 @@ def ids : List InstantiationId :=
 #guard [id "Counter" [.int 8], id "add" [], id "M" [.str "x"], id (long 70) []].all
   fun i => legal (moduleName sha16 i) && roundTrip (moduleName sha16 i)
 
+/-!
+A module argument of a generated record type has the digest form, because its serialization
+holds each name and field type (section 7.1).
+-/
+def genArg : Value :=
+  .type (.struct 0 "" #[.str "a", .type (.uint 8)] (Meta.struct [Meta.finite 8] []) .gen)
+#guard encode (moduleName sha16 (id "M" [genArg])) ==
+  "M$0h" ++ sha16 "(instantiation root M ((type (gstruct ((\"a\" (uint 8)))))))"
+
 end Silicon.Source.Test.Names
