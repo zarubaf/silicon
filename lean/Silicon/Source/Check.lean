@@ -575,9 +575,8 @@ mutual
       for x in xs do let _ ← visit true false x
     | .index p (.builtin f) xs => do
       let q := s!"@{f.builtin.name}"
-      unless xs.isEmpty do
-        report .S007 p (s!"a type from `{q}` takes 0 argument(s), but it has {xs.length}; " ++
-          s!"remove the index after `{q}(...)`")
+      report .S007 p (s!"a type from `{q}` takes 0 argument(s), but it has {xs.length}; " ++
+        s!"remove the index after `{q}(...)`")
       builtinForm false f
       for x in xs do let _ ← visit true false x
     | .index p b xs => do
