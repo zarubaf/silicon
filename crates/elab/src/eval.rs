@@ -738,12 +738,12 @@ impl Evaluator<'_> {
         let site = self.site.take();
         let stack = self.stack;
         #[cfg(test)]
-        let fuel = crate::counters::current();
+        let run = crate::counters::current();
         let act = move |ev: &mut Self| {
             // A level that starts a thread counts into the run of its parent.
             #[cfg(test)]
-            if let Some(fuel) = fuel {
-                crate::counters::join(fuel);
+            if let Some(run) = run {
+                crate::counters::join(run);
             }
             act(ev)
         };

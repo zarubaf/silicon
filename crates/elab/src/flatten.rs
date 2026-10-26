@@ -103,8 +103,8 @@ pub(crate) fn lower(d: &Design) -> Result<Result<Lowered, Failure>, StackError> 
     parse::on_stack(d.graph.height(), || {
         // The lowering thread counts into the run of its parent.
         #[cfg(test)]
-        if let Some(fuel) = run {
-            crate::counters::join(fuel);
+        if let Some(run) = run {
+            crate::counters::join(run);
         }
         let mut lower = Lower {
             design: d,
