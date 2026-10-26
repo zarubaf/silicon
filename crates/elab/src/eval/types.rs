@@ -26,13 +26,14 @@ use resolve::{DeclId, Prelude, Target};
 use std::collections::BTreeMap;
 
 /// The fix `{h}` of "Builtin as a type" for the builtin `q` (Lean `builtinTyHint`). `@TypeOf`
-/// and `@Struct` always give a `Type`, so only `@typeInfo` and `@field` reach the text.
+/// and `@Struct` always give a `Type`, so only `@typeInfo`, `@field`, and `@ports` reach the text.
 fn builtin_type_hint(q: Builtin) -> &'static str {
     match q {
         Builtin::TypeInfo => {
             "select a `Type` from it, for example `@field(@typeInfo(T), \"element\")`"
         }
-        _ => {
+        Builtin::Ports => "select the type of one port, for example `@field(@ports(u)[0], \"ty\")`",
+        Builtin::TypeOf | Builtin::Struct | Builtin::Field => {
             "select a part of type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
         }
     }
