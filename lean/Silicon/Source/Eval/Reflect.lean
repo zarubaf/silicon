@@ -426,11 +426,12 @@ def genFields (p : Pos) :
 
 /-!
 The generated record type of the fields `xs` at the `@` `p` (section 6.2, **`@Struct` order**,
-steps 5 to 9). After the fields (`genFields`), the metadata gets its size limit and its depth
-check (`S015`), as for a tuple type. Then the size of the new type term charges, then the
-metadata sums. The look-up in the table of generated record types comes last
-(`Specs.generate`), so a hit charges the same as a miss. The walk reads the stored metadata of
-each field type, and it never goes into a field type.
+steps 5 to 9). After the fields (`genFields`), the metadata gets its size limit (`S015`), as
+for a tuple type. Its depth needs no check: it is 1 less than the depth of the argument, which
+passed its own check. Then the size of the new type term charges, then the metadata sums. The
+look-up in the table of generated record types comes last (`Specs.generate`), so a hit charges
+the same as a miss. The walk reads the stored metadata of each field type, and it never goes
+into a field type.
 -/
 def generated (p : Pos) (xs : List (String × Ty)) : M Ty := do
   let (ms, fs) ← genFields p xs {} #[]
@@ -438,7 +439,6 @@ def generated (p : Pos) (xs : List (String × Ty)) : M Ty := do
   let parts := fs.map (·.2.info)
   if over (sumBits parts) then fail .S015 p metaLimitText
   let m := Meta.struct parts []
-  bounded p m.depth
   charge p (Ty.struct 0 "" #[] m (.gen fs)).size
   sums p parts m
   let (specs, t) := (← get).specs.generate fs ms

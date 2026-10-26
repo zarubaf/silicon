@@ -76,7 +76,7 @@ theorem genFields_f (p : Pos) : ∀ (xs : List (String × Ty)) (ms : Std.TreeMap
 
 theorem generated_f (p : Pos) (xs : List (String × Ty)) :
     Follows cap (generated p xs) (generated p xs) := by
-  unfold generated; follows [genFields_f, bounded_f, sums_f]
+  unfold generated; follows [genFields_f, sums_f]
 
 theorem builtinTy_f (p : Pos) (q : Builtin) (v : Val) :
     Follows cap (builtinTy p q v) (builtinTy p q v) := by
