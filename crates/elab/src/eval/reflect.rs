@@ -30,7 +30,7 @@ use parse::ast::{Builtin, Expr, Ident, Nat, Pos};
 use resolve::{Kind, Target};
 
 /// The part of a query operand after the steps so far.
-enum Part {
+pub(super) enum Part {
     /// A part of a local or a constant in the store, and its declared type, if it has one.
     Held(Ref, Option<TyId>),
     /// A handle that the walk made or that the root is. It has no parts.
@@ -41,7 +41,7 @@ enum Part {
 
 /// The end of the operand of a query: the part that the walk reached, or the result of a root that
 /// names no binding, which evaluated as an ordinary expression.
-enum Operand {
+pub(super) enum Operand {
     Part(Part),
     Out(super::Out),
 }
@@ -91,6 +91,16 @@ fn no_type<T>(pos: Pos, about: &str) -> Res<T> {
     )
 }
 
+/// The fix `{h}` of "String index in a query" for the query `q` (Lean `stringIndexHint`).
+fn string_index_hint(q: Builtin) -> &'static str {
+    match q {
+        Builtin::Ports => "`@ports` takes an instance handle, so pass the name of an instance",
+        Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct | Builtin::Field => {
+            "an index of a string has the type `String`, so write `String` instead of the query"
+        }
+    }
+}
+
 impl Known {
     /// The knowledge about the part reached from a part that has `self`, by the step `key`.
     fn after(self, ev: &Evaluator<'_>, key: &Key<'_>) -> Known {
@@ -124,7 +134,7 @@ impl Evaluator<'_> {
     /// The root resolves with no charge. Its steps then run once from the root outward
     /// (`query_walk`). A root that names no binding evaluates the whole operand as an expression
     /// (`query_whole`).
-    fn query_operand(&mut self, q: Builtin, pos: Pos, operand: &Expr) -> Res<Operand> {
+    pub(super) fn query_operand(&mut self, q: Builtin, pos: Pos, operand: &Expr) -> Res<Operand> {
         let Some((
             Expr::Name {
                 pos: rp,
@@ -173,7 +183,7 @@ impl Evaluator<'_> {
             }
         };
         let mut walk = self.query_walk(q, start, &steps)?;
-        self.settle_walk(&mut walk)?;
+        self.settle_walk(q, &mut walk)?;
         Ok(Operand::Part(walk.part))
     }
 
@@ -242,7 +252,7 @@ impl Evaluator<'_> {
         let entry = self.entry_val(key.pos(), family_name, family, number)?;
         let start = self.part_of_val(pos, entry)?;
         let mut walk = self.query_walk(q, start, steps.get(1..).unwrap_or_default())?;
-        self.settle_walk(&mut walk)?;
+        self.settle_walk(q, &mut walk)?;
         Ok(Operand::Part(walk.part))
     }
 
@@ -297,7 +307,7 @@ impl Evaluator<'_> {
         let mut at = 0;
         while at < steps.len() {
             if let Err(err) = self.query_step(q, &mut walk, steps, &mut at) {
-                self.settle_walk(&mut walk)?;
+                self.settle_walk(q, &mut walk)?;
                 return Err(err);
             }
         }
@@ -350,7 +360,7 @@ impl Evaluator<'_> {
                 }
             }
             Sel::Field(pos, field) => {
-                let Some(info) = self.instance_of(walk)? else {
+                let Some(info) = self.instance_of(q, walk)? else {
                     self.charge(pos, 1)?;
                     self.wait(walk, Key::Field(pos, field));
                     *at += 1;
@@ -378,13 +388,13 @@ impl Evaluator<'_> {
 
     /// The `Instance` handle that the part of `walk` is, if it is one. A part whose type rules it
     /// out answers at once. Else the pending steps run first.
-    fn instance_of(&mut self, walk: &mut Walk<'_>) -> Res<Option<InstInfo>> {
+    fn instance_of(&mut self, q: Builtin, walk: &mut Walk<'_>) -> Res<Option<InstInfo>> {
         match walk.known {
             Known::Inst(info) if walk.pending.is_empty() => return Ok(Some(info)),
             known if !self.maybe_instance(known) => return Ok(None),
             _ => {}
         }
-        self.settle_walk(walk)?;
+        self.settle_walk(q, walk)?;
         Ok(match walk.known {
             Known::Inst(info) => Some(info),
             _ => None,
@@ -482,10 +492,10 @@ impl Evaluator<'_> {
     /// keeps only its type selects in the type from there. The answer about an `Instance` handle
     /// is exact afterwards. An `@field` step that selects a port of a child ends the pass at its
     /// part, and the pass goes on at the port with the steps after it.
-    fn settle_walk(&mut self, walk: &mut Walk<'_>) -> Res<()> {
+    fn settle_walk(&mut self, q: Builtin, walk: &mut Walk<'_>) -> Res<()> {
         let pending = std::mem::take(&mut walk.pending);
         let mut from = 0;
-        while let Some(next) = self.settle_from(walk, &pending, from)? {
+        while let Some(next) = self.settle_from(q, walk, &pending, from)? {
             from = next;
         }
         Ok(())
@@ -495,6 +505,7 @@ impl Evaluator<'_> {
     /// the step after a port switch of an `@field`, else `None`.
     fn settle_from(
         &mut self,
+        q: Builtin,
         walk: &mut Walk<'_>,
         pending: &[Key<'_>],
         from: usize,
@@ -513,7 +524,7 @@ impl Evaluator<'_> {
                         *walk = Self::port_walk(stepped.0, stepped.1);
                         return Ok(Some(from + 1));
                     }
-                    self.step_value(key, Seen::Handle(handle))?;
+                    self.step_value(q, key, Seen::Handle(handle))?;
                     return no_type(
                         super::place::key_pos(key),
                         &self.about(Seen::Handle(handle)),
@@ -538,7 +549,9 @@ impl Evaluator<'_> {
                         Self::pay_unpaid(&mut self.fuel, n, &plan)?;
                         match self.named_finish(n, seen, &plan)? {
                             Pick::Field(number, ft, _) => (number, Some(ft)),
-                            Pick::Index(i) => self.step_value(&Key::Index(n.pos, n.kp, i), seen)?,
+                            Pick::Index(i) => {
+                                self.step_value(q, &Key::Index(n.pos, n.kp, i), seen)?
+                            }
                             Pick::Port(info, port) => {
                                 switch = Some((info, port));
                                 done += 1;
@@ -546,7 +559,7 @@ impl Evaluator<'_> {
                             }
                         }
                     } else {
-                        self.step_value(key, seen)?
+                        self.step_value(q, key, seen)?
                     };
                     *declared = field.or_else(|| match declared {
                         Some(ty) => self.tys.part(*ty, number),
@@ -618,15 +631,14 @@ impl Evaluator<'_> {
     /// The step `key` on the part `seen` that holds its parts (section 9.3). The result is the
     /// number of the part and the field type of a field. A static value selects with no charge,
     /// and another value fails there, for example a memory. An index of a string is "String index
-    /// in a query", because the walk selects in types and a `String` has no element type.
-    fn step_value(&self, key: &Key<'_>, seen: Seen<'_>) -> Res<(usize, Option<TyId>)> {
+    /// in a query", because the walk selects in types and a `String` has no element type. Its fix
+    /// names the query `q` (`string_index_hint`).
+    fn step_value(&self, q: Builtin, key: &Key<'_>, seen: Seen<'_>) -> Res<(usize, Option<TyId>)> {
         match key {
             Key::Index(pos, _, _) if matches!(seen, Seen::Static(Value::Str(_))) => fail(
                 Code::S010,
                 *pos,
-                "a query cannot index a string; an index of a string has the type `String`, so \
-                 write `String` instead of the query"
-                    .to_owned(),
+                format!("a query cannot index a string; {}", string_index_hint(q)),
             ),
             Key::Field(pos, field) => {
                 self.no_enum_field(*pos, &field.name, seen)?;
