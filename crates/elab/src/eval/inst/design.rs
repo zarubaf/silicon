@@ -127,7 +127,7 @@ pub(crate) struct Iface {
     pub(super) ports: BTreeMap<PortId, Port>,
     pub item: usize,
     pub(super) inputs: usize,
-    pub(crate) schema: Vec<Port>,
+    pub(in crate::eval) schema: Vec<Port>,
     pub domain: Option<Sym>,
     pub(super) families: BTreeSet<Sym>,
 }
