@@ -1931,3 +1931,45 @@ fn a_program_without_queries_keeps_its_text() {
     }
     assert!(kept >= 256 * 4 / 10, "{kept}");
 }
+
+/// No value in a `diagnostic`, in the `eval` probe, or in the argument of a
+/// module holds a type: not a `TypeInfo`, not a `FieldInfo`, not a
+/// `PortInfo`, not a generated record type, and the argument of a module is
+/// neither a `PortKey` nor a `String` (ADR 0024, ADR 0032).
+#[test]
+fn no_type_reaches_a_record_a_probe_or_an_argument() {
+    let mut aliases = 0;
+    for tape in tapes(256) {
+        let Ok(p) = build(tape) else { continue };
+        aliases += p
+            .items
+            .iter()
+            .filter(|i| matches!(i, Item::Alias { .. }))
+            .count();
+        for record in p.records() {
+            assert!(!record.contains("struct root D"), "{record}");
+            assert!(
+                !record.contains("(type") && !record.contains("typeinfo"),
+                "{record}"
+            );
+        }
+        let (probe, value) = p.probe();
+        assert!(
+            !has_query(&probe) && !value.contains("struct root D"),
+            "{probe}"
+        );
+        assert!(!has_query(&p.top()), "{}", p.top());
+        for s in stmts_of(&p.items) {
+            let Stmt::Instance(_, _, args) = s else {
+                continue;
+            };
+            for a in args {
+                assert!(
+                    !matches!(a, SExpr::Query(_) | SExpr::PortKey(..) | SExpr::Str(_)),
+                    "{a:?}"
+                );
+            }
+        }
+    }
+    assert!(aliases >= 20, "{aliases}");
+}

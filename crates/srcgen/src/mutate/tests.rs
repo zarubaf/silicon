@@ -85,11 +85,16 @@ fn all(p: &Program, kind: Kind) -> Vec<Mutant> {
 
 /// A draw that picks `kind`: the kinds of ports come from the draws that
 /// leave the remainder `PORT_ODDS - 1`, the kinds of `@field` from the
-/// others with the remainder `FIELD_ODDS - 1` of the quotient, and the
-/// other kinds from the rest.
+/// others with the remainder `FIELD_ODDS - 1` of the quotient, the kinds
+/// of queries from the digit above those of `EarlyStep`, and the other
+/// kinds from the rest.
 fn index(kind: Kind) -> u32 {
     let at = KINDS.iter().position(|&k| k == kind).unwrap();
-    let draw = if at >= OLD_KINDS + PORT_KINDS {
+    let queries = KINDS.len() - QUERY_KINDS;
+    let draw = if at >= queries {
+        // The digit above those of `EarlyStep` picks the kind of queries.
+        (at - queries) * QUERY_SPLIT * QUERY_ODDS + (QUERY_ODDS - 1) * QUERY_SPLIT
+    } else if at >= OLD_KINDS + PORT_KINDS {
         let nth = at - OLD_KINDS - PORT_KINDS;
         (nth * FIELD_ODDS + FIELD_ODDS - 1) * PORT_ODDS
     } else if at >= OLD_KINDS {
@@ -1344,7 +1349,8 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
             "{code}: {counts:?}"
         );
     }
-    assert_eq!(by_kind.len(), KINDS.len() - 15, "{by_kind:?}");
+    // The four kinds that change an alias of `@Struct` predict nothing.
+    assert_eq!(by_kind.len(), KINDS.len() - 15 - 4, "{by_kind:?}");
 }
 
 /// `enum E0: UInt[2] { V0(UInt[4], Bool) = 1, V1 = 2 }`.
@@ -2182,4 +2188,55 @@ fn a_missing_key_is_sometimes_longer_than_64_characters() {
         })
     });
     assert!(found);
+}
+
+/// The kinds of queries, with the codes that their mutants predict. A kind
+/// of an alias of `@Struct` predicts nothing: the type is elaborated at its
+/// first use.
+const QUERY_CODES: [(Kind, &[&str]); 19] = [
+    (Kind::BuiltinName, &["S001"]),
+    (Kind::BuiltinArity, &["S001"]),
+    (Kind::QueryOperand, &["S001"]),
+    (Kind::IndexBuiltinType, &["S007"]),
+    (Kind::NoType, &["S010"]),
+    (Kind::StringIndex, &["S010"]),
+    (Kind::QueryHardware, &["S011"]),
+    (Kind::KeyHardware, &["S005"]),
+    (Kind::TypeInfoValue, &["S010"]),
+    (Kind::PortsValue, &["S010"]),
+    (Kind::BuiltinType, &["S010"]),
+    (Kind::ConstructorArity, &["S007"]),
+    (Kind::KeyEffect, &["S016"]),
+    (Kind::KeyMutation, &["S016"]),
+    (Kind::StructArg, &[]),
+    (Kind::FieldName, &[]),
+    (Kind::UserFieldInfo, &[]),
+    (Kind::SelfStruct, &[]),
+    (Kind::ZeroNonData, &["S010"]),
+];
+
+/// Each kind of queries gets at least 5 mutants over the fixed programs, a
+/// kind that predicts gets 5 predictions, and each prediction is one of its
+/// codes.
+#[test]
+fn the_kinds_of_queries_get_predictions() {
+    let ps = programs();
+    for (kind, codes) in QUERY_CODES {
+        let (mut mutants, mut predicted) = (0, 0);
+        for p in &ps {
+            for site in 0..sites(kind, &p.items, &p.top).min(4) {
+                let m = mutate(p, index(kind), u32::try_from(site).unwrap());
+                mutants += 1;
+                if let Some(code) = m.expect {
+                    assert!(codes.contains(&code), "{kind:?} predicted {code}");
+                    predicted += 1;
+                }
+            }
+        }
+        assert!(mutants >= 5, "{kind:?} has {mutants} mutants");
+        assert!(
+            codes.is_empty() || predicted >= 5,
+            "{kind:?} predicted {predicted} mutants"
+        );
+    }
 }
