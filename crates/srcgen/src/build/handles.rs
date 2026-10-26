@@ -32,6 +32,7 @@
 
 use super::hw::{Want, adapt};
 use super::inst::Child;
+use super::reflect::RTy;
 use super::{Builder, Built, Ctx, Hw, Lane, Module, Names, Sig};
 use crate::eval::{Env, Fault, Value};
 use crate::program::{FTy, HBin, HExpr, Place, Radix, SExpr, Scalar, Stmt, Ty};
@@ -675,6 +676,7 @@ impl Builder {
             Role::Mem { word, depth } => {
                 let name = m.names.fresh("n");
                 out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
+                self.add_root(&name, RTy::of(&word).map(|t| RTy::Mem(Box::new(t), depth)));
                 self.mem_ports(ctx, &mut m.names, (&name, &word, depth), Some(i), out)?;
             }
             Role::Declare | Role::List(_) => {}
@@ -745,6 +747,7 @@ impl Builder {
         let depth = self.pick(&DEPTHS);
         let name = m.names.fresh("n");
         out.push(Stmt::Mem(name.clone(), word.clone(), literal(depth)));
+        self.add_root(&name, RTy::of(&word).map(|t| RTy::Mem(Box::new(t), depth)));
         self.mem_ports(ctx, &mut m.names, (&name, &word, depth), None, out)?;
         Ok(())
     }

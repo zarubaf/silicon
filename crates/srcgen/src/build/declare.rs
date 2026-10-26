@@ -28,6 +28,7 @@ use super::handles::{
     DEPTHS, HANDLE_DEPTH, Leaf, ListOf, Part, Pending, ResHelper, Role, Step, at, literal,
 };
 use super::inst::Child;
+use super::reflect::RTy;
 use super::stat::{Reach, value_expr};
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module, Names};
 use crate::eval::{Env, Fault, Value, convert};
@@ -644,6 +645,16 @@ impl Builder {
         part: &Part,
     ) -> Built {
         let first = at(root, &part.path)?;
+        // `@TypeOf(t.0)` of a handle in a container gives its handle type.
+        if !ctx.local {
+            let handle = match &part.leaf {
+                Leaf::Reg(ty) => RTy::of(ty).map(|t| RTy::Reg(Box::new(t))),
+                Leaf::Wire(ty) => RTy::of(ty).map(|t| RTy::Wire(Box::new(t))),
+                Leaf::Mem { word, depth } => RTy::of(word).map(|t| RTy::Mem(Box::new(t), *depth)),
+                Leaf::Instance { .. } => Some(RTy::Instance),
+            };
+            self.add_root(&crate::program::hexpr(&first), handle);
+        }
         match &part.leaf {
             Leaf::Reg(ty) => {
                 self.read_handle(ctx, &first, ty)?;

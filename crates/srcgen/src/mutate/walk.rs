@@ -568,7 +568,7 @@ impl<'a> Walk<'a> {
             }
             // The loop of a wrapper has no site: a change would hide in the
             // twin.
-            Stmt::Error(_) | Stmt::Forward { .. } => {}
+            Stmt::Error(_) | Stmt::Forward { .. } | Stmt::TypeLet(..) => {}
             Stmt::Block(body) => self.stmts(body, false),
             Stmt::Call(..)
             | Stmt::HList(..)
@@ -1854,6 +1854,7 @@ fn declared(s: &Stmt) -> Option<&str> {
         | Stmt::HList(n, _)
         | Stmt::Let { name: n, .. }
         | Stmt::StaticLet(n, _, _)
+        | Stmt::TypeLet(n, _)
         | Stmt::MutLet(n, _, _)
         | Stmt::PopLet(n, _)
         | Stmt::MutCall { name: n, .. }

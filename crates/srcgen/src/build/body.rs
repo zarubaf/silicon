@@ -421,6 +421,7 @@ impl Builder {
         };
         let mut body = Vec::new();
         self.ops.clear();
+        self.roots.clear();
         self.kids.clear();
         for (n, t) in &sig.inputs {
             body.push(Stmt::Input(n.clone(), t.clone()));
@@ -444,6 +445,8 @@ impl Builder {
         let mut outputs = Vec::new();
         for (n, t) in &sig.outputs {
             body.push(Stmt::Output(n.clone(), t.clone()));
+            // `@TypeOf(o)` of an own output gives its data type.
+            self.add_root(n, RTy::of(t));
             let types = self.types(t, &ctx.envs)?;
             let ty = Some(t.clone());
             outputs.push((n.clone(), Want { types, ty }));
@@ -481,6 +484,7 @@ impl Builder {
             self.instantiate(&mut ctx, &mut m, j, &mut body)?;
         }
         self.query_tail(&ctx, &mut m.names, &mut body);
+        self.root_group(&ctx, &mut body);
         self.drive_outputs(&ctx, outputs, &sig.enum_outputs, &mut body);
         // The declarations of the queries stay out of a module with no query.
         if self.emitted > emitted {
@@ -579,6 +583,7 @@ impl Builder {
                 self.record_group(ctx, m, &mut out)?;
             }
             self.query_group(ctx, &mut m.names, &mut out)?;
+            self.bind_group(ctx, &mut out);
         }
         for _ in 0..extra {
             self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
@@ -642,6 +647,11 @@ impl Builder {
             None => (Some(t), self.value(ctx, &want, DEPTH)),
         };
         let name = names.fresh(if mutable { "v" } else { "l" });
+        // The type of a `let` with no type is the type of its value. A bare
+        // name stays out: it can bind a handle.
+        if ty.is_none() && !matches!(value, HExpr::Name(_) | HExpr::Field(..)) {
+            self.add_root(&name, want.printable().as_ref().and_then(RTy::of));
+        }
         out.push(Stmt::Let {
             name: name.clone(),
             mutable,

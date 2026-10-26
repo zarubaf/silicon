@@ -34,6 +34,19 @@ pub(super) struct Kid {
     pub(super) name: String,
     pub(super) rows: Vec<Row>,
     pub(super) domain: &'static str,
+    /// The static `let` that holds the list, if one does: a read names the
+    /// `let` and not the call.
+    pub(super) bound: Option<String>,
+}
+
+impl Kid {
+    /// The list: `@ports(u)`, or the `let` that holds it.
+    pub(super) fn list(&self) -> QExpr {
+        match &self.bound {
+            Some(name) => QExpr::Text(name.clone()),
+            None => builtin("ports", QExpr::Text(self.name.clone())),
+        }
+    }
 }
 
 /// The `PortInfo` list of the module `sig` with the type of each port as
@@ -95,7 +108,7 @@ impl Builder {
     /// a Boolean, so a `varying` read is numeric only. The `ty` of a port
     /// also gives a type value, which the other reads take.
     pub(super) fn ports_read(&mut self, kid: &Kid, varying: bool) -> Option<(QExpr, SExpr)> {
-        let list = || builtin("ports", QExpr::Text(kid.name.clone()));
+        let list = || kid.list();
         // Half of the draws take an entry of a family, if there is one.
         let keyed: Vec<usize> = (0..kid.rows.len())
             .filter(|&k| kid.rows.get(k).is_some_and(|r| r.public.key.is_some()))
@@ -160,7 +173,7 @@ impl Builder {
             .filter_map(|(k, r)| r.ty.as_ref().map(|t| (k, t)))
             .collect();
         let (k, t) = *typed.get(self.tape.index(typed.len()))?;
-        let list = builtin("ports", QExpr::Text(kid.name.clone()));
+        let list = kid.list();
         let form = if self.tape.flag() {
             read(list, &format!("[{k}].ty"))
         } else {
