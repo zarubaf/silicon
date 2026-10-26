@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::mem;
 
 mod field;
+mod query;
 
 /// The sites of `Kind::Delete` that one binding makes, when the helper that
 /// holds it also declares the resource.
@@ -70,6 +71,10 @@ pub(super) struct Walk<'a> {
     indexed: BTreeMap<String, usize>,
     /// The static `String` names: the `let`s and the consts of that type.
     strs: Vec<String>,
+    /// The aliases of `@Struct`, and whether the module under the walk is
+    /// clocked.
+    aliases: Vec<(String, bool)>,
+    domain: Domain,
     /// The inputs of the current module, the module of each instance, the
     /// inputs of each module, and the functions that run a `diagnostic`.
     inputs: Vec<String>,
@@ -84,6 +89,14 @@ pub(super) struct Walk<'a> {
     item: String,
     index: usize,
     stmt: usize,
+}
+
+/// The domain of the module under the walk: a clocked module has the domain
+/// `clock`, and a combinational one has none.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Domain {
+    Clocked,
+    Combinational,
 }
 
 /// The position of an expression. A raw value is checked at a later use,
@@ -121,6 +134,8 @@ impl<'a> Walk<'a> {
             families: Vec::new(),
             indexed: BTreeMap::new(),
             strs: Vec::new(),
+            aliases: Vec::new(),
+            domain: Domain::Combinational,
             inputs: Vec::new(),
             children: BTreeMap::new(),
             module_inputs: BTreeMap::new(),
@@ -166,6 +181,26 @@ impl<'a> Walk<'a> {
         self.mut_helpers = mut_helpers(items);
         self.static_formals = static_formals(items);
         self.binders = binders(items);
+        // Each alias with whether its type is hardware data, so that `T()` is
+        // valid.
+        self.aliases = items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Alias { def, .. } => {
+                    let data = def.fields.iter().all(|(_, t)| {
+                        matches!(
+                            t,
+                            FieldTy::UInt(_) | FieldTy::SInt(_) | FieldTy::Static(STy::Bool)
+                        )
+                    });
+                    Some((def.name.clone(), data))
+                }
+                _ => None,
+            })
+            .collect();
+        if self.user_field_info(items) {
+            return;
+        }
         self.strs = items
             .iter()
             .filter_map(|i| match i {
@@ -256,7 +291,12 @@ impl<'a> Walk<'a> {
         self.typed.clear();
         match item {
             Item::Const { value, .. } => self.sexpr(value),
-            Item::HwFnValue { .. } | Item::Alias { .. } => {}
+            Item::HwFnValue { .. } => {}
+            Item::Alias {
+                def, form, helper, ..
+            } => {
+                self.alias_sites(def, form, helper.as_ref());
+            }
             Item::Enum(def) => self.enum_item(def),
             Item::ListFn(f) => self.sexpr(&mut f.element),
             Item::MutFn(f) => {
@@ -293,7 +333,14 @@ impl<'a> Walk<'a> {
                 self.stmts(body, false);
                 self.hexpr(result);
             }
-            Item::Module { body, .. } => self.stmts(body, true),
+            Item::Module { body, clocked, .. } => {
+                self.domain = if *clocked {
+                    Domain::Clocked
+                } else {
+                    Domain::Combinational
+                };
+                self.stmts(body, true);
+            }
         }
     }
 
@@ -1255,7 +1302,10 @@ impl<'a> Walk<'a> {
             Ty::UInt(w) | Ty::SInt(w) => self.width(w),
             Ty::Enum(name) => self.use_name(name),
             // A site inside the type would change what the query hides.
-            Ty::Bool | Ty::Query(..) => {}
+            Ty::Query(_, form) => {
+                self.query_type_sites(form);
+            }
+            Ty::Bool => {}
         }
     }
 
@@ -1315,11 +1365,10 @@ impl<'a> Walk<'a> {
             return;
         }
         match e {
-            SExpr::Int(..)
-            | SExpr::Bool(_)
-            | SExpr::Str(_)
-            | SExpr::NewList(_)
-            | SExpr::Query(_) => {}
+            SExpr::Int(..) | SExpr::Bool(_) | SExpr::Str(_) | SExpr::NewList(_) => {}
+            SExpr::Query(q) => {
+                self.query_sites(q);
+            }
             SExpr::Name(n) => self.rename(n),
             SExpr::Call(f, args) => {
                 self.rename(f);
@@ -1334,6 +1383,9 @@ impl<'a> Walk<'a> {
                 }
             }
             SExpr::Record(name, targs, fields) => {
+                if self.constructor_sites(name, fields) {
+                    return;
+                }
                 self.rename(name);
                 for x in targs.iter_mut().chain(fields) {
                     self.sexpr(x);
