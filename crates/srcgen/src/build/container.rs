@@ -6,6 +6,7 @@
 //! a selector `.N`, a field, `len`, or `data_bits`. An index is a static position, so each index
 //! is in range in each env of the env set, or it falls back to a literal.
 
+use super::field::{ARRAY_ODDS, LIST_ODDS};
 use super::stat::{self, Kind, Reach, bin, int};
 use super::{Builder, CONTAINER_LEN, CONTAINER_LEVELS};
 use crate::eval::{Env, Value};
@@ -247,7 +248,10 @@ impl Builder {
                     _ => Radix::Dec,
                 };
                 note!(self, selects);
-                let sel = SExpr::Select(Box::new(base), u32::try_from(k).ok()?, radix);
+                let n = u32::try_from(k).ok()?;
+                let sel = self
+                    .field_select(&base, n, r)
+                    .unwrap_or_else(|| SExpr::Select(Box::new(base), n, radix));
                 self.descend(sel, ts.get(k)?, kind, depth, r)
             }
             STy::Record(rt) => {
@@ -257,7 +261,9 @@ impl Builder {
                 let k = *ks.get(self.tape.index(ks.len()))?;
                 let (field, ty) = rt.fields.get(k)?;
                 note!(self, fields);
-                let sel = SExpr::Field(Box::new(base), field.clone());
+                let sel = self
+                    .field_record(&base, field, r)
+                    .unwrap_or_else(|| SExpr::Field(Box::new(base), field.clone()));
                 self.descend(sel, ty, kind, depth, r)
             }
             STy::UInt(_) | STy::SInt(_) | STy::Str | STy::Fn(_) | STy::Enum(_) => None,
@@ -274,7 +280,9 @@ impl Builder {
                 }
                 note!(self, list_indexes);
                 let at = self.index(len, depth, r);
-                Some(SExpr::Index(Box::new(base), Box::new(at)))
+                let spelled = self.field_index(&base, &at, LIST_ODDS, r);
+                note!(self, field_lists, spelled.is_some());
+                Some(spelled.unwrap_or_else(|| SExpr::Index(Box::new(base), Box::new(at))))
             }
             STy::Array(elem, n) => {
                 if kind == Kind::Int && self.tape.below(4) == 0 {
@@ -286,13 +294,10 @@ impl Builder {
                 }
                 note!(self, indexes);
                 let at = self.index(*n, depth, r);
-                self.descend(
-                    SExpr::Index(Box::new(base), Box::new(at)),
-                    elem,
-                    kind,
-                    depth,
-                    r,
-                )
+                let spelled = self.field_index(&base, &at, ARRAY_ODDS, r);
+                note!(self, field_arrays, spelled.is_some());
+                let sel = spelled.unwrap_or_else(|| SExpr::Index(Box::new(base), Box::new(at)));
+                self.descend(sel, elem, kind, depth, r)
             }
         }
     }

@@ -57,6 +57,7 @@ mod declare;
 mod diagnostics;
 mod enum_hw;
 mod enums;
+mod field;
 mod file;
 mod fnvalues;
 mod handle_lists;
@@ -179,6 +180,7 @@ enum Lane {
     Hand,
     Port,
     Temp,
+    Field,
 }
 
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
@@ -553,6 +555,14 @@ struct Stats {
     helper_chains: u32,
     port_reaches: u32,
     port_lost: u32,
+    field_steps: u32,
+    field_records: u32,
+    field_tuples: u32,
+    field_arrays: u32,
+    field_lists: u32,
+    field_joined_keys: u32,
+    field_name_keys: u32,
+    field_call_keys: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -575,6 +585,9 @@ struct Builder {
     /// The same numbers from the end, mixed with a third constant. The reads
     /// of a child through temporary containers draw from it.
     temp: Tape,
+    /// The same numbers from the end, mixed with a fourth constant. The
+    /// `@field` spellings of a read draw from it.
+    field: Tape,
     /// The tape that `on_side`, `on_hand`, or `on_port` has swapped into
     /// `tape`, if any.
     swapped: Option<Lane>,
@@ -601,6 +614,10 @@ struct Builder {
     decls: usize,
     /// The most such resources: `MAX_DECLS`, and less in a test of the cap.
     max_decls: usize,
+    /// The steps of reads that take the spelling `@field` so far, and the
+    /// most: `field::MAX_FIELDS`, and less in a test of the cap.
+    fields: u32,
+    max_fields: u32,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
@@ -660,6 +677,7 @@ impl Builder {
             Lane::Hand => &mut self.hand,
             Lane::Port => &mut self.port,
             Lane::Temp => &mut self.temp,
+            Lane::Field => &mut self.field,
         };
         std::mem::swap(&mut self.tape, parked);
     }
@@ -699,6 +717,17 @@ impl Builder {
                     .collect::<Vec<_>>()
                     .into_iter(),
             },
+            field: Tape {
+                numbers: tape
+                    .iter()
+                    .rev()
+                    .map(|n| {
+                        let m = n.wrapping_mul(0xC2B2_AE35);
+                        m ^ (m >> 13)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter(),
+            },
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -717,6 +746,8 @@ impl Builder {
             temp_helpers: Vec::new(),
             decls: 0,
             max_decls: handles::MAX_DECLS,
+            fields: 0,
+            max_fields: field::MAX_FIELDS,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
             port_helpers: Vec::new(),
