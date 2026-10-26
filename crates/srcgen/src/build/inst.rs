@@ -14,6 +14,8 @@ use crate::program::{HExpr, SExpr, STy, Stmt};
 pub(super) struct Child {
     pub(super) name: String,
     pub(super) sig: Sig,
+    /// The arguments as the `instance` statement spells them.
+    pub(super) args: Vec<SExpr>,
     pub(super) envs: Vec<Env>,
     /// The local container that the `:=` of the inputs go through, if any.
     pub(super) via: Option<Route>,
@@ -81,6 +83,7 @@ impl Builder {
         child.via = self.temp_route(ctx, m, &child, out)?;
         self.bind_child_inputs(ctx, &child, None, DEPTH, out)?;
         self.expose_child_outputs(ctx, &child)?;
+        self.expose_child_ops(&child);
         self.read_child_ports(ctx, m, &child, out)?;
         self.temp_reads(ctx, &child)?;
         ctx.instances.push(Peer {
@@ -109,11 +112,12 @@ impl Builder {
         }
         let tuples = self.tuples(j, &mut args, &ctx.envs)?;
         let name = m.names.fresh("u");
-        out.push(Stmt::Instance(name.clone(), sig.name.clone(), args));
+        out.push(Stmt::Instance(name.clone(), sig.name.clone(), args.clone()));
         let envs: Vec<Env> = tuples.iter().map(|a| Env::of(&sig.params, a)).collect();
         Ok(Child {
             name,
             sig,
+            args,
             envs,
             via: None,
         })

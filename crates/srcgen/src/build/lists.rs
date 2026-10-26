@@ -179,6 +179,7 @@ impl Builder {
         if self.try_run(ctx, &stmt) {
             note!(self, pushes);
             ctx.forget(&list);
+            self.forget_ops(&list);
             out.push(stmt);
             return;
         }
@@ -187,6 +188,7 @@ impl Builder {
         if self.try_run(ctx, &stmt) {
             note!(self, pushes);
             ctx.forget(&list);
+            self.forget_ops(&list);
             out.push(stmt);
         }
     }
@@ -205,6 +207,7 @@ impl Builder {
             if self.try_run(ctx, &stmt) {
                 note!(self, pops);
                 ctx.forget(&list);
+                self.forget_ops(&list);
                 ctx.statics.push((name, STy::Int));
                 out.push(stmt);
                 return;
@@ -219,6 +222,7 @@ impl Builder {
         if self.try_run(ctx, &push) && self.try_run(ctx, &pop) {
             note!(self, pops);
             ctx.forget(&list);
+            self.forget_ops(&list);
             ctx.statics.push((name, STy::Int));
             out.push(push);
             out.push(pop);

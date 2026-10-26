@@ -393,6 +393,33 @@ pub(crate) enum SExpr {
     /// `PortKey(name, indexed, index)`, the key of a port. The evaluator
     /// knows no `PortKey`: the twin reads the three parts.
     PortKey(Box<SExpr>, bool, Box<SExpr>),
+    /// A query builtin (front-end spec 9.3): the printer writes its form,
+    /// and the evaluator and the twin read its static result.
+    Query(Box<Query>),
+}
+
+/// A query as the source spells it, and the static value that it gives
+/// (ADR 0032). The builder draws the value from the types that it drew, so
+/// the evaluator looks into no type.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Query {
+    pub(crate) form: QExpr,
+    pub(crate) value: SExpr,
+}
+
+/// The text of a query: builtins over places and types.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum QExpr {
+    /// A place, a type, or a literal that the builder spells itself.
+    Text(String),
+    /// `@name(args)`.
+    Builtin(String, Vec<QExpr>),
+    /// `f(arg)`: `data_bits` or `len`.
+    Call(&'static str, Box<QExpr>),
+    /// `base.suffix`, where the suffix starts with a dot: `.width`.
+    Read(Box<QExpr>, String),
+    /// `(a == b)`.
+    Eq(Box<QExpr>, Box<QExpr>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1233,6 +1260,7 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::PortKey(n, indexed, k) => {
             format!("PortKey({}, {indexed}, {})", sexpr(n), sexpr(k))
         }
+        SExpr::Query(q) => qexpr(&q.form),
         SExpr::Unary(op, a) => format!("({}{})", un(*op), sexpr(a)),
         SExpr::Binary(op, a, b) => format!("({} {} {})", sexpr(a), sbin(*op), sexpr(b)),
         SExpr::If(c, t, e) => {
@@ -1243,6 +1271,20 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
                 sexpr(e)
             )
         }
+    }
+}
+
+/// The source text of a query.
+pub(crate) fn qexpr(e: &QExpr) -> String {
+    match e {
+        QExpr::Text(t) => t.clone(),
+        QExpr::Builtin(name, args) => {
+            let args: Vec<String> = args.iter().map(qexpr).collect();
+            format!("@{name}({})", args.join(", "))
+        }
+        QExpr::Call(f, a) => format!("{f}({})", qexpr(a)),
+        QExpr::Read(b, suffix) => format!("{}{suffix}", qexpr(b)),
+        QExpr::Eq(a, b) => format!("({} == {})", qexpr(a), qexpr(b)),
     }
 }
 

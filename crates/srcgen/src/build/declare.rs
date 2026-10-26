@@ -28,7 +28,7 @@ use super::handles::{
     DEPTHS, HANDLE_DEPTH, Leaf, ListOf, Part, Pending, ResHelper, Role, Step, at, literal,
 };
 use super::inst::Child;
-use super::stat::Reach;
+use super::stat::{Reach, value_expr};
 use super::{Builder, Built, CONTEXTS, Ctx, Hw, Module, Names};
 use crate::eval::{Env, Fault, Value, convert};
 use crate::program::{FTy, FieldTy, HExpr, SExpr, Stmt, StructDef, Ty};
@@ -493,6 +493,7 @@ impl Builder {
             let child = Child {
                 name: name.clone(),
                 envs: vec![Env::of(&sig.params, &tuple)],
+                args: args.clone(),
                 sig: sig.clone(),
                 via: None,
             };
@@ -684,6 +685,7 @@ impl Builder {
                 let child = Child {
                     name: root.to_owned(),
                     envs: vec![env; ctx.envs.len()],
+                    args: tuple.iter().map(value_expr).collect(),
                     sig,
                     via: None,
                 };

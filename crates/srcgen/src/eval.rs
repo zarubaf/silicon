@@ -818,6 +818,7 @@ impl<'a> Evaluator<'a> {
             SExpr::Int(n, _) => Value::Int(n.clone()),
             SExpr::Bool(b) => Value::Bool(*b),
             SExpr::KeyCall(f, root, arg) => self.key_call(f, root, arg, env)?,
+            SExpr::Query(q) => self.eval(&q.value, env)?,
             SExpr::Name(n) => match self
                 .writes
                 .get(n)
