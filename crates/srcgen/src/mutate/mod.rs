@@ -242,6 +242,11 @@ enum Kind {
     PortPlace,
     /// A read of a port of a child becomes the read of the child.
     InstanceData,
+    /// Two fields of the literal list of an alias of `@Struct` swap.
+    FieldSwap,
+    /// A constructor of a generated record type that comes from a declared
+    /// struct becomes the constructor of that struct.
+    NominalStruct,
     /// A builtin gets a name that is no builtin.
     BuiltinName,
     /// A builtin gets one operand more or less.
@@ -283,7 +288,7 @@ enum Kind {
     ZeroNonData,
 }
 
-const KINDS: [Kind; 68] = [
+const KINDS: [Kind; 70] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -333,6 +338,8 @@ const KINDS: [Kind; 68] = [
     Kind::TargetBase,
     Kind::PortPlace,
     Kind::InstanceData,
+    Kind::FieldSwap,
+    Kind::NominalStruct,
     Kind::BuiltinName,
     Kind::BuiltinArity,
     Kind::QueryOperand,
@@ -381,7 +388,7 @@ const QUERY_SPLIT: usize = EARLY_SPLIT * EARLY_ODDS;
 /// of queries. A draw in `GAP_ODDS`, read from the digits above those of the
 /// queries, picks one of them, if the program has a site of one. The other
 /// draws keep the kinds that they had before.
-const GAP_KINDS: usize = 5;
+const GAP_KINDS: usize = 7;
 const GAP_ODDS: usize = 6;
 const GAP_SPLIT: usize = QUERY_SPLIT * QUERY_ODDS * QUERY_KINDS;
 

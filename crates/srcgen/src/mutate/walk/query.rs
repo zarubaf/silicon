@@ -11,7 +11,7 @@
 
 use super::super::{EFFECT_FN, Effect, KEEP_FN, Kind};
 use super::{Domain, Walk};
-use crate::program::{FieldTy, Item, QExpr, Query, SExpr, STy, StructDef};
+use crate::program::{FieldTy, Item, QExpr, Query, SExpr, STy, StructDef, list_text};
 
 /// The name of 70 characters that a message cuts at 64 (section 5.5).
 const LONG: usize = 70;
@@ -221,6 +221,26 @@ impl Walk<'_> {
         false
     }
 
+    /// `NominalStruct`: the constructor of an alias that reads the fields of
+    /// a declared struct becomes the constructor of the struct. A declared
+    /// struct stays nominal, so the type of the value is no longer the alias.
+    pub(super) fn nominal_site(&mut self, name: &mut String, targs: &mut Vec<SExpr>) -> bool {
+        let Some((declared, args)) = self.nominal.get(name.as_str()).cloned() else {
+            return false;
+        };
+        if !self.site(Kind::NominalStruct) {
+            return false;
+        }
+        let what = format!("construct {declared} in place of {name}");
+        *name = declared;
+        *targs = args
+            .iter()
+            .map(|a| SExpr::Int(num_bigint::BigInt::from(*a), crate::program::Radix::Dec))
+            .collect();
+        self.hit(format!("{what} in {}", self.item), Effect::Code(None));
+        true
+    }
+
     /// The sites of the alias `def` of `@Struct`: the argument, a field name,
     /// and a field type that is the alias itself.
     pub(super) fn alias_sites(
@@ -264,6 +284,16 @@ impl Walk<'_> {
             }
             self.hit(
                 format!("give a field of {} a bad name", def.name),
+                Effect::Code(None),
+            );
+            return true;
+        }
+        if literal && def.fields.len() >= 2 && self.site(Kind::FieldSwap) {
+            let mut fields = def.fields.clone();
+            fields.swap(0, 1);
+            *list = list_text(&fields);
+            self.hit(
+                format!("swap two fields of {}", def.name),
                 Effect::Code(None),
             );
             return true;
