@@ -1,0 +1,15 @@
+// S011: a handle is a key of `@TypeOf`.
+// TOP M()
+fn pick(r: Reg[UInt[4]]) -> Type {
+    let a = [1, 2];
+    // expected-error S011 @+2
+    // expected-message: a key of `@TypeOf` holds the register `r`, but it takes only static values; pass the data through a port, or use it in the module that declares it
+    return @TypeOf(a[r]);
+}
+module M() {
+    output o: UInt[4];
+    reg r: UInt[4] = 0;
+    r := 0;
+    let t = pick(r);
+    o := 0;
+}

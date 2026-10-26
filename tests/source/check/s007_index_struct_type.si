@@ -1,0 +1,10 @@
+// S007: a builtin `@Struct` in a type position gives a complete type, so an index after it is an error.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: Bool;
+    // expected-error S007 @+2
+    // expected-message: `@Struct(...)` in a type position takes 0 argument(s), but it has 1; the type is complete, so remove the index
+    let y: @Struct([FieldInfo("a", Bool)])[8] = x;
+    o := true;
+}
