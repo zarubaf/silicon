@@ -238,7 +238,8 @@ The kinds of each expression and of each type expression have balanced brackets.
 with its `,`, so it leaves only a positive depth as it is.
 -/
 private theorem trans_all (s : Sep) :
-    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ (∀ a : Arm, Inner s a.toks) ∧
+    (∀ e : Expr, ∀ c, Trans s (e.toks c)) ∧ (∀ a : BuiltinArgs, ∀ x ∈ a.list, ∀ c,
+      Trans s (x.toks c)) ∧ (∀ a : Arm, Inner s a.toks) ∧
       (∀ p : FnParam, Trans s p.toks) ∧ ∀ t : TypeExpr, Trans s t.toks := by
   apply Expr.erase.mutual_induct
   case case19 =>
@@ -247,7 +248,7 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.flatten (s := s) (xss := arms.map Arm.toks) (by simpa using ih)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihs _ (d + 1), ha d]
-  case case21 =>
+  case case25 =>
     intro q v ih
     have := (Pattern.trans s q).inner.append ((Trans.single (k := .symbol "=>")
       (by decide)).inner.append ((ih 0).inner.append Inner.comma))
@@ -319,11 +320,20 @@ private theorem trans_all (s : Sep) :
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
   case case20 =>
-    intro p b xs ih
+    intro p a ih
     refine Expr.trans_paren _ ?_
-    have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
+    have ha := Inner.argToks (xss := a.list.map (Expr.toks 0))
+      (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ha d]
+  case case21 | case22 | case23 =>
+    intro x ih y hy
+    simp only [BuiltinArgs.list, List.mem_singleton] at hy
+    exact hy ▸ ih
+  case case24 =>
+    intro b k ihb ihk y hy
+    simp only [BuiltinArgs.list, List.mem_cons, List.not_mem_nil, or_false] at hy
+    rcases hy with rfl | rfl <;> assumption
   case case16 =>
     intro p r m xs ihr ih
     refine Expr.trans_paren _ ?_
@@ -336,38 +346,39 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case22 =>
+  case case26 =>
     intro m t iht d rest
     cases m <;> simp [FnParam.toks, scan, OpenK, CloseK, iht d]
-  case case24 =>
+  case case28 =>
     intro p b xs ihb ih
     have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
     rw [TypeExpr.toks.eq_def]
     cases b <;> simp [scan, OpenK, CloseK, ihb d, ihb (d + 1), ha d]
-  case case26 =>
+  case case30 =>
     intro p ts ih
     have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
     rw [TypeExpr.toks]
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  case case27 =>
+  case case31 =>
     intro p t n iht ihn
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
-  case case28 =>
+  case case32 =>
     intro p ps r ih ihr
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case29 =>
-    intro p b xs ih
-    have ha := Inner.argToks (xss := xs.map (Expr.toks 0)) (by simpa using fun x hx => ih x hx 0)
+  case case33 =>
+    intro p a ih
+    have ha := Inner.argToks (xss := a.list.map (Expr.toks 0))
+      (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ha d]
-  case case23 | case25 =>
+  case case27 | case29 =>
     intros
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK]
@@ -379,7 +390,7 @@ private theorem trans_all (s : Sep) :
 
 theorem Expr.trans (s : Sep) (e : Expr) : ∀ c, Trans s (e.toks c) := (trans_all s).1 e
 
-theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2.2.2 t
+theorem TypeExpr.trans (s : Sep) (t : TypeExpr) : Trans s t.toks := (trans_all s).2.2.2.2 t
 
 /-! The arguments of a call or an index are balanced. -/
 theorem Bal.args (xs : List Expr) : Bal (argToks (xs.map (Expr.toks 0))) :=

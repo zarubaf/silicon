@@ -124,7 +124,12 @@ mutual
     | .fnType _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fntype (") ps ++ ") ") ++ ")"
     | .path _ t v => acc ++ "(path " ++ ident t ++ " " ++ ident v ++ ")"
     | .«match» _ s arms => Arm.dumpsTo (s.dumpTo (acc ++ "(match ") ++ " (") arms ++ "))"
-    | .builtin _ b xs => Expr.dumpsTo (acc ++ "(builtin " ++ b.name ++ " (") xs ++ "))"
+    | .builtin _ a => a.dumpTo (acc ++ "(builtin " ++ a.builtin.name ++ " (") ++ "))"
+
+  /-- The operands of a builtin, as `Expr.dumpsTo` dumps the list of them. -/
+  def BuiltinArgs.dumpTo (acc : String) : BuiltinArgs → String
+    | .typeOf x | .typeInfo x | .struct x => x.dumpTo acc
+    | .field b k => k.dumpTo (b.dumpTo acc ++ " ")
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
   def Expr.dumpsTo (acc : String) : List Expr → String
@@ -139,7 +144,7 @@ mutual
     | .tuple _ ts => TypeExpr.dumpsTo (acc ++ "(tuple (") ts ++ "))"
     | .array _ t n => n.dumpTo (t.dumpTo (acc ++ "(array ") ++ " ") ++ ")"
     | .fn _ ps r => r.dumpTo (FnParam.dumpsTo (acc ++ "(fn (") ps ++ ") ") ++ ")"
-    | .builtin _ b xs => Expr.dumpsTo (acc ++ "(builtin " ++ b.name ++ " (") xs ++ "))"
+    | .builtin _ a => a.dumpTo (acc ++ "(builtin " ++ a.builtin.name ++ " (") ++ "))"
 
   /-- `sepTo TypeExpr.dumpTo`, which the recursion over `TypeExpr` needs as its own function. -/
   def TypeExpr.dumpsTo (acc : String) : List TypeExpr → String
@@ -344,7 +349,7 @@ mutual
       | .path _ t v => t.name ++ "::" ++ v.name
       | .«match» _ s arms =>
         "match (" ++ s.print 0 ++ ") {" ++ armsText (arms.map Arm.print) ++ " }"
-      | .builtin _ b xs => "@" ++ b.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
+      | .builtin _ a => "@" ++ a.builtin.name ++ "(" ++ args a.print ++ ")"
     if e.level < ctx then "(" ++ text ++ ")" else text
 
   def TypeExpr.print : TypeExpr → String
@@ -356,7 +361,12 @@ mutual
     | .tuple _ ts => "(" ++ args (ts.map TypeExpr.print) ++ tupleEnd ts.length
     | .array _ t n => "[" ++ t.print ++ "; " ++ n.print 0 ++ "]"
     | .fn _ ps r => fnText (ps.map FnParam.print) r.print
-    | .builtin _ b xs => "@" ++ b.name ++ "(" ++ args (xs.map (Expr.print 0)) ++ ")"
+    | .builtin _ a => "@" ++ a.builtin.name ++ "(" ++ args a.print ++ ")"
+
+  /-- The text of each operand of a builtin, in source order. -/
+  def BuiltinArgs.print : BuiltinArgs → List String
+    | .typeOf x | .typeInfo x | .struct x => [x.print 0]
+    | .field b k => [b.print 0, k.print 0]
 
   def FnParam.print : FnParam → String
     | .mk m t => (if m then "mut " else "") ++ t.print
