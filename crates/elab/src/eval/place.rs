@@ -666,12 +666,13 @@ impl Evaluator<'_> {
             // A selection of a hardware aggregate normalizes an empty part, which charges its
             // size. As in Lean, that charge comes before the next index evaluates, so the
             // segment ends before an index that follows a selection of an empty part. A part of
-            // a type with a hardware leaf charges nothing, and no part before it is empty, so the
-            // index can evaluate first, and one walk then takes the whole run of steps.
+            // a type with a hardware leaf or with the handle flag charges nothing, and no part
+            // before it is empty, so the index can evaluate first, and one walk then takes the
+            // whole run of steps.
             if on_agg
                 && n > 0
                 && matches!(step, Sel::Index(..) | Sel::Key(..))
-                && known.is_none_or(|t| self.tys.meta(t).leaves.is_zero())
+                && known.is_none_or(|t| self.may_normalize(t))
             {
                 break;
             }
@@ -754,6 +755,13 @@ impl Evaluator<'_> {
             return Err(e);
         }
         Ok((out, keyed.keys().len(), after))
+    }
+
+    /// Whether a part of the type `t` in an aggregate can be a reference that normalizes when a
+    /// step selects it: its type has no hardware leaf. A reference reads data, so a part of a type
+    /// with the handle flag is a node and normalizes nothing.
+    fn may_normalize(&self, t: TyId) -> bool {
+        self.tys.meta(t).leaves.is_zero() && !t.holds_handles()
     }
 
     /// Whether `step` is an index with a call whose base has the type `Type`. A type takes no
@@ -1413,7 +1421,7 @@ impl Evaluator<'_> {
             if aggregate
                 && !state.settled
                 && !keyed.keys().is_empty()
-                && part_ty.is_some_and(|t| self.tys.meta(t).leaves.to_u64() == Some(0))
+                && part_ty.is_some_and(|t| self.may_normalize(t))
             {
                 state = self.walk(root, state, keyed.keys(), false)?;
                 keyed.clear();
