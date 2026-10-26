@@ -76,3 +76,39 @@ fn a_run_that_ends_with_another_error_fails_the_assertion() {
     let other: Res<()> = fail(Code::S015, Pos { line: 4, col: 1 }, "fuel".to_owned());
     dropped_at(Pos { line: 3, col: 7 }).finish(&other);
 }
+
+/// A failed check inside an early key that an outer failed check then drops never ran in Lean.
+/// The run ends with the outer check, so the assertion holds for it and not for the inner one.
+#[test]
+fn an_outer_cut_replaces_a_drop_inside_its_early_key() {
+    let (inner, outer) = (Pos { line: 9, col: 2 }, Pos { line: 3, col: 7 });
+    let mut records = Records::default();
+    records.open();
+    let mark = records.mark();
+    records.push("early".to_owned());
+    records.open();
+    let inner_mark = records.mark();
+    records.push("inner".to_owned());
+    let failed: Res<()> = fail(Code::S013, inner, "out of range".to_owned());
+    records.close(failed.as_ref().err().map(|e| (inner_mark, e)));
+    let failed: Res<()> = fail(Code::S013, outer, "out of range".to_owned());
+    records.close(failed.as_ref().err().map(|e| (mark, e)));
+    assert!(records.finish(&failed).is_empty());
+}
+
+/// Once the walk of a drop ended, its records are kept, so a later cut does not replace it.
+#[test]
+#[cfg(debug_assertions)]
+#[should_panic(expected = "a failed check after an early key did not end the run")]
+fn a_later_cut_keeps_a_drop_whose_walk_ended() {
+    let mut records = dropped_at(Pos { line: 3, col: 7 });
+    records.open();
+    let mark = records.mark();
+    let later: Res<()> = fail(
+        Code::S013,
+        Pos { line: 5, col: 1 },
+        "out of range".to_owned(),
+    );
+    records.close(later.as_ref().err().map(|e| (mark, e)));
+    records.finish(&later);
+}
