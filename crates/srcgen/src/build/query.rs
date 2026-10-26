@@ -950,6 +950,11 @@ mod tests {
             forms.push((format!("kind {kind}"), s.query_kinds.contains(kind)));
         }
         forms.push(("ports".to_owned(), text.contains("@ports(")));
+        forms.push(("wrapper".to_owned(), text.contains("module W0(")));
+        forms.push((
+            "wrapper used".to_owned(),
+            text.contains("module W0(") && text.contains(" = W0("),
+        ));
         for (name, seen) in [
             ("length", text.contains("len(@ports(")),
             ("direction", text.contains(".is_input")),
@@ -1012,7 +1017,7 @@ mod tests {
             "{any} programs"
         );
         for (form, n) in &with {
-            let detail = ["root ", "kind ", "generated ", "ports "];
+            let detail = ["root ", "kind ", "generated ", "ports ", "wrapper"];
             let floor = if detail.iter().any(|d| form.starts_with(d)) {
                 TAPES / 32
             } else {

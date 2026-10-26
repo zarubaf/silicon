@@ -386,8 +386,10 @@ impl Builder {
                 enum_inputs,
                 enum_outputs,
                 plan,
+                wraps: None,
             });
         }
+        self.wrapper();
     }
 
     /// The body of module `k` in its contexts, if a parent reaches it.
@@ -396,6 +398,9 @@ impl Builder {
         let tuples = self.contexts.get(k).cloned().ok_or(Fault::Type)?;
         if tuples.is_empty() {
             return Ok(());
+        }
+        if sig.wraps.is_some() {
+            return self.wrapper_body(k, &sig);
         }
         let mut ctx = Ctx {
             envs: tuples.iter().map(|a| Env::of(&sig.params, a)).collect(),

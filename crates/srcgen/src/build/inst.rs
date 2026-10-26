@@ -25,7 +25,9 @@ impl Builder {
     /// Whether module `m` can instantiate module `j`: a later module, and a
     /// combinational parent takes only combinational children.
     pub(super) fn reachable(&self, m: &Module, j: usize) -> bool {
-        j > m.index && (m.clocked || self.sigs.get(j).is_some_and(|s| !s.clocked))
+        j > m.index
+            && (m.clocked || self.sigs.get(j).is_some_and(|s| !s.clocked))
+            && self.sigs.get(j).is_some_and(|s| s.wraps.is_none())
     }
 
     /// An instance of a random child, if one is reachable.
@@ -110,7 +112,16 @@ impl Builder {
                 None => self.argument(t, self.reach(ctx), &ctx.envs),
             });
         }
-        let tuples = self.tuples(j, &mut args, &ctx.envs)?;
+        let mut tuples = self.tuples(j, &mut args, &ctx.envs)?;
+        // The query tape can put the wrapper of the module in its place. The
+        // wrapper takes the contexts, and its module takes them as its own.
+        let mut sig = sig;
+        if let Some(w) = self.wrapper_of(j) {
+            let w_tuples = self.tuples(w, &mut args, &ctx.envs)?;
+            tuples = self.tuples(j, &mut args, &ctx.envs)?;
+            debug_assert_eq!(w_tuples, tuples);
+            sig = self.sigs.get(w).cloned().ok_or(Fault::Type)?;
+        }
         let name = m.names.fresh("u");
         out.push(Stmt::Instance(name.clone(), sig.name.clone(), args.clone()));
         let envs: Vec<Env> = tuples.iter().map(|a| Env::of(&sig.params, a)).collect();

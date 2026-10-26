@@ -79,6 +79,7 @@ mod reflect;
 mod stat;
 mod strings;
 mod temps;
+mod wrapper;
 
 pub use lines::lines;
 
@@ -445,6 +446,9 @@ struct Sig {
     enum_outputs: Vec<(String, EnumDef)>,
     /// The families, keyed ports, and port helper calls of the module.
     plan: ports::PortPlan,
+    /// The module that this one wraps, if it is a wrapper that forwards each
+    /// port of an instance of that module.
+    wraps: Option<usize>,
 }
 
 /// The module whose body is under construction.

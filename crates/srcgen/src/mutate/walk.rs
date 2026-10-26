@@ -495,7 +495,9 @@ impl<'a> Walk<'a> {
                 self.sexpr(hi);
                 self.stmts(body, false);
             }
-            Stmt::Error(_) => {}
+            // The loop of a wrapper has no site: a change would hide in the
+            // twin.
+            Stmt::Error(_) | Stmt::Forward { .. } => {}
             Stmt::Block(body) => self.stmts(body, false),
             Stmt::Call(..)
             | Stmt::HList(..)

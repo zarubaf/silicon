@@ -30,8 +30,8 @@
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Fault, Scope, Value, eval, exec_static, leaf_bits, leaves, loop_values};
 use super::program::{
-    EnumDef, FTy, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Ports, Program, Radix,
-    SExpr, STy, Scalar, Stmt, Ty, helper_of, is_resource_helper, render_items,
+    EnumDef, FTy, FwdPort, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Ports, Program,
+    Radix, SExpr, STy, Scalar, Stmt, Ty, helper_of, is_resource_helper, render_items,
 };
 use super::public::Public;
 use num_bigint::{BigInt, BigUint, Sign};
@@ -1067,6 +1067,7 @@ impl Writer<'_> {
             Stmt::Call(f, args) => {
                 self.inline(f, args, fr, out);
             }
+            Stmt::Forward { inst, ports } => self.forward(inst, ports, fr, out),
             Stmt::Mem(..) | Stmt::WritePort { .. } => self.memory(s, fr, out),
             Stmt::HList(n, _) => {
                 self.lists.insert(n.clone(), Vec::new());
@@ -1074,6 +1075,54 @@ impl Writer<'_> {
             Stmt::HPush(n, h) => {
                 let h = self.handle(h, fr);
                 self.lists.entry(n.clone()).or_default().push(h);
+            }
+        }
+    }
+
+    /// The ports that a wrapper forwards, written out: a port with the name
+    /// of the child port, and the `:=` between it and the child. The twin has
+    /// no loop and no `@ports`.
+    fn forward(&mut self, inst: &str, ports: &[FwdPort], fr: &Frame, out: &mut Vec<Stmt>) {
+        let child = fr.name(inst);
+        for p in ports {
+            let name = match p.public.key {
+                Some(k) => entry_name(&p.public.base, k),
+                None => p.public.base.clone(),
+            };
+            let at = |n: &str| Place::Field(child.clone(), n.to_owned());
+            match &p.ty {
+                PTy::Data(t) => {
+                    let t = self.ty(t, fr);
+                    let (decl, connect) = if p.output {
+                        let read = HExpr::Field(child.clone(), name.clone());
+                        (
+                            Stmt::Output(name.clone(), t),
+                            Stmt::Connect(Place::Name(name.clone()), read),
+                        )
+                    } else {
+                        (
+                            Stmt::Input(name.clone(), t),
+                            Stmt::Connect(at(&name), HExpr::Name(name.clone())),
+                        )
+                    };
+                    self.hoisted.push(decl);
+                    out.push(connect);
+                }
+                PTy::Unit => {
+                    self.hoisted.push(Stmt::Port(Port {
+                        output: p.output,
+                        name: name.clone(),
+                        key: None,
+                        public: None,
+                        ty: PTy::Unit,
+                    }));
+                    let connect = if p.output {
+                        Stmt::Connect(Place::Name(name), HExpr::Unit)
+                    } else {
+                        Stmt::Connect(at(&name), HExpr::Unit)
+                    };
+                    out.push(connect);
+                }
             }
         }
     }

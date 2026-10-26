@@ -254,6 +254,15 @@ pub(crate) enum PTy {
     Unit,
 }
 
+/// A port that a wrapper forwards: its public name, its direction, and its
+/// type over the parameters of the wrapper.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FwdPort {
+    pub(crate) public: crate::public::Public,
+    pub(crate) output: bool,
+    pub(crate) ty: PTy,
+}
+
 /// A port declaration with a key or an `as` key (front-end spec 5.6):
 /// `input name: T as public;`, or `input name[key]: T;` for an entry of a
 /// family. A port with both is `S001`, so the builder never makes one.
@@ -573,6 +582,14 @@ pub(crate) enum Stmt {
     HPush(String, HExpr),
     /// `mem name: [T; N];`
     Mem(String, Ty, SExpr),
+    /// The loop of a wrapper that forwards each port of the instance `inst`
+    /// with `@ports` and `@field` (front-end spec 9.3). The printer writes the
+    /// loop, and the twin writes the `ports` out, so the loop makes the same
+    /// ports as the child has.
+    Forward {
+        inst: String,
+        ports: Vec<FwdPort>,
+    },
     /// `m.write_port(addr, data, en);`, or `write_port(m, addr, data, en);`
     /// without the receiver form.
     WritePort {
@@ -1103,6 +1120,10 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             stmts(out, depth + 1, body);
             "}".to_owned()
         }
+        Stmt::Forward { inst, .. } => {
+            forward(out, depth, inst);
+            return;
+        }
         Stmt::Call(f, args) => format!("{f}({});", list(args, hexpr)),
         Stmt::HList(n, t) => format!("let mut {n} = list({});", fty(t)),
         Stmt::HPush(n, h) => format!("{n}.push({});", hexpr(h)),
@@ -1116,6 +1137,34 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
         } => write_port(mem, [addr, data, en], *receiver),
     };
     line(out, depth, &text);
+}
+
+/// The loop that forwards each port of the instance `inst`: an input is a
+/// port of the wrapper that binds the input of the child, and an output is
+/// a port that reads the output of the child. The list is in port-layout
+/// order, so the inputs come first, and each output reads after all inputs
+/// have a binding.
+fn forward(out: &mut String, depth: usize, inst: &str) {
+    let ports = format!("@ports({inst})");
+    let key = format!("{ports}[j0].key");
+    let ty = format!("@field({ports}[j0], \"ty\")");
+    line(
+        out,
+        depth,
+        &format!("comptime for j0 in 0..len({ports}) {{"),
+    );
+    line(
+        out,
+        depth + 1,
+        &format!("comptime if ({ports}[j0].is_input) {{"),
+    );
+    line(out, depth + 2, &format!("input z0: {ty} as {key};"));
+    line(out, depth + 2, &format!("@field({inst}, {key}) := z0;"));
+    line(out, depth + 1, "} else {");
+    line(out, depth + 2, &format!("output z1: {ty} as {key};"));
+    line(out, depth + 2, &format!("z1 := @field({inst}, {key});"));
+    line(out, depth + 1, "}");
+    line(out, depth, "}");
 }
 
 /// `m.write_port(addr, data, en);`, or `write_port(m, addr, data, en);`.
