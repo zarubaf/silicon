@@ -610,3 +610,55 @@ fn the_message_of_a_mut_actual_names_both_types() {
         "a `mut` actual has the type Nat, but its formal has Int"
     );
 }
+
+const WS: &str = "struct WS(comptime s: String) { x: Bool }
+struct L(comptime s: [String; 2]) { x: Bool }";
+
+/// A `String` argument in the text of a type has the limit of a string in a message (design
+/// section 5.5). The texts are those of the Lean `silicon-check eval`.
+#[test]
+fn a_string_argument_in_a_type_text_prints_at_most_64_characters() {
+    let m = |arg: &str| message(WS, &format!("UInt[8](WS[\"{arg}\"](false))"));
+    let a64 = "a".repeat(64);
+    let want = |s: &str| format!("expected UInt[8], but the value is {s}");
+    assert_eq!(m(&a64), want(&format!("WS[\"{a64}\"]")));
+    assert_eq!(
+        m(&"a".repeat(65)),
+        want(&format!("WS[\"{a64}... (65 characters)\"]"))
+    );
+    assert_eq!(
+        m(&"a".repeat(2000)),
+        want(&format!("WS[\"{a64}... (2000 characters)\"]"))
+    );
+    // The cut comes before the escapes, so 64 quotes print as 128 bytes.
+    assert_eq!(
+        m(&"\\\"".repeat(70)),
+        want(&format!("WS[\"{}... (70 characters)\"]", "\\\"".repeat(64)))
+    );
+    // A string in an argument of another kind has the limit too.
+    assert_eq!(
+        message(
+            WS,
+            &format!("UInt[8](L[[\"{}\", \"b\"]](false))", "\u{e9}".repeat(70))
+        ),
+        want(&format!(
+            "L[[\"{}... (70 characters)\", \"b\"]]",
+            "\u{e9}".repeat(64)
+        ))
+    );
+}
+
+/// The text of a `String` argument of `2^20` characters copies at most 64 of them, so the
+/// bytes of the text of the error stay far below the limit of 1024 bytes.
+#[test]
+fn a_long_string_argument_adds_few_bytes_of_text() {
+    let len = 1usize << 20;
+    let text = message(WS, &format!("UInt[8](WS[\"{}\"](false))", "a".repeat(len)));
+    assert!(
+        text.ends_with(&format!("... ({len} characters)\"]")),
+        "{text}"
+    );
+    assert!(text.len() < 256, "{} bytes of text", text.len());
+    let bytes = last().text_bytes;
+    assert!(bytes < 256, "{bytes} bytes of text for the error");
+}
