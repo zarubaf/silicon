@@ -60,6 +60,7 @@ mod enums;
 mod field;
 mod file;
 mod fnvalues;
+mod generated;
 mod handle_lists;
 mod handles;
 mod held;
@@ -100,7 +101,7 @@ use std::fmt;
 /// forms add `A`, `Z`, and `K` for a family and `Y` for the binder of a keyed
 /// port: the twin names an entry `A0_3` and a keyed port by its public name.
 /// A static name is one of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGHAZKYN";
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGHAZKYNLD";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -453,7 +454,7 @@ struct Module {
 }
 
 #[cfg(test)]
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Stats {
     widths: u32,
     width_fallbacks: u32,
@@ -604,6 +605,7 @@ struct Stats {
     query_widths: u32,
     query_types: u32,
     query_pairs: u32,
+    struct_groups: u32,
     query_mixes: u32,
     /// The kinds of the types that the groups reflect.
     query_kinds: BTreeSet<&'static str>,
@@ -611,6 +613,24 @@ struct Stats {
     max_arms: usize,
     /// The most matches open at once.
     max_level: u32,
+}
+
+#[cfg(test)]
+impl Stats {
+    /// These counts with the counts of the queries from `inner`. A query
+    /// draws through the builders of the other forms, and those draws must
+    /// not count as a draw of the main tape: a measure of a form of the main
+    /// tape then holds for a program with no query too.
+    fn with_queries_of(mut self, inner: &Stats) -> Stats {
+        self.query_groups = inner.query_groups;
+        self.query_widths = inner.query_widths;
+        self.query_mixes = inner.query_mixes;
+        self.query_types = inner.query_types;
+        self.query_pairs = inner.query_pairs;
+        self.query_kinds.clone_from(&inner.query_kinds);
+        self.struct_groups = inner.struct_groups;
+        self
+    }
 }
 
 struct Builder {
@@ -645,6 +665,8 @@ struct Builder {
     consts: Vec<(String, STy, SExpr)>,
     fns: Vec<ComptimeFn>,
     structs: Vec<StructDef>,
+    /// The generated record types, from the query tape.
+    gens: Vec<generated::Gen>,
     enums: Vec<EnumDef>,
     list_fns: Vec<ListFn>,
     helpers: Vec<Helper>,
@@ -676,6 +698,8 @@ struct Builder {
     /// The query nodes made so far, and the declarations that only queries
     /// read.
     emitted: u32,
+    /// The text that the queries added so far, in bytes.
+    query_bytes: usize,
     query_decls: u32,
     /// Whether the program has queries at all: one program in two.
     query_on: bool,
@@ -718,6 +742,18 @@ impl Builder {
         let outer = self.swapped;
         if outer == Some(lane) {
             return f(self);
+        }
+        // A query reaches the builders of the other forms, which draw from
+        // their tapes. They get an exhausted tape instead, so that their
+        // forms take choice 0 (none) and no tape of another form moves.
+        if outer == Some(Lane::Query) {
+            let mut exhausted = Tape {
+                numbers: Vec::new().into_iter(),
+            };
+            std::mem::swap(&mut self.tape, &mut exhausted);
+            let out = f(self);
+            std::mem::swap(&mut self.tape, &mut exhausted);
+            return out;
         }
         if let Some(outer) = outer {
             self.exchange(outer);
@@ -772,6 +808,7 @@ impl Builder {
             consts: Vec::new(),
             fns: Vec::new(),
             structs: Vec::new(),
+            gens: Vec::new(),
             enums: Vec::new(),
             list_fns: Vec::new(),
             helpers: Vec::new(),
@@ -788,6 +825,7 @@ impl Builder {
             ops: Vec::new(),
             queries: 0,
             emitted: 0,
+            query_bytes: 0,
             query_decls: 0,
             query_on: false,
             called: BTreeSet::new(),
@@ -815,6 +853,7 @@ impl Builder {
         self.query_on = self.on_query(|b| b.tape.flag());
         self.enums()?;
         self.structs()?;
+        self.generated()?;
         self.consts()?;
         self.fns()?;
         self.list_fns()?;

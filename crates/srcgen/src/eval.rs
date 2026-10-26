@@ -291,6 +291,10 @@ pub(crate) struct Scope {
     mut_fns: BTreeMap<String, MutFn>,
     enums: BTreeMap<String, EnumDef>,
     consts: BTreeMap<String, Value>,
+    /// The first alias of each generated record type, by alias: aliases
+    /// with one identity name one type, so a record of any of them has the
+    /// type of the first (ADR 0032).
+    canon: BTreeMap<String, String>,
 }
 
 impl Scope {
@@ -324,6 +328,7 @@ impl Scope {
     /// faults here but not in the language: stricter on purpose.
     pub(crate) fn new(items: &[Item]) -> Result<Scope, Fault> {
         let mut scope = Scope::default();
+        let mut ids = BTreeMap::new();
         for item in items {
             match item {
                 Item::ComptimeFn(f) => {
@@ -337,6 +342,11 @@ impl Scope {
                 }
                 Item::Struct(def) => {
                     scope.structs.insert(def.name.clone(), def.clone());
+                }
+                Item::Alias { def, id, .. } => {
+                    scope.structs.insert(def.name.clone(), def.clone());
+                    let first = ids.entry(*id).or_insert_with(|| def.name.clone());
+                    scope.canon.insert(def.name.clone(), first.clone());
                 }
                 Item::Enum(def) => {
                     scope.enums.insert(def.name.clone(), def.clone());
@@ -619,7 +629,11 @@ pub(crate) fn record_ty(name: &str, args: &[Value], scope: &Scope) -> Result<Rec
         fields.push((f.clone(), t));
     }
     Ok(RecTy {
-        name: name.to_owned(),
+        name: scope
+            .canon
+            .get(name)
+            .map_or(name, String::as_str)
+            .to_owned(),
         args: args.to_vec(),
         fields,
     })

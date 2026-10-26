@@ -700,6 +700,17 @@ pub(crate) enum Item {
     ComptimeFn(ComptimeFn),
     ListFn(ListFn),
     Struct(StructDef),
+    /// `type name = @Struct(...);`: a generated record type, with the struct
+    /// that the evaluator reads (ADR 0032). The helper is the text of a
+    /// `comptime fn` that builds the list of fields, if the form calls one.
+    Alias {
+        def: StructDef,
+        /// The identity of the type, from the draw: aliases with one id are
+        /// one type.
+        id: usize,
+        form: QExpr,
+        helper: Option<String>,
+    },
     Enum(EnumDef),
     Helper {
         name: String,
@@ -846,6 +857,14 @@ fn render_item(out: &mut String, item: &Item) {
         Item::ListFn(f) => render_list_fn(out, f),
         Item::MutFn(f) => render_mut_fn(out, f),
         Item::Struct(def) => render_struct(out, def),
+        Item::Alias {
+            def, form, helper, ..
+        } => {
+            if let Some(helper) = helper {
+                out.push_str(helper);
+            }
+            line(out, 0, &format!("type {} = {};", def.name, qexpr(form)));
+        }
         Item::Enum(def) => render_enum(out, def),
         Item::Helper {
             name,
@@ -948,15 +967,19 @@ fn render_struct(out: &mut String, def: &StructDef) {
     };
     line(out, 0, &format!("struct {head} {{"));
     for (f, t) in &def.fields {
-        let t = match t {
-            FieldTy::Static(t) => t.text(),
-            FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
-            FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
-            FieldTy::Handle(t) => fty(t),
-        };
-        line(out, 1, &format!("{f}: {t},"));
+        line(out, 1, &format!("{f}: {},", field_ty_text(t)));
     }
     line(out, 0, "}");
+}
+
+/// The source spelling of the type of a field.
+pub(crate) fn field_ty_text(t: &FieldTy) -> String {
+    match t {
+        FieldTy::Static(t) => t.text(),
+        FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
+        FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
+        FieldTy::Handle(t) => fty(t),
+    }
 }
 
 fn render_enum(out: &mut String, def: &EnumDef) {
