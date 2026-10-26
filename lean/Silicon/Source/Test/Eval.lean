@@ -1877,7 +1877,7 @@ def mixed : Eval.Agg :=
   .mkTuple #[.bool, .int, .array (.uint 8) 4] #[boolLeaf, .static (.int 3), arrayRef]
 #guard mixed.size == 8 && mixed.depth == 3
 #guard (Eval.Val.agg mixed).text == "hardware (Bool, Int, [UInt[8]; 4])"
-#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false, false, false⟩)
+#guard (Eval.Agg.mkRecord (.struct 0 "P" #[] ⟨8, 1, 2, 5, true, false, false, false⟩ .user)
   #[boolLeaf]).depth == 6
 #guard match Eval.Agg.mkArray .int #[.static (.int 1), .static (.int 2)] with
   | .static v => v.serialize == "(array int ((int 1) (int 2)))"
@@ -2190,7 +2190,8 @@ reference part keeps its form and counts its zero size, here 5, in both sizes.
 #guard typedUse tupleAliases "Q" (fun t => .agg (.mkRecord t #[boolLeaf])) 0 == "[b] 0"
 #guard typedUse tupleAliases "Q"
   (fun _ =>
-    .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false, false, false⟩) #[boolLeaf])) 0 ==
+    .agg (.mkRecord (.struct 5 "R" #[] ⟨1, 1, 2, 2, true, false, false, false⟩ .user)
+      #[boolLeaf])) 0 ==
   "S010 1:1"
 
 /-!

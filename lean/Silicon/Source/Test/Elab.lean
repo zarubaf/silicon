@@ -4179,9 +4179,9 @@ def genTwice : Eval.Specs × Ty × Ty :=
   let (s, u) := s.generate ab (members [(7, 0), (9, 1)])
   (s, t, u)
 #guard genTwice.2.1 == genTwice.2.2 && genTwice.1.entries.size == 1
-#guard genTwice.2.1 matches .struct 0 _ _ _ .gen
+#guard genTwice.2.1 matches .struct 0 _ _ _ (.gen _)
 def genOther : Eval.Specs × Ty := genOnce.1.generate [("b", .bool), ("a", .uint 8)] {}
-#guard genOther.1.entries.size == 2 && genOther.2 matches .struct 1 _ _ _ .gen
+#guard genOther.1.entries.size == 2 && genOther.2 matches .struct 1 _ _ _ (.gen _)
 #guard !genOther.2.same genOnce.2
 #guard genOnce.2.serialize == "(gstruct ((\"a\" (uint 8)) (\"b\" bool)))"
 #guard genOnce.2.depth == 2 && genOnce.2.size == 8
