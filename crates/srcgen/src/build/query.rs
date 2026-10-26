@@ -27,6 +27,7 @@
 
 use super::hw::Want;
 use super::inst::Child;
+use super::portinfo::Kid;
 use super::reflect::{self, RTy};
 use super::{Builder, Built, Ctx, Lane, Module, Names};
 use crate::eval::Value;
@@ -51,18 +52,23 @@ pub(super) struct Op {
 /// One statement of a frame in this many is followed by a group, and the
 /// most groups of a program.
 const GROUP_ODDS: u32 = 2;
-const MAX_GROUPS: u32 = 10;
+const MAX_GROUPS: u32 = 24;
 /// The most groups at the end of a module body.
-const TAIL: u32 = 2;
+const TAIL: u32 = 4;
 /// A module mixes a query into its outputs in this many modules.
 const MIX_ODDS: u32 = 3;
 /// A wire or a register takes a query as its width in this many.
 const WIDTH_ODDS: u32 = 1;
 /// The most steps of a place and of a type value.
 const STEPS: u32 = 3;
+/// The most results that one `diagnostic` shows.
+const PER_RECORD: u32 = 3;
+/// A group reads a child through `@ports` in this many groups, if the frame
+/// has a child.
+const PORTS_ODDS: u32 = 2;
 /// The most text that the queries of a program add, in bytes: the largest
 /// program stays below its cap.
-const QUERY_BYTES: usize = 1700;
+const QUERY_BYTES: usize = 1500;
 /// A group uses a generated type in this many groups, if there is one.
 const STRUCT_ODDS: u32 = 3;
 /// The most low bits of a query that an unsigned output takes. A signed output
@@ -75,6 +81,21 @@ const KINDS: [&str; 19] = [
     "bool", "uint", "sint", "unit", "array", "tuple", "record", "int", "nat", "string", "type",
     "function", "list", "reg", "wire", "mem", "input", "instance", "enum",
 ];
+
+/// The type of a port of `child` as its parent sees it: the arguments of the
+/// instance stand for the parameters of the child.
+pub(super) fn outer_ty(child: &Child, t: &Ty) -> Option<RTy> {
+    let (Ty::UInt(w) | Ty::SInt(w)) = t else {
+        return RTy::of(t);
+    };
+    let w = substitute(w, &child.sig.params, &child.args)?;
+    let t = if matches!(t, Ty::SInt(_)) {
+        Ty::SInt(w)
+    } else {
+        Ty::UInt(w)
+    };
+    RTy::of(&t)
+}
 
 /// `e` with the arguments `args` for the parameters `params`, or `None` for
 /// a form that a width of a port does not take.
@@ -103,11 +124,11 @@ fn int(n: usize) -> SExpr {
     SExpr::Int(BigInt::from(n), crate::program::Radix::Dec)
 }
 
-fn builtin(name: &str, arg: QExpr) -> QExpr {
+pub(super) fn builtin(name: &str, arg: QExpr) -> QExpr {
     QExpr::Builtin(name.to_owned(), vec![arg])
 }
 
-fn read(base: QExpr, suffix: &str) -> QExpr {
+pub(super) fn read(base: QExpr, suffix: &str) -> QExpr {
     QExpr::Read(Box::new(base), suffix.to_owned())
 }
 
@@ -125,7 +146,7 @@ fn type_text(op: &Op) -> QExpr {
     )
 }
 
-fn is(base: QExpr, text: &str) -> QExpr {
+pub(super) fn is(base: QExpr, text: &str) -> QExpr {
     QExpr::Eq(Box::new(base), Box::new(QExpr::Text(string(text))))
 }
 
@@ -165,26 +186,21 @@ impl Builder {
     /// the type of a port with the arguments of the instance in place of the
     /// parameters of the child.
     pub(super) fn expose_child_ops(&mut self, child: &Child) {
-        let outer = |t: &Ty| {
-            let (Ty::UInt(w) | Ty::SInt(w)) = t else {
-                return RTy::of(t);
-            };
-            let w = substitute(w, &child.sig.params, &child.args)?;
-            let t = if matches!(t, Ty::SInt(_)) {
-                Ty::SInt(w)
-            } else {
-                Ty::UInt(w)
-            };
-            RTy::of(&t)
-        };
         self.add_op(&child.name, Some(RTy::Instance));
         for (q, t) in &child.sig.outputs {
-            self.add_op(&format!("{}.{q}", child.name), outer(t));
+            self.add_op(&format!("{}.{q}", child.name), outer_ty(child, t));
         }
         for (p, t) in &child.sig.inputs {
-            let ty = outer(t).map(|t| RTy::Input(Box::new(t)));
+            let ty = outer_ty(child, t).map(|t| RTy::Input(Box::new(t)));
             self.add_op(&format!("{}.{p}", child.name), ty);
         }
+        let rows = self.kid_rows(child);
+        let domain = if child.sig.clocked { "clock" } else { "" };
+        self.kids.push(Kid {
+            name: child.name.clone(),
+            rows,
+            domain,
+        });
     }
 
     /// The places that the static names of the frame give. A parameter, a
@@ -345,21 +361,41 @@ impl Builder {
         out
     }
 
-    /// What a query reads: the kind comes first, so that each kind that the
-    /// frame can reflect is as likely as another; then a name of that kind.
+    /// What a query reads: a hardware name, a static name, or a type
+    /// literal. The kind comes first, so that each kind of the source is as
+    /// likely as another; then a name of that kind.
     fn source(&mut self, ctx: &Ctx) -> Option<Op> {
-        let mut pool: Vec<Op> = self.ops.clone();
-        pool.extend(self.static_ops(ctx));
-        pool.extend(self.root_ops());
+        let statics = self.static_ops(ctx);
+        let roots = self.root_ops();
+        // The hardware names weigh 3, the static names 3, and the literals 5.
+        let pools = [(self.ops.clone(), 3), (statics, 3), (roots, 5)];
+        let total: u32 = pools
+            .iter()
+            .filter(|(p, _)| !p.is_empty())
+            .map(|(_, w)| w)
+            .sum();
+        let mut at = self.tape.below(total.max(1));
+        let (pool, _) = pools
+            .into_iter()
+            .filter(|(p, _)| !p.is_empty())
+            .find(|(_, w)| {
+                if at < *w {
+                    true
+                } else {
+                    at -= w;
+                    false
+                }
+            })?;
         let kinds: BTreeSet<&str> = pool.iter().map(|op| reflect::info(&op.ty).kind).collect();
-        // A tuple, a record, and an enum have names to read, and an instance
-        // is rare, so they count twice.
+        // A kind that few sources have counts twice: a tuple, a record, and
+        // an enum have names to read, and the others are rare.
+        let rare = [
+            "tuple", "record", "enum", "instance", "mem", "function", "type", "list", "reg",
+            "wire", "input",
+        ];
         let kinds: Vec<&str> = kinds
             .into_iter()
-            .flat_map(|k| {
-                let names = matches!(k, "tuple" | "record" | "enum" | "instance");
-                std::iter::repeat_n(k, 1 + usize::from(names))
-            })
+            .flat_map(|k| std::iter::repeat_n(k, 1 + usize::from(rare.contains(&k))))
             .collect();
         let kind = *kinds.get(self.tape.index(kinds.len()))?;
         let of_kind: Vec<Op> = pool
@@ -409,7 +445,7 @@ impl Builder {
     /// query and its static result. A `varying` read is a width, a number of
     /// bits, or a tag, which differ between names, not a length that is
     /// mostly 0.
-    fn size(&mut self, tq: &QExpr, t: &RTy, varying: bool) -> (QExpr, SExpr) {
+    pub(super) fn size(&mut self, tq: &QExpr, t: &RTy, varying: bool) -> (QExpr, SExpr) {
         let info = reflect::info(t);
         let typed = || builtin("typeInfo", tq.clone());
         let nat = |n: usize| int(n);
@@ -443,7 +479,7 @@ impl Builder {
     /// A test of the type value `tq` of the drawn type `t`: the kind, or the
     /// name of a field, or the name of a variant. It holds for the true text
     /// and fails for another one.
-    fn test(&mut self, tq: QExpr, t: &RTy) -> (QExpr, SExpr) {
+    pub(super) fn test(&mut self, tq: QExpr, t: &RTy) -> (QExpr, SExpr) {
         let info = reflect::info(t);
         let typed = builtin("typeInfo", tq);
         let names: Vec<(String, String)> = info
@@ -574,6 +610,7 @@ impl Builder {
                 if b.values(&value, &ctx.envs).is_some() {
                     let name = format!("N{}", b.query_decls);
                     b.query_decls += 1;
+                    b.query_bytes += sexpr(&value).len() + 24;
                     let mut ops = Vec::new();
                     b.chain(&name, &ty, STEPS, &mut ops);
                     b.ops.extend(ops);
@@ -598,37 +635,76 @@ impl Builder {
             self.emitted += 1;
             return;
         }
-        let Some(op) = self.source(ctx) else {
-            return;
-        };
-        let (tq, t) = self.type_value(&op, false);
-        let boolean = self.tape.flag();
-        let (form, value) = if boolean {
-            self.test(tq, &t)
-        } else {
-            self.size(&tq, &t, false)
-        };
-        if self.values(&value, &ctx.envs).is_none() {
-            return;
+        // A record shows up to `PER_RECORD` results, as a tuple.
+        let mut results = Vec::new();
+        for _ in 0..self.tape.between(1, PER_RECORD) {
+            if let Some(query) = self.one_query(ctx) {
+                results.push(query);
+            }
         }
+        let Some(first) = results.first().cloned() else {
+            return;
+        };
+        let message = self.next_message();
+        self.query_bytes += 28;
+        // One record in four binds a lone result at its type first.
+        if results.len() == 1 && self.tape.below(4) == 0 {
+            let name = names.fresh("s");
+            let ty = if matches!(first.1, SExpr::Bool(_)) {
+                STy::Bool
+            } else {
+                STy::Nat
+            };
+            self.query_bytes += 24;
+            out.push(Stmt::StaticLet(name.clone(), ty, first.0));
+            out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
+        } else if results.len() == 1 {
+            out.push(Stmt::Diagnostic(message, first.0));
+        } else {
+            let values = results.into_iter().map(|(q, _)| q).collect();
+            out.push(Stmt::Diagnostic(message, SExpr::Tuple(values)));
+        }
+    }
+
+    /// One query: a read of a type of a source, or of a child through
+    /// `@ports`. Gives the node and its result, which holds in each env.
+    fn one_query(&mut self, ctx: &Ctx) -> Option<(SExpr, SExpr)> {
+        if self.queries >= MAX_GROUPS || self.query_bytes > QUERY_BYTES {
+            return None;
+        }
+        let ports = if self.kids.is_empty() || self.tape.below(PORTS_ODDS) != 0 {
+            None
+        } else {
+            self.ports_group()
+        };
+        let (form, value, t) = if let Some((form, value, t)) = ports {
+            (form, value, t)
+        } else {
+            let op = self.source(ctx)?;
+            let (tq, t) = self.type_value(&op, false);
+            let (form, value) = if self.tape.flag() {
+                self.test(tq, &t)
+            } else {
+                self.size(&tq, &t, false)
+            };
+            (form, value, Some(t))
+        };
+        self.values(&value, &ctx.envs)?;
         self.queries += 1;
         self.emitted += 1;
         note!(self, query_groups);
         #[cfg(test)]
-        self.stats.query_kinds.insert(reflect::info(&t).kind);
-        let query = SExpr::Query(Box::new(Query { form, value }));
-        self.query_bytes += sexpr(&query).len() + 24;
-        let message = self.next_message();
-        // One group in three binds the result at its type first.
-        if self.tape.below(3) == 0 {
-            let name = names.fresh("s");
-            let ty = if boolean { STy::Bool } else { STy::Nat };
-            self.query_bytes += 24;
-            out.push(Stmt::StaticLet(name.clone(), ty, query));
-            out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
-        } else {
-            out.push(Stmt::Diagnostic(message, query));
+        if let Some(t) = &t {
+            self.stats.query_kinds.insert(reflect::info(t).kind);
         }
+        #[cfg(not(test))]
+        let _ = t;
+        let query = SExpr::Query(Box::new(Query {
+            form,
+            value: value.clone(),
+        }));
+        self.query_bytes += sexpr(&query).len() + 4;
+        Some((query, value))
     }
 
     /// The type `ty` of a wire or a register as a query on a name of the same
@@ -724,11 +800,20 @@ impl Builder {
                     (QExpr::Call("data_bits", Box::new(tq)), bits)
                 }
                 _ => {
-                    let Some(op) = b.source(ctx) else {
-                        return;
+                    let kid = b.kids.get(b.tape.index(b.kids.len())).cloned();
+                    let ports = match kid {
+                        Some(kid) if b.tape.below(3) == 0 => b.ports_read(&kid, true),
+                        _ => None,
                     };
-                    let (tq, t) = b.type_value(&op, false);
-                    b.size(&tq, &t, true)
+                    if let Some(read) = ports {
+                        read
+                    } else {
+                        let Some(op) = b.source(ctx) else {
+                            return;
+                        };
+                        let (tq, t) = b.type_value(&op, false);
+                        b.size(&tq, &t, true)
+                    }
                 }
             };
             let Some((_, want, driver)) = outputs.get_mut(at) else {
@@ -864,6 +949,18 @@ mod tests {
         for kind in KINDS {
             forms.push((format!("kind {kind}"), s.query_kinds.contains(kind)));
         }
+        forms.push(("ports".to_owned(), text.contains("@ports(")));
+        for (name, seen) in [
+            ("length", text.contains("len(@ports(")),
+            ("direction", text.contains(".is_input")),
+            ("key index", text.contains(".key.index")),
+            ("key indexed", text.contains(".key.indexed")),
+            ("key name", text.contains(".key.name == ")),
+            ("domain", text.contains(".domain")),
+            ("type", text.contains("\"ty\")") || text.contains("].ty)")),
+        ] {
+            forms.push((format!("ports {name}"), seen));
+        }
         let aliases = text.contains("\ntype D");
         forms.push(("generated type".to_owned(), aliases));
         forms.push(("struct group".to_owned(), s.struct_groups > 0));
@@ -915,7 +1012,7 @@ mod tests {
             "{any} programs"
         );
         for (form, n) in &with {
-            let detail = ["root ", "kind ", "generated "];
+            let detail = ["root ", "kind ", "generated ", "ports "];
             let floor = if detail.iter().any(|d| form.starts_with(d)) {
                 TAPES / 32
             } else {
