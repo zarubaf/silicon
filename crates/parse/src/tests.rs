@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::ast::{Expr, FnParam, Item, ParamMode, PortForm, Pos, Stmt, TypeExpr};
+use crate::ast::{Builtin, Expr, FnParam, Item, ParamMode, PortForm, Pos, Stmt, TypeExpr};
 use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse};
 use proptest::prelude::*;
 
@@ -71,7 +71,16 @@ fn sx(e: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
-        Expr::Builtin { builtin, args, .. } => format!("(@{} {})", builtin.name(), list(args)),
+        Expr::Builtin { .. } => {
+            let (builtin, operands) = e
+                .builtin_operands()
+                .unwrap_or((Builtin::TypeOf, Vec::new()));
+            format!(
+                "(@{} {})",
+                builtin.name(),
+                operands.into_iter().map(sx).collect::<Vec<_>>().join(" ")
+            )
+        }
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
         Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
     }
@@ -87,6 +96,7 @@ fn fx(params: &[FnParam], ret: &TypeExpr) -> String {
 }
 
 /// A type expression as a short S-expression.
+#[allow(unreachable_patterns, clippy::match_wildcard_for_single_variants)]
 fn tx(t: &TypeExpr) -> String {
     let list = |xs: &[Expr]| xs.iter().map(sx).collect::<Vec<_>>().join(" ");
     match t {
@@ -101,6 +111,8 @@ fn tx(t: &TypeExpr) -> String {
         }
         TypeExpr::Array { elem, len, .. } => format!("(array {} {})", tx(elem), sx(len)),
         TypeExpr::Fn { params, ret, .. } => format!("(fn {})", fx(params, ret)),
+        // A builtin type has no S-expression yet; the pins of its AST follow the AST.
+        _ => "(builtin-type)".to_owned(),
     }
 }
 
