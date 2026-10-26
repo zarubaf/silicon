@@ -186,21 +186,30 @@ impl Builder {
     /// the type of a port with the arguments of the instance in place of the
     /// parameters of the child.
     pub(super) fn expose_child_ops(&mut self, child: &Child) {
-        self.add_op(&child.name, Some(RTy::Instance));
-        for (q, t) in &child.sig.outputs {
-            self.add_op(&format!("{}.{q}", child.name), outer_ty(child, t));
+        // The instance by its name, and through the local container that its
+        // inputs go through: `l.0` selects it, and a wrong index selects
+        // another instance.
+        let mut places = vec![child.name.clone()];
+        if let Some(route) = &child.via {
+            places.push(crate::program::hexpr(&route.base));
         }
-        for (p, t) in &child.sig.inputs {
-            let ty = outer_ty(child, t).map(|t| RTy::Input(Box::new(t)));
-            self.add_op(&format!("{}.{p}", child.name), ty);
+        for place in places {
+            self.add_op(&place, Some(RTy::Instance));
+            for (q, t) in &child.sig.outputs {
+                self.add_op(&format!("{place}.{q}"), outer_ty(child, t));
+            }
+            for (p, t) in &child.sig.inputs {
+                let ty = outer_ty(child, t).map(|t| RTy::Input(Box::new(t)));
+                self.add_op(&format!("{place}.{p}"), ty);
+            }
+            let rows = self.kid_rows(child);
+            let domain = if child.sig.clocked { "clock" } else { "" };
+            self.kids.push(Kid {
+                name: place,
+                rows,
+                domain,
+            });
         }
-        let rows = self.kid_rows(child);
-        let domain = if child.sig.clocked { "clock" } else { "" };
-        self.kids.push(Kid {
-            name: child.name.clone(),
-            rows,
-            domain,
-        });
     }
 
     /// The places that the static names of the frame give. A parameter, a
@@ -950,6 +959,10 @@ mod tests {
             forms.push((format!("kind {kind}"), s.query_kinds.contains(kind)));
         }
         forms.push(("ports".to_owned(), text.contains("@ports(")));
+        forms.push((
+            "ports container".to_owned(),
+            text.contains("@TypeOf(l") || text.contains("@ports(l"),
+        ));
         forms.push(("wrapper".to_owned(), text.contains("module W0(")));
         forms.push((
             "wrapper used".to_owned(),
