@@ -1537,6 +1537,7 @@ fn a_function_is_generic_when_its_signature_names_a_parameter() {
         "fn f(x: UInt[8], y: @TypeOf(x)) -> Nat { return 0; }",
         "fn f(fs: Nat) -> @Struct(fs) { return 0; }",
         "fn f(x: Nat) -> [@TypeOf(x); 2] { return 0; }",
+        "fn f(x: Nat) -> @ports(x) { return 0; }",
         "fn f(x: Nat) -> fn (@TypeOf(x)) -> Nat { return 0; }",
         "fn f(x: Nat) -> @Struct([FieldInfo(\"a\", @TypeOf(x))]) { return 0; }",
     ] {
@@ -1558,6 +1559,7 @@ fn a_function_is_not_generic_for_items_and_locals() {
         "fn f() -> Nat { type T = Nat; let x: T = 1; return x; }",
         // A builtin in a type position that names no parameter.
         "const k: Nat = 0;\nfn f(x: UInt[8]) -> @TypeOf(k) { return x; }",
+        "const k: Nat = 0;\nfn f(x: UInt[8]) -> @ports(k) { return x; }",
         "fn f(x: Nat) -> @Struct([]) { return 0; }",
     ] {
         assert!(!generic(src, "f"), "{src}");
@@ -2341,6 +2343,7 @@ fn the_operands_of_a_builtin_in_a_type_resolve_as_expressions() {
     for (ty, want) in [
         ("@TypeOf(c)", vec![(S003, 2, 16)]),
         ("@Struct(c)", vec![(S003, 2, 16)]),
+        ("@ports(c)", vec![(S003, 2, 15)]),
         ("[@TypeOf(c); 2]", vec![(S003, 2, 17)]),
         (
             "fn (@TypeOf(c)) -> @Struct(d)",
@@ -2360,6 +2363,15 @@ fn the_argument_of_typeinfo_resolves_as_an_expression() {
     }
     let src = fn_body("return @typeInfo(Q);");
     assert_eq!(errors(&src), [(S003, 2, 18)]);
+}
+
+#[test]
+fn the_operand_of_ports_resolves_as_an_expression() {
+    let src = fn_body("return @ports(Q);");
+    assert_eq!(errors(&src), [(S003, 2, 15)]);
+    assert_eq!(message(&src), "`Q` is not declared");
+    let r = ok("const k: Nat = 0;\nfn f(a: Nat) -> Nat {\n    return @ports(a);\n}");
+    assert!(target_at(&r, pos(3, 19)).is_some());
 }
 
 #[test]
