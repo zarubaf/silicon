@@ -397,6 +397,10 @@ pub(crate) struct Frame {
     /// Whether the call stands inside the expression of the statement that
     /// binds `result`, as a key, and not at its start.
     pub(crate) key: bool,
+    /// How many calls of `callee` in keys of the statement came before this
+    /// one, in evaluation order: the call in the text is the one with this
+    /// number among the calls of `callee`.
+    pub(crate) nth: usize,
     pub(crate) callee: String,
     pub(crate) within: Option<String>,
     pub(crate) result: String,
@@ -537,6 +541,7 @@ fn exec_in(
             let (new, result) = call_mut(def, typed(&def.root, old)?, arg, scope, log)?;
             let frame = Frame {
                 key: false,
+                nth: 0,
                 callee: def.name.clone(),
                 within: within.map(str::to_owned),
                 result: name.clone(),
@@ -556,6 +561,7 @@ fn exec_in(
             let def = scope.mut_fns.get(f.as_str()).ok_or(Fault::Type)?;
             let frame = Frame {
                 key: false,
+                nth: 0,
                 callee: def.name.clone(),
                 within: within.map(str::to_owned),
                 result: name.clone(),
@@ -716,6 +722,8 @@ struct Evaluator<'a> {
     writes: BTreeMap<String, Value>,
     /// The records of the `diagnostic` calls that a `KeyCall` made.
     log: Vec<Logged>,
+    /// The calls of each function in keys so far, in this statement.
+    key_calls: BTreeMap<String, usize>,
     /// The function that holds the statement, and the name that it binds.
     within: Option<String>,
     tag: String,
@@ -729,6 +737,7 @@ impl<'a> Evaluator<'a> {
             depth: 0,
             writes: BTreeMap::new(),
             log: Vec::new(),
+            key_calls: BTreeMap::new(),
             within: None,
             tag: String::new(),
         }
@@ -813,8 +822,12 @@ impl<'a> Evaluator<'a> {
             .ok_or(Fault::Type)?;
         let start = self.log.len();
         let (new, result) = call_mut(def, typed(&def.root, old)?, arg, self.scope, &mut self.log)?;
+        let nth = self.key_calls.entry(f.to_owned()).or_default();
+        let before = *nth;
+        *nth += 1;
         let frame = Frame {
             key: true,
+            nth: before,
             callee: def.name.clone(),
             within: self.within.clone(),
             result: self.tag.clone(),

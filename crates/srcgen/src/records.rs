@@ -115,16 +115,19 @@ pub(crate) fn records(
     Ok(walk.lines)
 }
 
-/// The offset of the call of `callee` in the initializer `init`: the first
+/// The offset of the call of `callee` in the initializer `init`: the `nth`
 /// `callee(` that no identifier character precedes.
-fn key_call_at(init: &str, callee: &str) -> Option<usize> {
+fn key_call_at(init: &str, callee: &str, nth: usize) -> Option<usize> {
     let call = format!("{callee}(");
-    init.match_indices(&call).map(|(at, _)| at).find(|&at| {
-        !init[..at]
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-    })
+    init.match_indices(&call)
+        .map(|(at, _)| at)
+        .filter(|&at| {
+            !init[..at]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+        .nth(nth)
 }
 
 impl Walk<'_> {
@@ -272,7 +275,7 @@ impl Walk<'_> {
             let key = (scope.to_owned(), f.result.clone());
             let ((l, c), init) = self.sites.calls.get(&key).ok_or(Fault::Type)?;
             let c = if f.key {
-                c + key_call_at(init, &f.callee).ok_or(Fault::Type)?
+                c + key_call_at(init, &f.callee, f.nth).ok_or(Fault::Type)?
             } else {
                 *c
             };

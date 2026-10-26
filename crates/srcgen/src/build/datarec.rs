@@ -19,11 +19,12 @@
 //! A group draws from its own tape alone, and every group holds at least
 //! one `@field`, so a program without one is the program of the other tapes.
 
+use super::held::EFFECT;
 use super::hw::{DEPTH, Want, literal_ty};
 use super::stat::Reach;
 use super::stat::{bin, int};
 use super::{Builder, Built, Ctx, Helper, Hw, Lane, Module};
-use crate::program::{FieldTy, HExpr, Item, Place, SBin, SExpr, Scalar, Stmt, StructDef, Ty};
+use crate::program::{FieldTy, HExpr, Item, Place, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty};
 
 /// One statement of the top frame in this many is followed by a group, and
 /// the most groups of one program.
@@ -51,6 +52,9 @@ impl Builder {
             }
             b.recs += 1;
             b.record_stmts(ctx, m, out);
+            if b.tape.flag() {
+                b.record_double(m, out)?;
+            }
             Ok(())
         })
     }
@@ -143,6 +147,46 @@ impl Builder {
         for _ in 0..self.tape.between(1, 2) {
             self.record_read(ctx, m, &name, (&leaves, envs), out);
         }
+    }
+
+    /// Two calls of the function that runs a `diagnostic` in one chain, one
+    /// in the key of each step, each on a local of its own:
+    ///
+    /// ```text
+    /// let s5: Int = @field(@field(s2, k0(s3, 1)), k0(s4, 2));
+    /// diagnostic("d3", (s5, s3, s4));
+    /// ```
+    ///
+    /// The records come in the order of the base, then the key.
+    fn record_double(&mut self, m: &mut Module, out: &mut Vec<Stmt>) -> Built {
+        let func = self.key_fn(EFFECT)?;
+        let names = [(); 4].map(|()| m.names.fresh("s"));
+        let [cont, first, second, got] = names.clone();
+        let name = |n: &String| SExpr::Name(n.clone());
+        let (ty, value, tuple) = self.small_container();
+        let call = |b: &mut Builder, root: &String| {
+            let arg = i64::from(b.tape.between(0, 5));
+            SExpr::KeyCall(func.clone(), root.clone(), Box::new(int(arg)))
+        };
+        let (k1, k2) = (call(self, &first), call(self, &second));
+        let inner = SExpr::At(Box::new(name(&cont)), Box::new(k1));
+        let read = if tuple || self.tape.flag() {
+            SExpr::At(Box::new(inner), Box::new(k2))
+        } else {
+            SExpr::Index(Box::new(inner), Box::new(k2))
+        };
+        let start = |b: &mut Builder| int(i64::from(b.tape.between(0, 1)));
+        let (a, b) = (start(self), start(self));
+        let shown = SExpr::Tuple(vec![name(&got), name(&first), name(&second)]);
+        out.extend([
+            Stmt::StaticLet(cont, ty, value),
+            Stmt::MutLet(first, STy::Int, a),
+            Stmt::MutLet(second, STy::Int, b),
+            Stmt::StaticLet(got, STy::Int, read),
+            Stmt::Diagnostic(self.next_message(), shown),
+        ]);
+        note!(self, double_calls);
+        Ok(())
     }
 
     /// `let l = g(<leaf>, e);` or `let l = <leaf>.g(e);`: the leaf `at` of
