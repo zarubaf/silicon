@@ -693,6 +693,22 @@ def Specs.members (s : Specs) (syms : Syms) : Ty → Option (Std.TreeMap Nat Nat
   | _ => none
 
 /-!
+A builtin whose operand is a query place (section 9.3): `@TypeOf` or `@ports`. Only these two
+walk the steps of an operand, so a text of a query step names one of them.
+-/
+inductive QueryOp where
+  | typeOf | ports
+  deriving DecidableEq, BEq
+
+/-! The builtin of the query `q`. -/
+def QueryOp.builtin : QueryOp → Builtin
+  | .typeOf => .typeOf
+  | .ports => .ports
+
+/-! The name of the query `q` after `@`. -/
+def QueryOp.name (q : QueryOp) : String := q.builtin.name
+
+/-!
 The kind of a guard (section 9.4): a hardware arm or a structural context. Some structural
 contexts have their own texts: a family key (`key`), an index of a `:=` target (`index`), and an
 `as` key (`name`). A key of the operand of the builtin `q` (`query`) and the argument of the
@@ -704,7 +720,7 @@ inductive GuardKind where
   | key
   | index
   | name
-  | query (q : Builtin)
+  | query (q : QueryOp)
   | arg (q : Builtin)
   deriving DecidableEq, BEq
 

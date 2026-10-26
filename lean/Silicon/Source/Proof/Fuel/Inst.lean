@@ -168,12 +168,12 @@ theorem target_f {ev ev' : Resolve.Expr → M (Option Out)}
   unfold target; follows [targetPart_f he]
 
 theorem queryKey_f {ev ev' : Resolve.Expr → M (Option Out)}
-    (he : ∀ e, Follows cap (ev e) (ev' e)) (q : Builtin) (i : Resolve.Expr) :
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (q : QueryOp) (i : Resolve.Expr) :
     Follows cap (queryKey ev q i) (queryKey ev' q i) := by
   unfold queryKey; follows [he, need_f, guardedBy_f, staticValue_f, static_f]
 
 theorem queryWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
-    (he : ∀ e, Follows cap (ev e) (ev' e)) (q : Builtin) :
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (q : QueryOp) :
     ∀ (cur : Query) (sels : List Sel),
       Follows cap (queryWalk ev q cur sels) (queryWalk ev' q cur sels)
   | cur, [] => by rw [queryWalk.eq_def, queryWalk.eq_def]; follows
@@ -214,7 +214,7 @@ theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (
   follows [he, need_f, guardedBy_f, selectionKey_f, entryAt_f]
 
 theorem queryPart_f (he : ∀ e, Follows m (eval k e) (eval m e))
-    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (q : Builtin) (x : Resolve.Expr) :
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (q : QueryOp) (x : Resolve.Expr) :
     Follows m (queryPart k q x) (queryPart m q x) := by
   rw [queryPart.eq_def k, queryPart.eq_def m]
   follows [he, name_f he ht, constItem_f he ht, queryWalk_f he, need_f, guardedBy_f,

@@ -2428,7 +2428,7 @@ no register and no wire: a part that keeps only its type selects in the type. Th
 key kind check as in an expression (`fieldKeyOf`). Then the step selects as a field, an index, or a
 child port of a query (`queryStep`, `keyPort`, `portQuery`).
 -/
-def queryField (g : Builtin) (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) :
+def queryField (g : QueryOp) (p : Pos) (b : Resolve.Expr) (kp : Pos) (q : Query) (key : Value) :
     M Query := do
   let (base, a) : Option FieldBase × (Unit → String) := match q with
     | .type t => (Ty.fieldBase? t, fun _ => Ty.about t)
@@ -2589,7 +2589,7 @@ It evaluates by `ev` in a structural context of the kind `query` (`S016`). Then 
 (`S011`): a handle gives "Handle at a static position", and another hardware value gives "Value
 not static".
 -/
-def queryKey (ev : Resolve.Expr → M (Option Out)) (q : Builtin) (i : Resolve.Expr) :
+def queryKey (ev : Resolve.Expr → M (Option Out)) (q : QueryOp) (i : Resolve.Expr) :
     M Value := do
   let o ← guardedBy (.query q) do need i (← ev i)
   staticValue i.pos s!"a key of `@{q.name}`" o.value
@@ -2606,7 +2606,7 @@ structural context of the kind `query`. It gets the checks of a selection key (`
 it selects the entry of the child (`childPort`). Another field selects its port, and the index then
 takes its key as a step.
 -/
-def queryWalk (ev : Resolve.Expr → M (Option Out)) (q : Builtin) : Query → List Sel → M Query
+def queryWalk (ev : Resolve.Expr → M (Option Out)) (q : QueryOp) : Query → List Sel → M Query
   | cur, [] => pure cur
   | .value v@(.handle (.inst id path iface ty)) _, .field fp f :: .index ip ks :: rest => do
     charge ip 1
@@ -3223,7 +3223,7 @@ mutual
   expression, in the `raw` context and in a structural context of the kind `query`. Its value has
   no declared type.
   -/
-  def queryPart (n : Nat) (q : Builtin) (x : Resolve.Expr) : M Query := do
+  def queryPart (n : Nat) (q : QueryOp) (x : Resolve.Expr) : M Query := do
     let whole : M Query := do
       let o ← guardedBy (.query q) do need x (← eval n x)
       pure (.value o.value none)
