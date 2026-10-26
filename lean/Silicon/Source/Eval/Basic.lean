@@ -262,6 +262,20 @@ structure Port where
 def Port.id (q : Port) : PortId := (q.sym, q.key)
 
 /-!
+The order of two ports by their public names and their identities (section 7.5). The name
+sorts first, then the key as a number, with no key first. One symbol is one name, so the names
+compare only when the symbols differ. The port layout sorts with it (`Layout.arrange`).
+-/
+def portBefore : String × PortId → String × PortId → Bool
+  | (x, s, k), (y, t, l) =>
+    if s == t then
+      match k, l with
+      | none, some _ => true
+      | some a, some b => a < b
+      | _, _ => false
+    else x < y
+
+/-!
 The public name of the port `x` with the key `k` in a message: `x`, or the entry `x[k]` (section
 6.2). Only an error renders it.
 -/
