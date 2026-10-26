@@ -305,8 +305,6 @@ pub(crate) enum Count {
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
 
-static BY_FUEL: Mutex<BTreeMap<u64, u64>> = Mutex::new(BTreeMap::new());
-
 /// The number of the next run.
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -323,15 +321,6 @@ pub(crate) fn begin() -> u64 {
         counts.insert(id, Counts::default());
     }
     join(id);
-    id
-}
-
-/// Starts a run and files it under the fuel budget `fuel`, for the readers of `of` and `run`.
-pub(crate) fn start(fuel: u64) -> u64 {
-    let id = begin();
-    if let Ok(mut by_fuel) = BY_FUEL.lock() {
-        by_fuel.insert(fuel, id);
-    }
     id
 }
 
@@ -412,32 +401,14 @@ pub(crate) fn add(count: Count, n: u64) {
 }
 
 /// The counts of the last run of this thread.
-#[allow(dead_code)]
 pub(crate) fn last() -> Counts {
     last_run().unwrap_or_default()
 }
 
 /// The counts of the last run of this thread, or `None` when this thread started no run. A
 /// test that needs the run to exist reads the counts with this function.
-#[allow(dead_code)]
 pub(crate) fn last_run() -> Option<Counts> {
-    of_run(current()?)
-}
-
-/// The counts of the last run with the fuel budget `fuel`.
-#[allow(dead_code)]
-pub(crate) fn of(fuel: u64) -> Counts {
-    run(fuel).unwrap_or_default()
-}
-
-/// The counts of the last run with the fuel budget `fuel`, or `None` when no such run started.
-#[allow(dead_code)]
-pub(crate) fn run(fuel: u64) -> Option<Counts> {
-    let id = BY_FUEL.lock().ok()?.get(&fuel).copied()?;
-    of_run(id)
-}
-
-fn of_run(id: u64) -> Option<Counts> {
+    let id = current()?;
     COUNTS
         .lock()
         .ok()
