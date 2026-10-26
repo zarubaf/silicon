@@ -364,6 +364,11 @@ pub(crate) enum SExpr {
     /// or of an element of an array, a list, or a tuple by a `Nat`. After
     /// the base and the key it is the ordinary selection.
     At(Box<SExpr>, Box<SExpr>),
+    /// `f(root, arg)` in a key: a call of a function with a `mut` formal
+    /// on the `let mut` root `root`. The call writes the root back, so a
+    /// key that an earlier step already read keeps its old value. Only
+    /// the value of a static `let` holds one.
+    KeyCall(String, String, Box<SExpr>),
     /// A string literal.
     Str(String),
     /// `str(n)`.
@@ -1198,6 +1203,7 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::DataBits(s, targs) => format!("data_bits({})", struct_use(s, targs)),
         SExpr::Field(b, f) => format!("{}.{f}", postfix_base(b)),
         SExpr::At(b, k) => format!("@field({}, {})", sexpr(b), sexpr(k)),
+        SExpr::KeyCall(f, root, a) => format!("{f}({root}, {})", sexpr(a)),
         SExpr::Str(s) => string(s),
         SExpr::StrOf(n) => format!("str({})", sexpr(n)),
         SExpr::Convert(t, e) => format!("{}({})", t.text(), sexpr(e)),

@@ -333,6 +333,9 @@ fn callee<'s>(name: &'s str, env: &'s Env, scope: &'s Scope) -> Result<&'s str, 
 /// name that the call binds, which keys the call in the printed text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Frame {
+    /// Whether the call stands inside the expression of the statement that
+    /// binds `result`, as a key, and not at its start.
+    pub(crate) key: bool,
     pub(crate) callee: String,
     pub(crate) within: Option<String>,
     pub(crate) result: String,
@@ -435,7 +438,11 @@ fn exec_in(
         Stmt::Diagnostic(message, value) => {
             log.push(Logged::new(message, &eval(value, env, scope)?));
         }
-        Stmt::StaticLet(name, _, value) | Stmt::MutLet(name, _, value) => {
+        Stmt::StaticLet(name, _, value) => {
+            let v = eval_effects(value, env, scope, log, (within, name))?;
+            env.statics.insert(name.clone(), v);
+        }
+        Stmt::MutLet(name, _, value) => {
             let v = eval(value, env, scope)?;
             env.statics.insert(name.clone(), v);
         }
@@ -468,6 +475,7 @@ fn exec_in(
             let start = log.len();
             let (new, result) = call_mut(def, typed(&def.root, old)?, arg, scope, log)?;
             let frame = Frame {
+                key: false,
                 callee: def.name.clone(),
                 within: within.map(str::to_owned),
                 result: name.clone(),
@@ -493,12 +501,26 @@ fn exec_in(
 /// The value of a static expression, as both front ends compute it, or the
 /// first fault in evaluation order.
 pub(crate) fn eval(e: &SExpr, env: &Env, scope: &Scope) -> Result<Value, Fault> {
-    Evaluator {
-        scope,
-        calls: 0,
-        depth: 0,
-    }
-    .eval(e, env)
+    Evaluator::new(scope).eval(e, env)
+}
+
+/// `eval` of the expression of the statement `tag` in the function `within`
+/// (none: a module body). A `KeyCall` writes its root back to `env`, and
+/// its records go to `log` in evaluation order, with the frame of the call.
+fn eval_effects(
+    e: &SExpr,
+    env: &mut Env,
+    scope: &Scope,
+    log: &mut Vec<Logged>,
+    (within, tag): (Option<&str>, &str),
+) -> Result<Value, Fault> {
+    let mut ev = Evaluator::new(scope);
+    ev.within = within.map(str::to_owned);
+    tag.clone_into(&mut ev.tag);
+    let v = ev.eval(e, env)?;
+    env.statics.extend(ev.writes);
+    log.append(&mut ev.log);
+    Ok(v)
 }
 
 /// The specialization of the struct `name` at `args`: each argument at the
@@ -601,16 +623,68 @@ struct Evaluator<'a> {
     scope: &'a Scope,
     calls: u32,
     depth: u32,
+    /// The roots that a `KeyCall` wrote back, which a later name reads
+    /// before the env.
+    writes: BTreeMap<String, Value>,
+    /// The records of the `diagnostic` calls that a `KeyCall` made.
+    log: Vec<Logged>,
+    /// The function that holds the statement, and the name that it binds.
+    within: Option<String>,
+    tag: String,
 }
 
-impl Evaluator<'_> {
+impl<'a> Evaluator<'a> {
+    fn new(scope: &'a Scope) -> Evaluator<'a> {
+        Evaluator {
+            scope,
+            calls: 0,
+            depth: 0,
+            writes: BTreeMap::new(),
+            log: Vec::new(),
+            within: None,
+            tag: String::new(),
+        }
+    }
+
+    /// `f(root, arg)`: the call runs on the current value of the root,
+    /// writes the new value back, and gives its result.
+    fn key_call(&mut self, f: &str, root: &str, arg: &SExpr, env: &Env) -> Result<Value, Fault> {
+        let def = self.scope.mut_fns.get(f).ok_or(Fault::Type)?;
+        let arg = typed(&STy::Int, self.eval(arg, env)?)?;
+        let old = self
+            .writes
+            .get(root)
+            .or_else(|| env.statics.get(root))
+            .cloned()
+            .ok_or(Fault::Type)?;
+        let start = self.log.len();
+        let (new, result) = call_mut(def, typed(&def.root, old)?, arg, self.scope, &mut self.log)?;
+        let frame = Frame {
+            key: true,
+            callee: def.name.clone(),
+            within: self.within.clone(),
+            result: self.tag.clone(),
+        };
+        for logged in self.log.iter_mut().skip(start) {
+            logged.frames.insert(0, frame.clone());
+        }
+        self.writes.insert(root.to_owned(), new);
+        Ok(result)
+    }
+
     fn eval(&mut self, e: &SExpr, env: &Env) -> Result<Value, Fault> {
         let v = match e {
             // The twin reads the three parts of a `PortKey`.
             SExpr::PortKey(..) => return Err(Fault::Type),
             SExpr::Int(n, _) => Value::Int(n.clone()),
             SExpr::Bool(b) => Value::Bool(*b),
-            SExpr::Name(n) => match env.statics.get(n).or_else(|| self.scope.consts.get(n)) {
+            SExpr::KeyCall(f, root, arg) => self.key_call(f, root, arg, env)?,
+            SExpr::Name(n) => match self
+                .writes
+                .get(n)
+                .or_else(|| env.statics.get(n))
+                .or_else(|| self.scope.consts.get(n))
+            {
                 Some(v) => v.clone(),
                 None => Value::Function(n.clone(), self.scope.fn_ty(n).ok_or(Fault::Type)?),
             },

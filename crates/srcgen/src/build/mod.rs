@@ -62,6 +62,7 @@ mod file;
 mod fnvalues;
 mod handle_lists;
 mod handles;
+mod held;
 mod hw;
 mod hw_match;
 mod inst;
@@ -563,6 +564,8 @@ struct Stats {
     field_joined_keys: u32,
     field_name_keys: u32,
     field_call_keys: u32,
+    held_groups: u32,
+    early_groups: u32,
     field_scalar_keys: u32,
     field_entry_keys: u32,
     /// The most arms of one match.
@@ -620,6 +623,10 @@ struct Builder {
     /// most: `field::MAX_FIELDS`, and less in a test of the cap.
     fields: u32,
     max_fields: u32,
+    /// The functions of the held and early keys, without and with a
+    /// `diagnostic`, and the groups of statements that use them.
+    key_fns: [Option<String>; 2],
+    key_groups: u32,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
@@ -750,6 +757,8 @@ impl Builder {
             max_decls: handles::MAX_DECLS,
             fields: 0,
             max_fields: field::MAX_FIELDS,
+            key_fns: [None, None],
+            key_groups: 0,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
             port_helpers: Vec::new(),

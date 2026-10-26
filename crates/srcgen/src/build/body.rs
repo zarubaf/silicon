@@ -543,6 +543,7 @@ impl Builder {
                 }
                 _ => self.binding(ctx, &mut m.names, &mut out, false)?,
             }
+            self.key_group(ctx, &mut m.names, &mut out)?;
         }
         for _ in 0..extra {
             self.enum_stmt(ctx, &mut m.names, m.clocked, &mut out, &mut eregs)?;
