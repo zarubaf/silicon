@@ -197,6 +197,15 @@ pub const TYPE_NAMES: [&str; 20] = [
     "PortInfo",
 ];
 
+/// The index of `FieldInfo` in [`STRUCTS`]. A table without that struct fails to compile.
+pub(crate) const FIELD_INFO: usize = {
+    let mut k = 0;
+    while !matches!(STRUCTS[k].name.as_bytes(), b"FieldInfo") {
+        k += 1;
+    }
+    k
+};
+
 /// The prelude structs, in the order of design section 5.6. They follow the user items. A field
 /// type refers to a prelude struct by its index here, never through the item scope.
 pub(crate) const STRUCTS: [PreludeStruct; 6] = [
