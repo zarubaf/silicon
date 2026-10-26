@@ -1,0 +1,9 @@
+// S011: a domain is never the argument of a comptime parameter of a function.
+// TOP M()
+fn g(comptime x: Int) -> Int { return 0; }
+module M() domains(clk) {
+    let h = clk;
+    // expected-error S011 @+2
+    // expected-message: a comptime parameter holds the domain `clk`, but a domain is never static; remove it from this static position
+    let z = g(h);
+}

@@ -1,0 +1,19 @@
+// S011: a domain is never a key of `@ports`.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() domains(clk) {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let d = clk;
+    let xs = [u];
+    // expected-error S011 @+2
+    // expected-message: a key of `@ports` holds the domain `clk`, but a domain is never static; remove it from this static position
+    let t = @ports(xs[d]);
+    o := u.q;
+}
