@@ -9,7 +9,8 @@
 //! reads it as a local. A first use then charges the size of the struct type, evaluates the
 //! field types, and charges the metadata. A later use finds the entry and charges nothing more.
 
-use super::{Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, type_pos};
+use super::place::chain;
+use super::{ArgRec, Evaluator, Out, ROOT, Res, Slot, Stop, at, fail, need, need_at, type_pos};
 use crate::hw::{Handle, Kind as Resource, Ref, Root, Seen, Val};
 use crate::int::Int;
 use crate::limit;
@@ -18,11 +19,24 @@ use crate::types::{EnumStatus, Meta, Ty, TyId, TyParam, Types, Variant};
 use crate::value::Value;
 use crate::{Code, Error};
 use parse::ast::{
-    Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, StructField, TypeExpr,
-    Variant as VariantItem,
+    Builtin, BuiltinArgs, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pos, StructField,
+    TypeExpr, Variant as VariantItem,
 };
 use resolve::{DeclId, Prelude, Target};
 use std::collections::BTreeMap;
+
+/// The fix `{h}` of "Builtin as a type" for the builtin `q` (Lean `builtinTyHint`). `@TypeOf`
+/// and `@Struct` always give a `Type`, so only `@typeInfo` and `@field` reach the text.
+fn builtin_type_hint(q: Builtin) -> &'static str {
+    match q {
+        Builtin::TypeInfo => {
+            "select a `Type` from it, for example `@field(@typeInfo(T), \"element\")`"
+        }
+        _ => {
+            "select a part of type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
+        }
+    }
+}
 
 /// The most bits of the payload of an enum.
 const PAYLOAD_LIMIT: u64 = 65536;
@@ -171,11 +185,35 @@ impl Evaluator<'_> {
             TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
             TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
             TypeExpr::Fn { pos, params, ret } => self.fn_type(*pos, params, ret),
-            // TODO(#381): evaluate a builtin in a type position (design section 6.2).
-            TypeExpr::Builtin { pos, .. } => fail(
-                Code::S004,
-                *pos,
-                "a builtin is not supported yet".to_owned(),
+            TypeExpr::Builtin { pos, args } => self.builtin_type(*pos, args),
+        }
+    }
+
+    /// A builtin in a type position, after the type node charged (section 6.2, **Type position
+    /// order**, steps 2 and 3, Lean `typeExpr`). The builtin evaluates as an expression in the
+    /// structural context of the type, under the record of a builtin argument. A place that is
+    /// the whole operand reads no value, so only its kind is checked.
+    fn builtin_type(&mut self, pos: Pos, args: &BuiltinArgs) -> Res<TyId> {
+        let rec = match args {
+            BuiltinArgs::Field(base, _) if chain(base).is_some() => ArgRec::Place,
+            _ => ArgRec::Node,
+        };
+        let out = self.with_arg(rec, |ev| {
+            ev.charge(pos, 1)?;
+            ev.under_arg(pos, |ev, place| ev.builtin_node(pos, args, place))
+        })?;
+        let out = need_at(pos, out)?;
+        match self.store.seen(&out) {
+            Seen::Static(Value::Type(t)) => Ok(*t),
+            s => fail(
+                Code::S010,
+                pos,
+                format!(
+                    "a type position needs a `Type`, but `@{}` gives {}; {}",
+                    args.builtin().name(),
+                    self.about(s),
+                    builtin_type_hint(args.builtin())
+                ),
             ),
         }
     }
