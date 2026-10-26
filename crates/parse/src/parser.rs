@@ -371,6 +371,17 @@ impl<'a> Parser<'a> {
         );
     }
 
+    /// A second name in a `domains` clause, `S004`, at an offset.
+    pub(crate) fn second_domain(&mut self, offset: usize) {
+        self.report(
+            Code::S004,
+            offset,
+            "a second clock domain is not supported yet; it comes with more domains (#11); a \
+             module has one domain or none, so keep one name in the `domains` clause"
+                .to_owned(),
+        );
+    }
+
     /// Moves the current token into the tree, or reports that the kind is missing.
     pub(crate) fn expect(&mut self, kind: SyntaxKind, what: &str) -> Res {
         if self.eat(kind) {
