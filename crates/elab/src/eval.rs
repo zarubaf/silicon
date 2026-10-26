@@ -523,13 +523,14 @@ fn no_type<T>(q: Pos) -> Res<T> {
 
 /// The value of `e`. Only `static_assert` and `error` give no value.
 fn need(e: &Expr, out: Option<Out>) -> Res<Out> {
+    need_at(e.pos(), out)
+}
+
+/// The value of the node at `pos`.
+fn need_at(pos: Pos, out: Option<Out>) -> Res<Out> {
     match out {
         Some(out) => Ok(out),
-        None => fail(
-            Code::S010,
-            e.pos(),
-            "`static_assert` gives no value".to_owned(),
-        ),
+        None => fail(Code::S010, pos, "`static_assert` gives no value".to_owned()),
     }
 }
 
