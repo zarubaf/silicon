@@ -103,6 +103,7 @@ pub enum BuiltinArgs {
     TypeInfo(Box<Expr>),
     Struct(Box<Expr>),
     Field(Box<Expr>, Box<Expr>),
+    Ports(Box<Expr>),
 }
 
 impl BuiltinArgs {
@@ -114,13 +115,17 @@ impl BuiltinArgs {
             BuiltinArgs::TypeInfo(_) => Builtin::TypeInfo,
             BuiltinArgs::Struct(_) => Builtin::Struct,
             BuiltinArgs::Field(..) => Builtin::Field,
+            BuiltinArgs::Ports(_) => Builtin::Ports,
         }
     }
 
     /// The operands in source order.
     pub fn operands(&self) -> impl Iterator<Item = &Expr> {
         let (first, second) = match self {
-            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) | BuiltinArgs::Struct(x) => (x, None),
+            BuiltinArgs::TypeOf(x)
+            | BuiltinArgs::TypeInfo(x)
+            | BuiltinArgs::Struct(x)
+            | BuiltinArgs::Ports(x) => (x, None),
             BuiltinArgs::Field(b, k) => (b, Some(k)),
         };
         std::iter::once(&**first).chain(second.map(|k| &**k))
@@ -137,12 +142,16 @@ impl BuiltinArgs {
             Builtin::TypeInfo => BuiltinArgs::TypeInfo(args.next()?),
             Builtin::Struct => BuiltinArgs::Struct(args.next()?),
             Builtin::Field => BuiltinArgs::Field(args.next()?, args.next()?),
+            Builtin::Ports => BuiltinArgs::Ports(args.next()?),
         })
     }
 
     fn take_children(&mut self, work: &mut Vec<Pending>) {
         match self {
-            BuiltinArgs::TypeOf(x) | BuiltinArgs::TypeInfo(x) | BuiltinArgs::Struct(x) => {
+            BuiltinArgs::TypeOf(x)
+            | BuiltinArgs::TypeInfo(x)
+            | BuiltinArgs::Struct(x)
+            | BuiltinArgs::Ports(x) => {
                 take_expr(x, work);
             }
             BuiltinArgs::Field(b, k) => {
@@ -153,14 +162,14 @@ impl BuiltinArgs {
     }
 }
 
-/// A builtin of slice 4: `@TypeOf`, `@typeInfo`, `@Struct`, and `@field`. `@ports` is not a
-/// name here until its phase.
+/// A builtin of slice 4: `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, and `@ports`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Builtin {
     TypeOf,
     TypeInfo,
     Struct,
     Field,
+    Ports,
 }
 
 impl Builtin {
@@ -172,6 +181,7 @@ impl Builtin {
             Builtin::TypeInfo => "typeInfo",
             Builtin::Struct => "Struct",
             Builtin::Field => "field",
+            Builtin::Ports => "ports",
         }
     }
 
@@ -180,21 +190,27 @@ impl Builtin {
         format!("@{}", self.name())
     }
 
-    /// The builtin of a name after the `@`, if the current phase has it.
+    /// The builtin of a name after the `@`, if it is one.
     pub(crate) fn of_name(name: &str) -> Option<Builtin> {
         match name {
             "TypeOf" => Some(Builtin::TypeOf),
             "typeInfo" => Some(Builtin::TypeInfo),
             "Struct" => Some(Builtin::Struct),
             "field" => Some(Builtin::Field),
+            "ports" => Some(Builtin::Ports),
             _ => None,
         }
+    }
+
+    /// Whether the operand is a query place: a name or a selection of a name.
+    pub(crate) fn queries(self) -> bool {
+        matches!(self, Builtin::TypeOf | Builtin::Ports)
     }
 
     /// The number of operands: 2 for `@field`, 1 for each other builtin.
     pub(crate) fn arity(self) -> usize {
         match self {
-            Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct => 1,
+            Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct | Builtin::Ports => 1,
             Builtin::Field => 2,
         }
     }
@@ -206,6 +222,7 @@ impl Builtin {
             Builtin::TypeInfo => "@typeInfo(T)",
             Builtin::Struct => "@Struct(fs)",
             Builtin::Field => "@field(x, k)",
+            Builtin::Ports => "@ports(h)",
         }
     }
 }

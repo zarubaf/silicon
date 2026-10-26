@@ -35,6 +35,8 @@ use value::Evaluated;
 /// The codes of elaboration that the evaluator can report (design section 6.1).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
+    /// A construct of a later slice. Only the placeholder of `@ports` reports it (#346).
+    S004,
     /// A `return` outside of a function.
     S006,
     /// A wrong number of arguments that only elaboration finds.
@@ -75,6 +77,7 @@ pub enum Code {
 impl fmt::Display for Code {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Code::S004 => "S004",
             Code::S006 => "S006",
             Code::S007 => "S007",
             Code::S008 => "S008",

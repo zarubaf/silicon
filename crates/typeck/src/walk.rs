@@ -117,13 +117,13 @@ fn static_at(is_static: bool, callee: Option<&Callee<'_>>, k: usize) -> bool {
     is_static || callee.is_some_and(|c| c.is_static(k))
 }
 
-/// Whether operand `k` of a builtin is a static position. The operand of `@TypeOf` is none,
-/// also in a static position, so it can name a resource. The argument of `@typeInfo` and of
+/// Whether operand `k` of a builtin is a static position. The operand of `@TypeOf` and of `@ports`
+/// is none, also in a static position, so it can name a resource. The argument of `@typeInfo` and of
 /// `@Struct` is none either (ADR 0031), so a register there gets the `S010` of pass 5. The base of `@field` takes
 /// the context of the builtin. The key of `@field` is always a static position (design section 9.2).
 fn builtin_operand_is_static(builtin: Builtin, k: usize, is_static: bool) -> bool {
     match builtin {
-        Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct => false,
+        Builtin::TypeOf | Builtin::TypeInfo | Builtin::Struct | Builtin::Ports => false,
         Builtin::Field => k == 1 || is_static,
     }
 }

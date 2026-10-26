@@ -25,9 +25,6 @@ fn binding_power(kind: SyntaxKind) -> Option<u8> {
 
 const COMPARISON: u8 = 6;
 
-/// The names after `@` that the grammar knows. They belong to slice 4.
-const BUILTINS: [&str; 5] = ["TypeOf", "typeInfo", "field", "Struct", "ports"];
-
 impl Parser<'_> {
     /// A type expression: a name, `()`, a tuple type, an array type, or a grouped type, then
     /// any number of `[arguments]`.
@@ -539,15 +536,11 @@ impl Parser<'_> {
         Some(())
     }
 
-    /// `@` where no builtin node can stand: a builtin of a later phase is `S004` at the `@`,
-    /// and any other name after `@` is `S001` "Not a builtin" at that name.
-    fn later_builtin(&mut self) -> Res {
+    /// `@` where no builtin node can stand: a name after `@` that is no builtin is `S001` "Not a
+    /// builtin" at that name, and any other token is `S001` too.
+    fn not_builtin(&mut self) -> Res {
         let name = self.next_text();
-        if self.next() != Some(Ident) {
-            self.syntax_error_at(self.offset_of(1), "expected a builtin name");
-        } else if BUILTINS.contains(&name) {
-            self.later_slice(self.offset(), "a builtin");
-        } else {
+        if self.next() == Some(Ident) {
             self.syntax_error_at(
                 self.offset_of(1),
                 &format!(
@@ -556,21 +549,23 @@ impl Parser<'_> {
                     str_text(name)
                 ),
             );
+        } else {
+            self.syntax_error_at(self.offset_of(1), "expected a builtin name");
         }
         None
     }
 
-    /// `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, or `@field(x, k)`, a primary, and a builtin in
-    /// a type position. The node has the `kind`. It reads all operands, then checks their number
-    /// at the name, then the form of the operand of `@TypeOf` at its first token. Thus a syntax
-    /// error in an operand comes first. The operand of `@typeInfo` and of `@Struct` is any
-    /// expression. `@ports` is `S004`.
+    /// `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, `@field(x, k)`, or `@ports(h)`, a primary, and
+    /// a builtin in a type position. The node has the `kind`. It reads all operands, then checks
+    /// their number at the name, then the form of the operand of `@TypeOf` and of `@ports` at its
+    /// first token. Thus a syntax error in an operand comes first. The operand of `@typeInfo` and
+    /// of `@Struct` is any expression.
     fn builtin(&mut self, kind: SyntaxKind) -> Res {
         let known = (self.next() == Some(Ident))
             .then(|| Builtin::of_name(self.next_text()))
             .flatten();
         let Some(builtin) = known else {
-            return self.later_builtin();
+            return self.not_builtin();
         };
         let name_offset = self.offset_of(1);
         let mut operands = Vec::new();
@@ -592,7 +587,7 @@ impl Parser<'_> {
             );
             return None;
         }
-        if builtin == Builtin::TypeOf
+        if builtin.queries()
             && let Some(&(start, false)) = operands.first()
         {
             self.syntax_error_at(
