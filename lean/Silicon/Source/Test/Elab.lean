@@ -4214,6 +4214,12 @@ index after the builtin is `S007` in pass 4.
     "type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
 #guard tyRecords "  let ts = [P, P];\n  let y: @field(if (rg.b.0) { ts } else { ts }, 0) = i;\n" ==
   ["S011 22:21"]
+-- A part of a register of array type reads no value either: it is a value of `Bool`.
+#guard tyRecords "  reg rb: [Bool; 2] = [false, false];\n  let y: @field(rb, 0) = i;\n" ==
+  ["S010 22:10"]
+#guard said (tyMod "  reg rb: [Bool; 2] = [false, false];\n  let y: @field(rb, 0) = i;\n") ==
+  "a type position needs a `Type`, but `@field` gives a value of `Bool`; select a part of " ++
+    "type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
 #guard said (tyMod "  let t: @typeInfo(P) = i;\n") ==
   "a type position needs a `Type`, but `@typeInfo` gives a value of `TypeInfo`; select a " ++
     "`Type` from it, for example `@field(@typeInfo(T), \"element\")`"

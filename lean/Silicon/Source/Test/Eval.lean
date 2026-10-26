@@ -4267,4 +4267,32 @@ def flSrc : String := "fn fl(x: String) -> [FieldInfo; 1] { return [FieldInfo(x,
 #guard out "" "@Struct([FieldInfo(\"$\", Bool)])" 42 == "S022 1:1"
 #guard out "" "@Struct([FieldInfo(\"$\", Bool)])" 41 == "S015 1:1"
 
+/-!
+The copy of the argument charges before its kind check. `[1, 2]` costs 8, and its copy costs 3.
+Thus `@Struct([1, 2])` is "Argument of `@Struct`" at 12 units. At 11 units, the copy stops at
+the `@`.
+-/
+#guard cost "" "[1, 2]" == 8
+#guard out "" "@Struct([1, 2])" 12 == "S010 1:9"
+#guard out "" "@Struct([1, 2])" 11 == "S015 1:1"
+
+/-! A bare record of a user struct `FieldInfo` is "User `FieldInfo` in `@Struct`" too. -/
+#guard out userFi "@Struct(FieldInfo(\"a\", Bool))" == "S010 1:9"
+#guard msg userFi "@Struct(FieldInfo(\"a\", Bool))" ==
+  "`@Struct` takes the prelude `FieldInfo`, not a value of `crate::FieldInfo`; a user struct " ++
+    "`FieldInfo` hides the prelude one, so rename it, or take the fields from " ++
+    "`@typeInfo(T).fields`"
+
+/-!
+A builtin in a type position costs 1 more than its expression form: the type node charges 1,
+then the builtin runs as an expression. Here `Bool` costs 1 as a type and as an expression.
+-/
+def tyPos : String := "struct S { f: Bool }\n" ++
+  "fn g() -> Bool { let x = S(true); let y: @TypeOf(x.f) = x.f; return y; }\n" ++
+  "fn h() -> Bool { let x = S(true); let y: Bool = x.f; return y; }\n" ++
+  "fn k() -> Type { let x = S(true); return @TypeOf(x.f); }\n" ++
+  "fn k2() -> Type { let x = S(true); return Bool; }\n"
+#guard exact tyPos "g()" 32
+#guard cost tyPos "g()" == cost tyPos "h()" + (cost tyPos "k()" - cost tyPos "k2()") + 1
+
 end Silicon.Source.Test.Eval

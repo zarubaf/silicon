@@ -777,7 +777,7 @@ operand in it.
 /-!
 A builtin in a type position (F39) is no static position, so `@field(rs, 0)` there names the
 registers `rs` without `S005`. The key of `@field` there is still static. An index after the
-builtin is `S007` "Index of a builtin type" at the `@`.
+builtin is `S007` "Index of a builtin type" at the `@`, at 1, 2, and 3 levels.
 -/
 #guard ok (modBody "reg rs: [Bool; 2] = [false, false];\nlet y: @field(rs, 0) = 0;")
 #guard ok (modBody "reg rs: [Bool; 2] = [false, false];\nlet y: [@field(rs, 0); 2] = 0;")
@@ -787,6 +787,12 @@ builtin is `S007` "Index of a builtin type" at the `@`.
   "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
 #guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[8][2] = x;") ==
   "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+/-! In a chain of indices, only the first index after the builtin reports, at each depth. -/
+#guard fails (modBody "let x = 1;\nlet y: @TypeOf(x)[1][2][3] = x;") .S007 3 8
+#guard message (modBody "let x = 1;\nlet y: @TypeOf(x)[1][2, 3][4] = x;") ==
+  "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`"
+#guard message (modBody "let fs = [];\nlet y: @Struct(fs)[1, 2][3][4][5] = 0;") ==
+  "a type from `@Struct` takes 0 argument(s), but it has 2; remove the index after `@Struct(...)`"
 #guard fails (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") .S007 3 9
 #guard message (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") ==
   "a type from `@Struct` takes 0 argument(s), but it has 2; remove the index after `@Struct(...)`"
