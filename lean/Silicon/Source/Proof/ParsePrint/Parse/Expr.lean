@@ -524,9 +524,9 @@ theorem Runs.builtinCheck {ctx : Ctx} {i : Nat} {u : Token} {o : Pos} {a : Built
   exact ⟨a', rfl, he, hl⟩
 
 /-! The head `@name(` of a builtin: the parser reads its three kinds and gives the builtin. -/
-theorem Runs.builtinHead {b : Builtin} {ctx : Ctx} {i : Nat} {t : Token} {R : List Kind}
+theorem Runs.builtinHead {b : Builtin} {ctx : Ctx} {i : Nat} {R : List Kind}
     (hw : Win ctx.input i (.symbol "@" :: .ident b.name :: .symbol "(" :: R)) :
-    Runs (Parse.builtinHead t) ctx i (i + 1 + 1 + 1) (fun r => r.2 = b) := by
+    Runs Parse.builtinHead ctx i (i + 1 + 1 + 1) (fun r => r.2 = b) := by
   have hb : Builtin.ofName b.name = some b := by cases b <;> rfl
   unfold Parse.builtinHead
   refine Runs.peekAt_bind ?_
@@ -542,7 +542,7 @@ theorem Runs.builtinOf {a : BuiltinArgs} {ctx : Ctx} {i j : Nat} {R : List Kind}
     (hops : Runs ops ctx (i + 1 + 1 + 1) j Q)
     (hys : ∀ ns, Q ns → (ns.map (·.expr)).map Expr.erase = a.list.map Expr.erase)
     (hok : a.ok = true) :
-    Runs (Parse.builtinOf (tokenAt ctx.input i) ops) ctx i j
+    Runs (Parse.builtinOf ops) ctx i j
       (fun r => r.1.erase = a.erase ∧ Q r.2) := by
   unfold Parse.builtinOf
   refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_

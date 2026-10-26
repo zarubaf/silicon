@@ -15,7 +15,6 @@ if it gets to it. `S004` is at these tokens:
 
 - The keyword: `import`, `pub`, and `extern` at an item.
   `in`, `with`, and `conforms` after their forms.
-- The opening token: `@` of `@ports` (#346).
 - A later token of the construct: the `::` of a package path. The `(` after a type, which is a
   type function call. The second name in a `domains` clause. The `(` after the name of an enum,
   which is an enum with parameters.
@@ -37,13 +36,14 @@ bracket. Thus each look ahead takes constant time.
 `@` followed by another name than a builtin is `S001` "Not a builtin" at that name: no slice
 has that syntax.
 
-A builtin `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, or `@field(x, k)` is a primary (section
-9.3). The parser reads all its operands, then it checks their number: another number is `S001`
-"Builtin arity" at the name after `@`. Then the operand of `@TypeOf` must be a place
-(`Expr.place`), else `S001` "Query operand" at the first token of the operand, also if that token
-is a `(`. These two checks come after the operands, so a syntax error in an operand wins over
-them. The operand of `@typeInfo` and of `@Struct` can be any expression. An `@field` selection of
-a place is a place, so it can be a target, and a statement can start with `@`.
+A builtin `@TypeOf(x)`, `@typeInfo(T)`, `@Struct(fs)`, `@field(x, k)`, or `@ports(h)` is a
+primary (section 9.3). The parser reads all its operands, then it checks their number: another
+number is `S001` "Builtin arity" at the name after `@`. Then the operand of `@TypeOf` and of
+`@ports` must be a place (`Expr.place`). Else it is `S001` "Query operand" at the first token of
+the operand, also if that token is a `(`. These two checks come after the operands, so a syntax
+error in an operand wins over them. The operand of `@typeInfo` and of `@Struct` can be any
+expression. An `@field` selection of a place is a place, so it can be a target, and a statement
+can start with `@`.
 
 A builtin can also stand in a type position (F39): `@` starts a type too. The parser reads it as
 in an expression, then the suffixes of a type. Thus `@TypeOf(x)[8]` parses as an index of the
@@ -174,8 +174,6 @@ structure St where
 
 abbrev P := ReaderT Ctx (StateT St (Except Error))
 
-def builtins : List String := ["TypeOf", "typeInfo", "field", "Struct", "ports"]
-
 def allBinOps : List BinOp :=
   [.lor, .land, .or, .xor, .and, .eq, .ne, .lt, .le, .gt, .ge, .shl, .shr,
    .add, .sub, .addw, .subw, .mul, .div, .rem, .mulw]
@@ -247,24 +245,22 @@ def queryOperandText (b : Builtin) : String :=
     "the name"
 
 /-!
-`@` at `t` with the name token `u` after it, where no builtin node can stand. One of the five
-builtins is `S004`. Another name is `S001` "Not a builtin" at the name. A token after `@` that is
-no name is `S001` too.
+The token `u` after `@`, where it names no builtin: a name is `S001` "Not a builtin" at the name,
+and another token is `S001` too.
 -/
-def laterBuiltin (t u : Token) : P α :=
+def notBuiltin (u : Token) : P α :=
   match u.kind with
-  | .ident n =>
-    if builtins.contains n then later t "a builtin" else throw ⟨.S001, u.pos, notBuiltinText n⟩
+  | .ident n => throw ⟨.S001, u.pos, notBuiltinText n⟩
   | _ => unexpected u "a builtin name"
 
 /-!
-The head `@name(` of a builtin at the `@` token `t`: the name token and its builtin. A name of a
-later phase or another token is the error of `laterBuiltin`.
+The head `@name(` of a builtin at the `@` token: the name token and its builtin. Another name or
+another token is the error of `notBuiltin`.
 -/
-def builtinHead (t : Token) : P (Token × Builtin) := do
+def builtinHead : P (Token × Builtin) := do
   let u ← peekAt 1
-  let .ident n := u.kind | laterBuiltin t u
-  let some b := Builtin.ofName n | laterBuiltin t u
+  let .ident n := u.kind | notBuiltin u
+  let some b := Builtin.ofName n | notBuiltin u
   bump
   bump
   sym "("
@@ -272,7 +268,8 @@ def builtinHead (t : Token) : P (Token × Builtin) := do
 
 /-!
 The checks of the builtin `b` after its operands `xs` (section 9.3). First the number of the
-operands, at the name `u`. Then the form of the operand of `@TypeOf`, at its first token `o`.
+operands, at the name `u`. Then the form of the operand of `@TypeOf` and of `@ports`, at its
+first token `o`.
 The result holds the operands in the form of `b`.
 -/
 def builtinCheck (u : Token) (b : Builtin) (o : Pos) (xs : List Expr) : P BuiltinArgs := do
@@ -398,12 +395,12 @@ def arrayTypeAhead : P Bool := do
   return (← read).input.semi.getD (← get).next false
 
 /-!
-A builtin at the `@` token `t`, in an expression and in a type alike: its head, its operands
-from `operands`, and their checks. The result is the operands in the form of the builtin, and
+A builtin at the `@` token, in an expression and in a type alike: its head, its operands from
+`operands`, and their checks. The result is the operands in the form of the builtin, and
 their nodes.
 -/
-def builtinOf (t : Token) (operands : P (List Node)) : P (BuiltinArgs × List Node) := do
-  let (u, b) ← builtinHead t
+def builtinOf (operands : P (List Node)) : P (BuiltinArgs × List Node) := do
+  let (u, b) ← builtinHead
   let o := (← peek).pos
   let xs ← operands
   let a ← builtinCheck u b o (xs.map (·.expr))
@@ -595,7 +592,7 @@ mutual
           let xs ← args f "]" true false
           return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
       | .symbol "@" =>
-        let (a, xs) ← builtinOf t (args f ")" true false)
+        let (a, xs) ← builtinOf (args f ")" true false)
         let e := Expr.builtin t.pos a
         return (⟨e, height (xs.map (·.height))⟩, e.place)
       | _ => unexpected t "an expression"
@@ -663,7 +660,7 @@ mutual
         sym "]"
         typeSuffix f t.pos (.array t.pos ty n.expr, height [h, n.height])
       | .symbol "@" =>
-        let (a, xs) ← builtinOf t (args f ")" true false)
+        let (a, xs) ← builtinOf (args f ")" true false)
         typeSuffix f t.pos (.builtin t.pos a, height (xs.map (·.height)))
       | _ => unexpected t "a type"
 

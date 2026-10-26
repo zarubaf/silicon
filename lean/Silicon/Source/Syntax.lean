@@ -48,29 +48,31 @@ inductive Pattern where
   deriving Repr, BEq, Inhabited
 
 /-!
-A builtin of slice 4 (section 9.3): `@TypeOf`, `@typeInfo`, `@Struct`, and `@field`. Each phase
-of section 14.4 adds the name of its builtin. `@ports` is not yet a name here.
+A builtin of slice 4 (section 9.3): `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, and `@ports`
+(F30).
 -/
 inductive Builtin where
-  | typeOf | typeInfo | struct | field
+  | typeOf | typeInfo | struct | field | ports
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-! The name of a builtin after `@`. -/
 def Builtin.name : Builtin → String
   | .typeOf => "TypeOf" | .typeInfo => "typeInfo" | .struct => "Struct" | .field => "field"
+  | .ports => "ports"
 
-/-! The builtin of a name after `@`, if the current phase has it. -/
+/-! The builtin of a name after `@`, if it is one. -/
 def Builtin.ofName : String → Option Builtin
   | "TypeOf" => some .typeOf
   | "typeInfo" => some .typeInfo
   | "Struct" => some .struct
   | "field" => some .field
+  | "ports" => some .ports
   | _ => none
 
 /-! The form of a builtin in section 9.3, for the fix of "Builtin arity". -/
 def Builtin.form : Builtin → String
   | .typeOf => "@TypeOf(x)" | .typeInfo => "@typeInfo(T)" | .struct => "@Struct(fs)"
-  | .field => "@field(x, k)"
+  | .field => "@field(x, k)" | .ports => "@ports(h)"
 
 /-!
 An expression and a type expression. The two are mutually recursive, because an array type
@@ -84,8 +86,8 @@ is the position of the receiver, the start of the call. A `path` is a variant pa
 two names (slice 3). A constructor `E::V(args)` is a `call` of a `path`. A `match` holds its
 scrutinee and its arms, and an `Arm` holds a pattern and its expression (slice 3). A `builtin`
 is `@name(args)` at the position of its `@` (slice 4). Its `BuiltinArgs` names the builtin and
-holds its operands in source order: one for `@TypeOf`, `@typeInfo`, and `@Struct`, and two for
-`@field`. Thus each builtin node has the number of operands of its name.
+holds its operands in source order: one for `@TypeOf`, `@typeInfo`, `@Struct`, and `@ports`,
+and two for `@field`. Thus each builtin node has the number of operands of its name.
 
 A type expression is a type name, a type family with its static arguments, or the unit type
 `()`. It can also be a tuple type, an array type `[T; N]`, or a function type
@@ -122,6 +124,7 @@ mutual
     | typeInfo (arg : Expr)
     | struct (arg : Expr)
     | field (base key : Expr)
+    | ports (place : Expr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -157,10 +160,11 @@ def BuiltinArgs.builtin : BuiltinArgs → Builtin
   | .typeInfo _ => .typeInfo
   | .struct _ => .struct
   | .field .. => .field
+  | .ports _ => .ports
 
 /-! The operands `a` in source order. -/
 def BuiltinArgs.list : BuiltinArgs → List Expr
-  | .typeOf x | .typeInfo x | .struct x => [x]
+  | .typeOf x | .typeInfo x | .struct x | .ports x => [x]
   | .field b k => [b, k]
 
 /-! The operands of the builtin `b` from the list `xs`, if their number fits `b`. -/
@@ -169,6 +173,7 @@ def BuiltinArgs.ofList? : Builtin → List Expr → Option BuiltinArgs
   | .typeInfo, [x] => some (.typeInfo x)
   | .struct, [x] => some (.struct x)
   | .field, [b, k] => some (.field b k)
+  | .ports, [x] => some (.ports x)
   | _, _ => none
 
 /-!
@@ -183,11 +188,11 @@ def Builtin.arityText (b : Builtin) (m : Nat) : String :=
   s!"`@{b.name}` takes {b.arity} argument(s), but it has {m}; write `{b.form}`"
 
 /-!
-The operands `a` fit their builtin (section 9.3): the operand of `@TypeOf` is a place. The
-operand of `@typeInfo` and of `@Struct` is any expression.
+The operands `a` fit their builtin (section 9.3): the operand of `@TypeOf` and of `@ports` is a
+place (F32). The operand of `@typeInfo` and of `@Struct` is any expression.
 -/
 def BuiltinArgs.ok : BuiltinArgs → Bool
-  | .typeOf x => x.place
+  | .typeOf x | .ports x => x.place
   | .typeInfo _ | .struct _ | .field .. => true
 
 /-!

@@ -447,10 +447,11 @@ def generated (p : Pos) (xs : List (String × Ty)) : M Ty := do
 
 /-!
 The fix `{h}` of "Builtin as a type" for the builtin `q` (section 6.2). `@TypeOf` and `@Struct`
-always give a `Type`, so only `@typeInfo` and `@field` reach the text.
+always give a `Type`, so only `@typeInfo`, `@field`, and `@ports` reach the text.
 -/
 def builtinTyHint : Builtin → String
   | .typeInfo => "select a `Type` from it, for example `@field(@typeInfo(T), \"element\")`"
+  | .ports => "select the type of one port, for example `@field(@ports(u)[0], \"ty\")`"
   | .typeOf | .struct | .field =>
     "select a part of type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
 

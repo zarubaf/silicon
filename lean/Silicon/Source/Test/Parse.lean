@@ -397,7 +397,6 @@ type: the parser accepts it, and pass 4 rejects it.
 #guard fails "module M() conforms C() using D() {}" .S004 1 12
 #guard fails "module M() domains(a, b) {}" .S004 1 23
 #guard fails "fn f(x: a::T) -> T {}" .S004 1 10
-#guard fails "fn f() -> @ports(M) {}" .S004 1 11
 #guard fails "fn f() -> a::T {}" .S004 1 12
 #guard fails "fn f() -> T::U {}" .S004 1 12
 #guard st "@TypeOf(x);" == "(expr (builtin TypeOf ((name \"x\"))))"
@@ -570,7 +569,7 @@ def plainBody (s : String) : String := "fn f() -> T {\n" ++ s ++ "\n}"
 #guard ex "@Struct(T)" == "(builtin Struct ((name \"T\")))"
 #guard ex "@Struct()" == "error S001 1:15"
 #guard ex "@Struct(a, b)" == "error S001 1:15"
-#guard ex "@ports(M)" == "error S004 1:14"
+#guard ex "@ports(M)" == "(builtin ports ((name \"M\")))"
 #guard ex "@field(x, \"f\")" == "(builtin field ((name \"x\") (str \"f\")))"
 #guard ex "@TypeOf(x)" == "(builtin TypeOf ((name \"x\")))"
 #guard ex "@TypeOf(f(a, b), (c)), d)" == "error S001 1:15"
@@ -679,7 +678,7 @@ name, and with `mut` it is `S001` at `mut`, as at a module.
 #guard fails "import x $" .S004 1 1
 #guard fails "pub \"open" .S004 1 1
 #guard fails "const N: T = $; import x;" .S001 1 14
-#guard ex "@ports(a, $)" == "error S004 1:14"
+#guard ex "@ports(a, $)" == "error S001 1:24"
 #guard fails ("import x " ++ "".pushn '9' 20000) .S004 1 1
 #guard fails ("const N: T = " ++ "".pushn '9' 20000 ++ " 1;") .S001 1 14
 
@@ -1024,12 +1023,6 @@ name has the limit of a string in a message (section 5.5).
   "`@typeInfo`, `@Struct`, `@field`, or `@ports`"
 #guard ex "@1" == "error S001 1:15"
 
-/-! `@ports` stays `S004` at the `@` (#346), also in a type position. -/
-#guard ex "@ports(u)" == "error S004 1:14"
-#guard ex "@TypeOf(@ports(u))" == "error S004 1:22"
-#guard stFails "let y: @ports(u) = x;" .S004 8
-#guard message "const X: T = @ports(u);" == "a builtin is not supported yet"
-#guard message "const X: @ports(y) = 1;" == "a builtin is not supported yet"
 
 /-!
 Each builtin can stand in a type position (F39). The parser reads it as in an expression, with

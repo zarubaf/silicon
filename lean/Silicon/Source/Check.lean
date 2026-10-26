@@ -40,11 +40,11 @@ at the name. These are the static positions:
 12. From slice 4 on, the key of `@field(x, k)`. Its base `x` takes the position of the
    `@field`, as the base of a field does.
 
-The operand of `@TypeOf` is no static position, also in a static position, so
+The operand of `@TypeOf` and of `@ports` is no static position, also in a static position, so
 `UInt[data_bits(@TypeOf(r))]` names `r` without `S005`. Rule 1 and rule 12 still hold for its
-indices and its keys (section 9.2). The argument of `@typeInfo` and of `@Struct` is no static
-position either (ADR 0031), so `@typeInfo(r)` gets the `S010` of pass 5. The keys of a query
-operand in it keep their rules.
+indices and its keys (section 9.2), so `@ports(us[r])` is `S005` at `r`. The argument of
+`@typeInfo` and of `@Struct` is no static position either (ADR 0031), so `@typeInfo(r)` gets the
+`S010` of pass 5. The keys of a query operand in it keep their rules.
 
 A builtin in a type position (F39) is no static position either, and its operands keep the rules
 of the builtin in an expression. Thus `let y: @field(rs, 0) = ...;` for an array `rs` of
@@ -91,7 +91,8 @@ declaration. A family is no mutable root, so a `mut` actual with a family root i
   `S007` at the index.
 - A builtin in a type position gives a complete type, so it takes no index. Thus
   `@TypeOf(x)[8]` in a type is `S007` "Index of a builtin type" at the `@`. In a chain of indices
-  such as `@TypeOf(x)[1][2]`, only the first index reports. An index of a builtin in an
+  such as `@TypeOf(x)[1][2]`, only the first index reports. `@ports` gives a list and not a
+  type, so its index has the text "Index of `@ports` in a type". An index of a builtin in an
   expression keeps the rules of an index of a value.
 - A variant constructor `E::V(args)` has one argument for each payload type of `V`. A path
   `E::V` without a call has none. The error is at the start of the path (section 5.6). An enum
@@ -369,6 +370,18 @@ def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
   | .family .. => if static then staticResource pos n .port else pure ()
   | _ => pure ()
 
+/-!
+The `S007` text of `m` index arguments after the builtin `b` in a type (section 6.2). It is
+"Index of `@ports` in a type" for `@ports`, else "Index of a builtin type".
+-/
+def builtinIndexText (b : Builtin) (m : Nat) : String :=
+  let q := s!"@{b.name}"
+  match b with
+  | .ports => "`@ports` gives a `List[PortInfo]`; select a port type with " ++
+      "`@field(@ports(u)[0], \"ty\")`"
+  | .typeOf | .typeInfo | .struct | .field =>
+    s!"a type from `{q}` takes 0 argument(s), but it has {m}; remove the index after `{q}(...)`"
+
 /-! The fix of the `S007` text of the prelude `read` (section 6.2). Another callee has none. -/
 def readFix : Ref → String
   | .fn .read => "; write `read(h)` with one register or wire"
@@ -558,7 +571,7 @@ mutual
 
   /-- The operands of a builtin form. -/
   def builtinForm (static : Bool) : Resolve.BuiltinForm → M Unit
-    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => do let _ ← visit false false x
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x | .ports _ x => do let _ ← visit false false x
     | .atField _ b k => do
       let _ ← visit static false b
       let _ ← visit true false k
@@ -574,9 +587,7 @@ mutual
       if let some h ← head n r then indexArity p h xs
       for x in xs do let _ ← visit true false x
     | .index p (.builtin f) xs => do
-      let q := s!"@{f.builtin.name}"
-      report .S007 p (s!"a type from `{q}` takes 0 argument(s), but it has {xs.length}; " ++
-        s!"remove the index after `{q}(...)`")
+      report .S007 p (builtinIndexText f.builtin xs.length)
       builtinForm false f
       for x in xs do let _ ← visit true false x
     | .index p b xs => do

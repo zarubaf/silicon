@@ -128,7 +128,7 @@ mutual
 
   /-- The operands of a builtin, as `Expr.dumpsTo` dumps the list of them. -/
   def BuiltinArgs.dumpTo (acc : String) : BuiltinArgs → String
-    | .typeOf x | .typeInfo x | .struct x => x.dumpTo acc
+    | .typeOf x | .typeInfo x | .struct x | .ports x => x.dumpTo acc
     | .field b k => k.dumpTo (b.dumpTo acc ++ " ")
 
   /-- `sepTo Expr.dumpTo`, which the recursion over `Expr` needs as its own function. -/
@@ -365,7 +365,7 @@ mutual
 
   /-- The text of each operand of a builtin, in source order. -/
   def BuiltinArgs.print : BuiltinArgs → List String
-    | .typeOf x | .typeInfo x | .struct x => [x.print 0]
+    | .typeOf x | .typeInfo x | .struct x | .ports x => [x.print 0]
     | .field b k => [b.print 0, k.print 0]
 
   def FnParam.print : FnParam → String

@@ -248,7 +248,7 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.flatten (s := s) (xss := arms.map Arm.toks) (by simpa using ih)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihs _ (d + 1), ha d]
-  case case25 =>
+  case case26 =>
     intro q v ih
     have := (Pattern.trans s q).inner.append ((Trans.single (k := .symbol "=>")
       (by decide)).inner.append ((ih 0).inner.append Inner.comma))
@@ -326,7 +326,7 @@ private theorem trans_all (s : Sep) :
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ha d]
-  case case21 | case22 | case23 =>
+  case case21 | case22 | case23 | case25 =>
     intro x ih y hy
     simp only [BuiltinArgs.list, List.mem_singleton] at hy
     exact hy ▸ ih
@@ -346,39 +346,39 @@ private theorem trans_all (s : Sep) :
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [Expr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case26 =>
+  case case27 =>
     intro m t iht d rest
     cases m <;> simp [FnParam.toks, scan, OpenK, CloseK, iht d]
-  case case28 =>
+  case case29 =>
     intro p b xs ihb ih
     have ha := Inner.argToks (s := s) (xss := xs.map (Expr.toks 0))
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
     rw [TypeExpr.toks.eq_def]
     cases b <;> simp [scan, OpenK, CloseK, ihb d, ihb (d + 1), ha d]
-  case case30 =>
+  case case31 =>
     intro p ts ih
     have ha := Inner.argToks (xss := ts.map TypeExpr.toks) (by simpa using ih)
     rw [TypeExpr.toks]
     split
     · simpa using Trans.paren (ha.append Inner.comma)
     · simpa using Trans.paren ha
-  case case31 =>
+  case case32 =>
     intro p t n iht ihn
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, iht (d + 1), ihn 0 (d + 1)]
-  case case32 =>
+  case case33 =>
     intro p ps r ih ihr
     have ha := Inner.argToks (s := s) (xss := ps.map FnParam.toks) (by simpa using ih)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ihr d, ha d]
-  case case33 =>
+  case case34 =>
     intro p a ih
     have ha := Inner.argToks (xss := a.list.map (Expr.toks 0))
       (by simpa using fun x hx => ih x hx 0)
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK, ha d]
-  case case27 | case29 =>
+  case case28 | case30 =>
     intros
     intro d rest
     simp [TypeExpr.toks, scan, OpenK, CloseK]
