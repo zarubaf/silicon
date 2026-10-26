@@ -813,8 +813,11 @@ impl Evaluator<'_> {
 
     /// Marks the key of `step` as early if it has a call and a step before it does not pass its
     /// checks by its type (`checked`). The key then evaluates before the walk checks those steps.
-    /// Its only effect that Lean would not have is its records of `diagnostic`: an error in it
-    /// loses to a failed check, because the walk runs first, and a check charges nothing.
+    /// A failed check ends the run, and an error of the key loses to it, because the walk runs
+    /// first. So the fuel, the changes of other locals, the `S018` records, and the children that
+    /// the key makes before that check do not show. Only its records of `diagnostic` would show,
+    /// and `unrecord` takes them back. A check charges nothing, so a run that passes charges in
+    /// the order of Lean.
     fn mark_early(&self, step: &Sel<'_>, keyed: &mut Keyed<'_>) {
         if self.has_call(step) && !self.checked(keyed) {
             keyed.early.push((keyed.keys.len(), self.records.len()));
