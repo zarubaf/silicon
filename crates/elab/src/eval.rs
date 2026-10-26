@@ -491,10 +491,9 @@ pub(crate) fn run(
         scan,
         Elab::new(crate::names::sha16),
     );
-    let e = top.expr();
-    let out = ev.eval(e)?;
-    let out = need(e, out)?;
-    let value = ev.static_value(e.pos(), out)?;
+    let value = ev.top_value(top.expr());
+    ev.records.finish(&value);
+    let value = value?;
     let used = budget.fuel - ev.fuel.left();
     #[cfg_attr(not(test), allow(unused_mut))]
     let mut evaluated = Evaluated::new(value, ev.tys);
@@ -503,6 +502,15 @@ pub(crate) fn run(
         evaluated.steps = ev.store.steps();
     }
     Ok((evaluated, used))
+}
+
+impl Evaluator<'_> {
+    /// The static value of the top expression `e`.
+    fn top_value(&mut self, e: &Expr) -> Res<Value> {
+        let out = self.eval(e)?;
+        let out = need(e, out)?;
+        self.static_value(e.pos(), out)
+    }
 }
 
 /// A reference to the constant at the index `i` of the table of constants.

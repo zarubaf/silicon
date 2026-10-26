@@ -160,7 +160,7 @@ pub(crate) fn elaborate(
         field_order: std::mem::take(&mut ev.syms.field_order),
         texts: std::mem::take(&mut ev.syms.texts),
     });
-    (ev.records.take(), design)
+    (ev.records.finish(&design), design)
 }
 
 impl Evaluator<'_> {
