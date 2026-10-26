@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use crate::ast::{Builtin, Expr, FnParam, Item, ParamMode, PortForm, Pos, Stmt, TypeExpr};
+use crate::ast::{BuiltinArgs, Expr, FnParam, Item, ParamMode, PortForm, Pos, Stmt, TypeExpr};
 use crate::{Code, DEFAULT_SYNTAX_DEPTH, Parse};
 use proptest::prelude::*;
 
@@ -71,19 +71,19 @@ fn sx(e: &Expr) -> String {
                 .collect::<Vec<_>>()
                 .join(" ")
         ),
-        Expr::Builtin { .. } => {
-            let (builtin, operands) = e
-                .builtin_operands()
-                .unwrap_or((Builtin::TypeOf, Vec::new()));
-            format!(
-                "(@{} {})",
-                builtin.name(),
-                operands.into_iter().map(sx).collect::<Vec<_>>().join(" ")
-            )
-        }
+        Expr::Builtin { args, .. } => bx(args),
         Expr::ArrayType { elem, len, .. } => format!("(arraytype {} {})", tx(elem), sx(len)),
         Expr::FnType { params, ret, .. } => format!("(fntype {})", fx(params, ret)),
     }
+}
+
+/// A builtin as a short S-expression: `(@name operands)`.
+fn bx(args: &BuiltinArgs) -> String {
+    format!(
+        "(@{} {})",
+        args.builtin().name(),
+        args.operands().map(sx).collect::<Vec<_>>().join(" ")
+    )
 }
 
 /// The parameters and the result type of a function type: `[mut ]T ... -> R`.
@@ -96,7 +96,6 @@ fn fx(params: &[FnParam], ret: &TypeExpr) -> String {
 }
 
 /// A type expression as a short S-expression.
-#[allow(unreachable_patterns, clippy::match_wildcard_for_single_variants)]
 fn tx(t: &TypeExpr) -> String {
     let list = |xs: &[Expr]| xs.iter().map(sx).collect::<Vec<_>>().join(" ");
     match t {
@@ -111,8 +110,7 @@ fn tx(t: &TypeExpr) -> String {
         }
         TypeExpr::Array { elem, len, .. } => format!("(array {} {})", tx(elem), sx(len)),
         TypeExpr::Fn { params, ret, .. } => format!("(fn {})", fx(params, ret)),
-        // A builtin type has no S-expression yet; the pins of its AST follow the AST.
-        _ => "(builtin-type)".to_owned(),
+        TypeExpr::Builtin { args, .. } => bx(args),
     }
 }
 
@@ -518,11 +516,8 @@ fn later_slice_syntax_is_s004() {
         ("module M() { wire w: T in d; }", 1, 24),
         ("module M() { instance u = A() with { }; }", 1, 31),
         ("module M() { instance u = a::A(); }", 1, 28),
-        ("const X: T = @Struct(T);", 1, 14),
         ("const X: T = @ports(M);", 1, 14),
         ("const X: T = a::b::c;", 1, 18),
-        ("const X: @typeInfo(T) = f;", 1, 10),
-        ("const X: @Struct(T) = f;", 1, 10),
         ("const X: @ports(M) = f;", 1, 10),
         ("const X: T::U = f;", 1, 11),
         ("const X: a::T = f;", 1, 11),
@@ -900,8 +895,8 @@ fn rules_of_the_lean_parser() {
         // The path of a type and of a module is one name.
         ("module M() { instance u = a::B(); }", Code::S004, 1, 28),
         ("const X: a::T = 1;", Code::S004, 1, 11),
-        // A builtin in a type is S004, as in an expression. Another name is S001.
-        ("const X: @TypeOf(1) = 1;", Code::S004, 1, 10),
+        // A builtin in a type reads as in an expression. Another name is S001.
+        ("const X: @TypeOf(1) = 1;", Code::S001, 1, 18),
         ("const X: @foo(1) = 1;", Code::S001, 1, 11),
         ("const X: @ = 1;", Code::S001, 1, 12),
         // A second domain needs a name after the comma.
@@ -1343,7 +1338,6 @@ fn array_types_in_expressions_give_s001_at_the_first_non_type_token() {
         ("const X: T = [(a; b)];", Code::S001, 1, 17),
         ("const X: T = [f(x); 4];", Code::S004, 1, 16),
         ("const X: T = [a.f(x); 4];", Code::S001, 1, 16),
-        ("const X: T = [@TypeOf(x); 4];", Code::S004, 1, 15),
         ("const X: T = [a::T; 4];", Code::S004, 1, 16),
         ("struct P(W: Nat) { }", Code::S001, 1, 10),
         ("struct P(mut comptime W: Nat) { }", Code::S001, 1, 10),
@@ -1370,6 +1364,7 @@ fn array_types_in_expressions_parse() {
         ("[(T); 4]", "(arraytype T 4)"),
         ("[T; 4]()", "(call (arraytype T 4) )"),
         ("[T; 4][1]", "(index (arraytype T 4) 1)"),
+        ("[@TypeOf(x); 4]", "(arraytype (@TypeOf x) 4)"),
         (
             "[[T; 2], [U; 3]]",
             "(array (arraytype T 2) (arraytype U 3))",
@@ -2088,6 +2083,11 @@ fn builtins_are_primaries_with_their_operands() {
         ("@field(a, k).g[0]", "(index (field (@field a k) g) 0)"),
         ("1 + @TypeOf(x)", "(add 1 (@TypeOf x))"),
         ("@typeInfo(T)", "(@typeInfo T)"),
+        ("@Struct(fs)", "(@Struct fs)"),
+        ("@Struct([])", "(@Struct (array ))"),
+        ("@Struct(f(x),)", "(@Struct (call f x))"),
+        ("@Struct(fs).a", "(field (@Struct fs) a)"),
+        ("@typeInfo(@Struct(a))", "(@typeInfo (@Struct a))"),
         ("@typeInfo(a + b)", "(@typeInfo (add a b))"),
         ("@typeInfo(f(x),)", "(@typeInfo (call f x))"),
         ("@typeInfo(T).fields", "(field (@typeInfo T) fields)"),
@@ -2101,10 +2101,122 @@ fn builtins_are_primaries_with_their_operands() {
 }
 
 #[test]
+fn a_builtin_in_a_type_and_the_struct_builtin_follow_the_rules_of_a_builtin() {
+    let cases = [
+        // The same rules in an expression.
+        ("const X: T = @Struct();", Code::S001, 1, 15),
+        ("const X: T = @Struct(a, b);", Code::S001, 1, 15),
+        ("module M() { @Struct(x) = 1; }", Code::S001, 1, 25),
+        ("const X: @Struct() = 1;", Code::S001, 1, 11),
+        ("const X: @Struct(a, b) = 1;", Code::S001, 1, 11),
+        ("const X: @TypeOf() = 1;", Code::S001, 1, 11),
+        ("const X: @Struct(fs)(1) = 1;", Code::S004, 1, 21),
+        ("const X: @Struct(fs $) = 1;", Code::S001, 1, 21),
+        // `@ports` is S004 in both positions.
+        ("const X: @ports(M) = f;", Code::S004, 1, 10),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(input, code, line, col)| first_error(input) != Some((*code, *line, *col)))
+        .map(|(input, ..)| (input, first_error(input)))
+        .collect();
+    assert_eq!(wrong, []);
+}
+
+#[test]
+fn a_builtin_stands_in_a_type_position() {
+    for (ty, want) in [
+        ("@TypeOf(x)", "(@TypeOf x)"),
+        ("@Struct(fs)", "(@Struct fs)"),
+        ("@typeInfo(T)", "(@typeInfo T)"),
+        ("@field(a, \"t\")", "(@field a \"t\")"),
+        // The suffixes of a type follow the builtin.
+        ("@TypeOf(x)[8]", "(index (@TypeOf x) 8)"),
+        ("@Struct(fs)[8][2]", "(index (index (@Struct fs) 8) 2)"),
+        // A builtin is a type form in each type position.
+        ("[@TypeOf(x); 4]", "(array (@TypeOf x) 4)"),
+        ("(@TypeOf(x), T)", "(tuple (@TypeOf x) T)"),
+        ("(@TypeOf(x))", "(@TypeOf x)"),
+        (
+            "fn (@TypeOf(x), mut @Struct(fs)) -> @TypeOf(y)",
+            "(fn ((@TypeOf x) mut (@Struct fs)) -> (@TypeOf y))",
+        ),
+    ] {
+        assert_eq!(type_shape(ty), want, "{ty}");
+    }
+    let stmts = body("let x: @TypeOf(y) = 1; type A = @Struct([]);");
+    assert!(matches!(
+        stmts.as_slice(),
+        [
+            Stmt::Local {
+                ty: Some(TypeExpr::Builtin { .. }),
+                ..
+            },
+            Stmt::Alias {
+                ty: TypeExpr::Builtin { .. },
+                ..
+            }
+        ]
+    ));
+}
+
+#[test]
+fn a_builtin_type_has_the_position_of_its_at() {
+    let parsed = parse("const X: @TypeOf(x)[8] = 0;");
+    let Some([Item::Const { ty, .. }]) = parsed.ast.as_deref() else {
+        panic!("{:?}", parsed.errors);
+    };
+    let TypeExpr::Index {
+        pos: index, base, ..
+    } = ty
+    else {
+        panic!("not an index");
+    };
+    assert_eq!(*index, pos(1, 10));
+    assert!(matches!(&**base, TypeExpr::Builtin { pos: p, .. } if *p == pos(1, 10)));
+}
+
+#[test]
+fn a_builtin_in_a_type_dumps_as_lean_prints_it() {
+    for (ty, want) in [
+        (
+            "@TypeOf(x)",
+            "(const \"X\" (builtin TypeOf ((name \"x\"))) (num 0))\n",
+        ),
+        (
+            "@Struct(fs)[8]",
+            "(const \"X\" (index (builtin Struct ((name \"fs\"))) ((num 8))) (num 0))\n",
+        ),
+        (
+            "[@TypeOf(x); 4]",
+            "(const \"X\" (array (builtin TypeOf ((name \"x\"))) (num 4)) (num 0))\n",
+        ),
+    ] {
+        let text = parse(&format!("const X: {ty} = 0;"))
+            .dump()
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, want, "{ty}");
+    }
+}
+
+#[test]
+fn a_chain_of_builtins_in_a_type_drops_without_recursion() {
+    let n = 1000;
+    let input = format!("const X: {}T{} = 0;", "@typeInfo(".repeat(n), ")".repeat(n));
+    let parsed = parse(&input);
+    assert!(parsed.errors.is_empty(), "{:?}", parsed.errors.first());
+    assert_lossless(&parsed, &input);
+    drop(parsed);
+}
+
+#[test]
 fn a_builtin_dumps_as_lean_prints_it() {
     for (input, want) in [
         ("@TypeOf(x)", "(builtin TypeOf ((name \"x\")))"),
         ("@typeInfo(T)", "(builtin typeInfo ((name \"T\")))"),
+        ("@Struct(fs)", "(builtin Struct ((name \"fs\")))"),
+        ("@Struct([])", "(builtin Struct ((array ())))"),
         (
             "@typeInfo(a + b)",
             "(builtin typeInfo ((binary add (name \"a\") (name \"b\"))))",
