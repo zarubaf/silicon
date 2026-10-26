@@ -75,7 +75,7 @@ mutual
 
   /-- The kinds of each operand of a builtin, in source order. -/
   def BuiltinArgs.toks : BuiltinArgs → List (List Kind)
-    | .typeOf x | .typeInfo x | .struct x => [x.toks 0]
+    | .typeOf x | .typeInfo x | .struct x | .ports x => [x.toks 0]
     | .field b k => [b.toks 0, k.toks 0]
 
   def TypeExpr.toks : TypeExpr → List Kind

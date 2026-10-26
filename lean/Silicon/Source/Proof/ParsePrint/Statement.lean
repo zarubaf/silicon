@@ -201,9 +201,9 @@ example : ¬ Printable [.const p (nm "X") (t "T") (.str p "\x01")] := by decide
 example : ¬ Printable [.const p (nm "X") (t "T") (.num p (2 ^ 65536))] := by decide +kernel
 
 /-!
-The builtins (slice 4): each operand form of `@TypeOf`, `@typeInfo`, `@Struct`, and `@field`
-with any operand, and an `@field` selection of a place as a target. A builtin in a type position,
-also with an index and inside the other type forms.
+The builtins (slice 4): each operand form of `@TypeOf`, `@typeInfo`, `@Struct`, `@field`, and
+`@ports` with any operand, and an `@field` selection of a place as a target. A builtin in a type
+position, also with an index and inside the other type forms.
 -/
 example : Printable [.const p (nm "X") (t "T") (.tuple p [.builtin p (.typeOf (v "a")),
     .builtin p (.typeOf (.index p (.field p (v "a") (nm "b")) [.num p 0])),
@@ -224,10 +224,16 @@ example : Printable [.alias p (nm "R") (.builtin p (.struct (.array p [v "f"])))
       .fn p [.mk false (.builtin p (.field (v "a") (.num p 0)))] (.builtin p (.typeOf (v "b")))])
     [.local p false (nm "y") (some (.array p (.builtin p (.struct (v "fs"))) (.num p 2))) (v "x"),
      .expr p (.arrayType p (.builtin p (.typeOf (v "x"))) (.num p 4))]] := by decide +kernel
+example : Printable [.const p (nm "X") (.builtin p (.ports (v "u")))
+    (.tuple p [.builtin p (.ports (.index p (v "us") [.num p 0])),
+      .builtin p (.ports (.builtin p (.field (v "us") (.num p 1)))),
+      .index p (.builtin p (.ports (.field p (v "a") (nm "b")))) [.num p 0]])] := by
+  decide +kernel
 
 /-!
-An operand of `@TypeOf` that is not a place. Also an `@field` selection of a value that is not
-a place, as a target. A builtin with another number of operands has no AST (`BuiltinArgs`).
+An operand of `@TypeOf` or of `@ports` that is not a place. Also an `@field` selection of a value
+that is not a place, as a target. A builtin with another number of operands has no AST
+(`BuiltinArgs`).
 -/
 example : ¬ Printable [.fn p false (nm "f") [] (t "T")
     [.assign p (.builtin p (.typeInfo (v "a"))) (v "x")]] := by decide
@@ -235,6 +241,10 @@ example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p (.typeOf (.num p 1
 example : ¬ Printable [.const p (nm "X") (.builtin p (.typeOf (.num p 1))) (v "a")] := by decide
 example : ¬ Printable [.const p (nm "X") (t "T")
     (.builtin p (.typeOf (.builtin p (.typeOf (v "a")))))] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p (.ports (.call p (v "g") [])))] := by
+  decide
+example : ¬ Printable [.const p (nm "X") (t "T")
+    (.builtin p (.ports (.builtin p (.ports (v "u")))))] := by decide
 example : ¬ Printable [.fn p false (nm "f") [] (t "T")
     [.assign p (.builtin p (.field (.call p (v "g") []) (.num p 0))) (v "x")]] := by decide
 

@@ -25,8 +25,8 @@ a check here:
   `Expr.printable` to them. The height bound `N` holds for a key as for each expression, because
   `N` is at least the length of the printed text. A port has one name form (`PortForm`), so no
   AST has an indexed port with an `as` key, and the precondition needs no clause for it.
-- The operand of `@TypeOf` is a place: `BuiltinArgs.ok`. A builtin has the number of operands of
-  its name by its type (`BuiltinArgs`).
+- The operand of `@TypeOf` and of `@ports` is a place: `BuiltinArgs.ok`. A builtin has the number
+  of operands of its name by its type (`BuiltinArgs`).
 - Each body has only the statement kinds that the parser accepts in that body. The parser
   accepts each statement kind in each body, so this clause holds for each AST.
 - No string has a control character other than LF, CR, and tab: `printableChar`.
@@ -101,6 +101,7 @@ def BuiltinArgs.erase : BuiltinArgs → BuiltinArgs
   | .typeInfo x => .typeInfo x.erase
   | .struct x => .struct x.erase
   | .field b k => .field b.erase k.erase
+  | .ports x => .ports x.erase
 end
 
 def Stmt.erase : Stmt → Stmt
@@ -204,7 +205,7 @@ mutual
     | .builtin _ a => a.ok && a.printable
 
   def BuiltinArgs.printable : BuiltinArgs → Bool
-    | .typeOf x | .typeInfo x | .struct x => x.printable
+    | .typeOf x | .typeInfo x | .struct x | .ports x => x.printable
     | .field b k => b.printable && k.printable
 
   def Expr.printableAll : List Expr → Bool
@@ -351,6 +352,7 @@ theorem Expr.ind (motive : Expr → Prop)
     (fun _ _ ihb ihk _ h => by
       simp only [BuiltinArgs.list, List.mem_cons, List.not_mem_nil, or_false] at h
       rcases h with rfl | rfl <;> assumption)
+    (fun _ ih _ h => by simp only [BuiltinArgs.list, List.mem_singleton] at h; exact h ▸ ih)
     (fun _ _ ih _ _ h => by cases h; exact ih) (fun _ _ _ => trivial)
     (fun _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ => trivial) (fun _ _ _ => trivial)
     (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ _ _ => trivial) e
@@ -374,8 +376,9 @@ theorem TypeExpr.ind (motive : TypeExpr → Prop)
     (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ => trivial) (fun _ _ _ _ _ _ => trivial)
     (fun _ _ _ _ _ => trivial) (fun _ _ _ => trivial) (fun _ _ _ _ _ => trivial)
     (fun _ _ _ => trivial) (fun _ _ => trivial) (fun _ _ => trivial) (fun _ _ => trivial)
-    (fun _ _ _ _ => trivial) (fun _ _ _ => trivial) (fun _ _ ih _ _ h => by cases h; exact ih)
-    case1 (fun p b xs ih _ => case2 p b xs ih) case3 case4 (fun p t n ih _ => case5 p t n ih)
+    (fun _ _ _ _ => trivial) (fun _ _ => trivial) (fun _ _ _ => trivial)
+    (fun _ _ ih _ _ h => by cases h; exact ih) case1 (fun p b xs ih _ => case2 p b xs ih) case3
+    case4 (fun p t n ih _ => case5 p t n ih)
     (fun p ps r ih ihr => case6 p ps r (fun m t h => ih _ h m t rfl) ihr)
     (fun p a _ => case7 p a) t
 
@@ -457,7 +460,7 @@ private theorem print_erase_all :
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, ihs, List.map_map, Function.comp_def, hm] <;> rfl
-  case case25 =>
+  case case26 =>
     intro q v ih
     simp [Arm.erase, Arm.print, ih, Pattern.print_erase]
   case case8 =>
@@ -499,7 +502,7 @@ private theorem print_erase_all :
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, BuiltinArgs.builtin_erase, ih] <;> rfl
-  case case21 | case22 | case23 | case24 =>
+  case case21 | case22 | case23 | case24 | case25 =>
     intros
     simp_all [BuiltinArgs.erase, BuiltinArgs.print]
   case case17 =>
@@ -510,10 +513,10 @@ private theorem print_erase_all :
     conv => lhs; rw [Expr.print.eq_def]
     conv => rhs; rw [Expr.print.eq_def]
     simp only [Expr.level, ihr, List.map_map, Function.comp_def, hm] <;> rfl
-  case case26 =>
+  case case27 =>
     intro m t ih
     simp [FnParam.erase, FnParam.print, ih]
-  case case28 =>
+  case case29 =>
     intro p b xs ihb ih
     have hm : List.map (fun x => Expr.print 0 x.erase) xs = List.map (Expr.print 0) xs :=
       List.map_congr_left fun x hx => ih x hx 0
@@ -522,20 +525,20 @@ private theorem print_erase_all :
     conv => rhs; rw [TypeExpr.print.eq_def]
     simp only [List.map_map, Function.comp_def, hm, ihb]
     cases b <;> simp only [TypeExpr.erase] <;> rfl
-  case case30 =>
+  case case31 =>
     intro p ts ih
     have hm : List.map (fun t => t.erase.print) ts = List.map TypeExpr.print ts :=
       List.map_congr_left fun t ht => ih t ht
     simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm]
-  case case32 =>
+  case case33 =>
     intro p ps r ih ihr
     have hm : List.map (fun x => x.erase.print) ps = List.map FnParam.print ps :=
       List.map_congr_left fun x hx => ih x hx
     simp [TypeExpr.erase, TypeExpr.print, List.map_map, Function.comp_def, hm, ihr]
-  case case27 | case29 | case31 =>
+  case case28 | case30 | case32 =>
     intros
     simp_all [TypeExpr.erase, TypeExpr.print]
-  case case33 =>
+  case case34 =>
     intro p a ih
     simp [TypeExpr.erase, TypeExpr.print, ih]
   all_goals
@@ -660,7 +663,7 @@ private theorem printable_erase_all :
     simp only [Expr.erase, Expr.printable, ihs, Arm.printableAll_eq, List.all_map,
       Function.comp_def]
     rw [all_congr_mem ih]
-  case case25 =>
+  case case26 =>
     intro q v ih
     simp only [Arm.erase, Arm.printable, ih, Pattern.printable_erase]
   case case17 =>
@@ -668,10 +671,10 @@ private theorem printable_erase_all :
     simp only [Expr.erase, Expr.printable, ihr, FnParam.printableAll_eq, List.all_map,
       Function.comp_def]
     rw [all_congr_mem ih]
-  case case26 =>
+  case case27 =>
     intro m t ih
     simp only [FnParam.erase, FnParam.printable, ih]
-  case case32 =>
+  case case33 =>
     intro p ps r ih ihr
     simp only [TypeExpr.erase, TypeExpr.printable, ihr, FnParam.printableAll_eq, List.all_map,
       Function.comp_def]
@@ -694,20 +697,20 @@ private theorem printable_erase_all :
   case case20 =>
     intro p a ih
     simp only [Expr.erase, Expr.printable, BuiltinArgs.ok_erase, ih]
-  case case21 | case22 | case23 | case24 =>
+  case case21 | case22 | case23 | case24 | case25 =>
     intros
     simp_all [BuiltinArgs.erase, BuiltinArgs.printable]
-  case case28 =>
+  case case29 =>
     intro p b xs ihb ih
     simp only [TypeExpr.erase, TypeExpr.printable, ihb, Expr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  case case30 =>
+  case case31 =>
     intro p ts ih
     simp only [TypeExpr.erase, TypeExpr.printable, TypeExpr.printableAll_eq, List.all_map,
       Function.comp_def, List.isEmpty_map]
     rw [all_congr_mem ih]
-  case case33 =>
+  case case34 =>
     intro p a ih
     simp only [TypeExpr.erase, TypeExpr.printable, BuiltinArgs.ok_erase, ih]
   all_goals intros; simp_all [Expr.erase, Expr.printable, TypeExpr.erase, TypeExpr.printable]

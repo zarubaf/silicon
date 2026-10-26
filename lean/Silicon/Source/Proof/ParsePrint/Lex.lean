@@ -406,7 +406,7 @@ private theorem lexes_all (D : Nat) :
     have := g1.append ((ihs h.1 0).append (g2.append (ha.append g3 (Starts.any _))
       (Starts.any _)) (Starts.glue ") {" (by decide) _)) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case25 =>
+  case case26 =>
     intro q v ih h
     simp only [Arm.printable, Bool.and_eq_true] at h
     rw [Arm.print, Arm.toks]
@@ -422,7 +422,7 @@ private theorem lexes_all (D : Nat) :
     simp only [Expr.printable, Bool.and_eq_true, FnParam.printableAll_eq, List.all_eq_true] at h
     rw [Expr.print, Expr.toks]
     simpa using hfn ps r (fun x hx => ih x hx (h.1 x hx)) (ihr h.2)
-  case case26 =>
+  case case27 =>
     intro m t iht h
     simp only [FnParam.printable] at h
     rw [FnParam.print, FnParam.toks]
@@ -430,13 +430,13 @@ private theorem lexes_all (D : Nat) :
     · simpa using iht h
     · have g : Lexes D .any "mut ".toList [.keyword "mut"] := Lexes.glue (by decide)
       simpa using g.append (iht h) (Starts.any _)
-  case case32 =>
+  case case33 =>
     intro p ps r ih ihr h
     simp only [TypeExpr.printable, Bool.and_eq_true, FnParam.printableAll_eq,
       List.all_eq_true] at h
     rw [TypeExpr.print, TypeExpr.toks]
     exact hfn ps r (fun x hx => ih x hx (h.1 x hx)) (ihr h.2)
-  case case33 =>
+  case case34 =>
     intro p a ihx h
     simp only [TypeExpr.printable, Bool.and_eq_true, BuiltinArgs.printable_eq,
       List.all_eq_true] at h
@@ -459,7 +459,7 @@ private theorem lexes_all (D : Nat) :
     have hat : Lexes D .any "@".toList [.symbol "@"] := Lexes.glue (by decide)
     have := hat.append hm (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case21 | case22 | case23 =>
+  case case21 | case22 | case23 | case25 =>
     intro x ih y hy
     simp only [BuiltinArgs.list, List.mem_singleton] at hy
     exact hy ▸ ih
@@ -628,12 +628,12 @@ private theorem lexes_all (D : Nat) :
     have := (Lexes.name h.1).append (hc.append (Lexes.name h.2) (Starts.any _))
       (Starts.glue "::" (by decide) _)
     simpa using this
-  case case29 =>
+  case case30 =>
     intro p _
     rw [TypeExpr.print, TypeExpr.toks]
     simpa using Lexes.any (f := .sep) (Lexes.glue (D := D) (cs := "()".toList)
       (ks := [.symbol "(", .symbol ")"]) (by decide))
-  case case30 =>
+  case case31 =>
     intro p ts ih h
     simp only [TypeExpr.printable, Bool.and_eq_true, TypeExpr.printableAll_eq,
       List.all_eq_true] at h
@@ -652,7 +652,7 @@ private theorem lexes_all (D : Nat) :
       · exact Starts.lit (by decide)
     have := hop.append (ha.append hc hs) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case31 =>
+  case case32 =>
     intro p t n iht ihn h
     simp only [TypeExpr.printable, Bool.and_eq_true] at h
     rw [TypeExpr.print, TypeExpr.toks]
@@ -661,12 +661,12 @@ private theorem lexes_all (D : Nat) :
     have := hb.append ((iht h.1).append (hs.append ((ihn h.2 0).append hc
       (Starts.lit (by decide))) (Starts.any _)) (Starts.glue "; " (by decide) _)) (Starts.any _)
     simpa using Lexes.any (f := .sep) this
-  case case27 =>
+  case case28 =>
     intro p n h
     simp only [TypeExpr.printable] at h
     rw [TypeExpr.print, TypeExpr.toks]
     exact Lexes.name h
-  case case28 =>
+  case case29 =>
     intro p b xs ih ihx h
     simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
       List.all_eq_true] at h

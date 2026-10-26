@@ -3056,6 +3056,8 @@ mutual
           if (← changesOf o) == c then return some r
           charge p r.value.size
           return some ⟨r.value, false, none⟩
+        -- TODO(#346): evaluate `@ports` (section 9.3).
+        | .builtin (.ports p _) => fail .S004 p "a builtin is not supported yet"
         | .«match» p x as => do
           let v ← operand x.pos x (← need x (← eval n x)).value
           let t ← scrutTy x.pos v
@@ -3768,7 +3770,7 @@ mutual
     | .builtin f => scanForm f
 
   def scanForm : Resolve.BuiltinForm → ScanM Unit
-    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => scanExpr x
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x | .ports _ x => scanExpr x
     | .atField _ b k => do scanExpr b; scanExpr k
 
   def scanParam : Resolve.FnParam → ScanM Unit

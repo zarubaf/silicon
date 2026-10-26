@@ -231,8 +231,9 @@ type `Type`, which `Elab` checks. A function type keeps its form, with the `mut`
 parameter type. A `match` holds its scrutinee and its arms. The parser checked the operands
 of a builtin, so each builtin has its own form (`BuiltinForm`). `typeOf` holds the place of
 `@TypeOf`, `typeInfo` holds the argument of `@typeInfo`, `atStruct` holds the argument of
-`@Struct`, and `atField` holds the base and the key of `@field`. A builtin in an expression and a
-builtin in a type position (`builtin`) hold the same form.
+`@Struct`, `atField` holds the base and the key of `@field`, and `ports` holds the place of
+`@ports`. A builtin in an expression and a builtin in a type position (`builtin`) hold the same
+form.
 -/
 mutual
   inductive Expr where
@@ -264,6 +265,7 @@ mutual
     | typeInfo (pos : Pos) (arg : Expr)
     | atStruct (pos : Pos) (arg : Expr)
     | atField (pos : Pos) (base key : Expr)
+    | ports (pos : Pos) (place : Expr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String) (ref : Ref)
@@ -285,7 +287,7 @@ deriving instance Repr, BEq, Inhabited for Expr, BuiltinForm, TypeExpr, FnParam,
 
 /-! The position of the `@` of a builtin form. -/
 def BuiltinForm.pos : BuiltinForm → Pos
-  | .typeOf p .. | .typeInfo p .. | .atStruct p .. | .atField p .. => p
+  | .typeOf p .. | .typeInfo p .. | .atStruct p .. | .atField p .. | .ports p .. => p
 
 /-! The builtin of a builtin form. -/
 def BuiltinForm.builtin : BuiltinForm → Builtin
@@ -293,6 +295,7 @@ def BuiltinForm.builtin : BuiltinForm → Builtin
   | .typeInfo .. => .typeInfo
   | .atStruct .. => .struct
   | .atField .. => .field
+  | .ports .. => .ports
 
 /-! The position of the first token of a form. -/
 def Expr.pos : Expr → Pos
@@ -343,6 +346,7 @@ mutual
     | .typeInfo _ x => .typeInfo x.source
     | .atStruct _ x => .struct x.source
     | .atField _ b k => .field b.source k.source
+    | .ports _ x => .ports x.source
 
   def TypeExpr.source : TypeExpr → Source.TypeExpr
     | .name p x _ => .name p x
@@ -454,7 +458,7 @@ mutual
     | .builtin f => f.namesLocal ps
 
   def BuiltinForm.namesLocal (ps : Ids) : BuiltinForm → Bool
-    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => x.namesLocal ps
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x | .ports _ x => x.namesLocal ps
     | .atField _ b k => b.namesLocal ps || k.namesLocal ps
 
   def Expr.anyLocal (ps : Ids) : List Expr → Bool
@@ -882,6 +886,7 @@ mutual
     | .typeInfo x => return .typeInfo p (← expr x)
     | .struct x => return .atStruct p (← expr x)
     | .field b k => return .atField p (← expr b) (← expr k)
+    | .ports x => return .ports p (← expr x)
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
