@@ -461,6 +461,9 @@ impl Builder {
             }
         }
         self.port_forms(&mut ctx, &mut m, &sig.plan, &mut body)?;
+        let emitted = self.emitted;
+        let decls = self.query_decls(&ctx, &mut m)?;
+        let decls_at = body.len();
         body.extend(self.frame(&mut ctx, &mut m, 0)?);
         self.call_unused(&mut ctx, &mut m, &mut body)?;
         self.close_pending(&mut ctx, &mut body)?;
@@ -471,6 +474,7 @@ impl Builder {
         if let Some(j) = orphan {
             self.instantiate(&mut ctx, &mut m, j, &mut body)?;
         }
+        self.query_tail(&ctx, &mut m.names, &mut body);
         let mut values = Vec::new();
         for (n, w) in outputs {
             let value = self.driver(&ctx, &w);
@@ -478,13 +482,17 @@ impl Builder {
             values.push((n, w, value));
         }
         self.mix_port(&ctx, &mut values);
-        self.mix_query(&mut values);
+        self.mix_query(&ctx, &mut values);
         for (n, _, value) in values {
             body.push(Stmt::Connect(Place::Name(n), value));
         }
         for (n, def) in &sig.enum_outputs {
             let value = self.enum_driver(&ctx, def);
             body.push(Stmt::Connect(Place::Name(n.clone()), value));
+        }
+        // The declarations of the queries stay out of a module with no query.
+        if self.emitted > emitted {
+            body.splice(decls_at..decls_at, decls);
         }
         *self.bodies.get_mut(k).ok_or(Fault::Type)? = Some(body);
         Ok(())

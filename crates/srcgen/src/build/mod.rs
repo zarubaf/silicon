@@ -100,7 +100,7 @@ use std::fmt;
 /// forms add `A`, `Z`, and `K` for a family and `Y` for the binder of a keyed
 /// port: the twin names an entry `A0_3` and a keyed port by its public name.
 /// A static name is one of them and digits; the twin must have none.
-pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGHAZKY";
+pub(super) const STATIC_PREFIXES: &str = "PCfsjbSkFBGHAZKYN";
 
 /// The result of a step whose faults the checks of the builder exclude.
 /// A fault reaches `build`, which the coverage test watches.
@@ -215,6 +215,22 @@ impl Tape {
 
     fn flag(&mut self) -> bool {
         self.below(2) == 1
+    }
+}
+
+/// The numbers of `tape` from the end, each multiplied by `k` and mixed with
+/// a shift by `shift`: the side tape of a form.
+fn mixed_tape(tape: &[u32], k: u32, shift: u32) -> Tape {
+    let numbers: Vec<u32> = tape
+        .iter()
+        .rev()
+        .map(|n| {
+            let m = n.wrapping_mul(k);
+            m ^ (m >> shift)
+        })
+        .collect();
+    Tape {
+        numbers: numbers.into_iter(),
     }
 }
 
@@ -581,6 +597,8 @@ struct Stats {
     query_groups: u32,
     query_widths: u32,
     query_mixes: u32,
+    /// The kinds of the types that the groups reflect.
+    query_kinds: BTreeSet<&'static str>,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -647,6 +665,12 @@ struct Builder {
     /// groups of queries made so far.
     ops: Vec<query::Op>,
     queries: u32,
+    /// The query nodes made so far, and the declarations that only queries
+    /// read.
+    emitted: u32,
+    query_decls: u32,
+    /// Whether the program has queries at all: one program in two.
+    query_on: bool,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
     /// The shapes of result that the helpers so far return.
@@ -727,50 +751,10 @@ impl Builder {
                     .collect::<Vec<_>>()
                     .into_iter(),
             },
-            port: Tape {
-                numbers: tape
-                    .iter()
-                    .rev()
-                    .map(|n| {
-                        let m = n.wrapping_mul(0x9E37_79B1);
-                        m ^ (m >> 15)
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            },
-            temp: Tape {
-                numbers: tape
-                    .iter()
-                    .rev()
-                    .map(|n| {
-                        let m = n.wrapping_mul(0x85EB_CA6B);
-                        m ^ (m >> 15)
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            },
-            field: Tape {
-                numbers: tape
-                    .iter()
-                    .rev()
-                    .map(|n| {
-                        let m = n.wrapping_mul(0xC2B2_AE35);
-                        m ^ (m >> 13)
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            },
-            query: Tape {
-                numbers: tape
-                    .iter()
-                    .rev()
-                    .map(|n| {
-                        let m = n.wrapping_mul(0x27D4_EB2F);
-                        m ^ (m >> 14)
-                    })
-                    .collect::<Vec<_>>()
-                    .into_iter(),
-            },
+            port: mixed_tape(&tape, 0x9E37_79B1, 15),
+            temp: mixed_tape(&tape, 0x85EB_CA6B, 15),
+            field: mixed_tape(&tape, 0xC2B2_AE35, 13),
+            query: mixed_tape(&tape, 0x27D4_EB2F, 14),
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -795,6 +779,9 @@ impl Builder {
             key_groups: 0,
             ops: Vec::new(),
             queries: 0,
+            emitted: 0,
+            query_decls: 0,
+            query_on: false,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
             port_helpers: Vec::new(),
@@ -817,6 +804,7 @@ impl Builder {
     }
 
     fn program(&mut self) -> Result<Program, Fault> {
+        self.query_on = self.on_query(|b| b.tape.flag());
         self.enums()?;
         self.structs()?;
         self.consts()?;
