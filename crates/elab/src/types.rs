@@ -8,6 +8,7 @@
 //! section 5.4, so no operation walks the field types again.
 
 use crate::int::Int;
+use crate::names::Sym;
 use crate::serial::{self, Item, Len};
 use crate::text::Text;
 use crate::value::{Value, int_size, width_int, width_size};
@@ -330,8 +331,25 @@ pub struct Spec {
     name: String,
     args: Vec<Value>,
     state: SpecState,
-    /// Whether the struct item is a prelude struct.
-    prelude: bool,
+    origin: Origin,
+}
+
+/// The origin of a struct type (section 5.6): a struct item of the user, or a prelude struct.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    User,
+    Prelude,
+}
+
+impl Origin {
+    /// The token of the origin in the serialization of a struct type.
+    #[must_use]
+    pub fn token(self) -> &'static str {
+        match self {
+            Origin::User => "root",
+            Origin::Prelude => "prelude",
+        }
+    }
 }
 
 impl Spec {
@@ -347,10 +365,10 @@ impl Spec {
         &self.name
     }
 
-    /// Whether the struct item is a prelude struct.
+    /// The origin of the struct type.
     #[must_use]
-    pub fn prelude(&self) -> bool {
-        self.prelude
+    pub fn origin(&self) -> Origin {
+        self.origin
     }
 }
 
@@ -361,6 +379,37 @@ pub enum PartNames {
     Struct(usize),
     /// The names `tag` and `payload` of an enum.
     Enum,
+}
+
+impl PartNames {
+    /// The struct item whose field names name the parts. An enum has no field.
+    #[must_use]
+    pub fn item(self) -> Option<usize> {
+        match self {
+            PartNames::Struct(item) => Some(item),
+            PartNames::Enum => None,
+        }
+    }
+
+    /// The symbols of the field names of a struct type in the table `order` of the struct items,
+    /// in the order of the fields. An enum has no field.
+    #[must_use]
+    pub fn order(self, order: &[Vec<Sym>]) -> Option<&[Sym]> {
+        match self {
+            PartNames::Struct(item) => order.get(item).map(Vec::as_slice),
+            PartNames::Enum => None,
+        }
+    }
+
+    /// The number of each field of a struct type by the symbol of its name, in the table
+    /// `members` of the struct items. An enum has no field.
+    #[must_use]
+    pub fn members(self, members: &[BTreeMap<Sym, usize>]) -> Option<&BTreeMap<Sym, usize>> {
+        match self {
+            PartNames::Struct(item) => members.get(item),
+            PartNames::Enum => None,
+        }
+    }
 }
 
 /// The named parts of a type (`Types::parts`): where their names come from, and their types.
@@ -374,10 +423,7 @@ impl Parts<'_> {
     /// The struct item whose field names name the parts. An enum has no field.
     #[must_use]
     pub fn item(&self) -> Option<usize> {
-        match self.names {
-            PartNames::Struct(item) => Some(item),
-            PartNames::Enum => None,
-        }
+        self.names.item()
     }
 }
 
@@ -987,7 +1033,11 @@ impl Types {
             name: name.to_owned(),
             args,
             state: SpecState::InProgress,
-            prelude,
+            origin: if prelude {
+                Origin::Prelude
+            } else {
+                Origin::User
+            },
         });
         s
     }

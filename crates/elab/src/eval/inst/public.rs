@@ -17,15 +17,15 @@ use super::PortDecl;
 use crate::Code;
 use crate::agg::{Agg, Base};
 use crate::eval::inst::family::FamKey;
+use crate::eval::name::name_rule;
 use crate::eval::{Evaluator, GuardKind, Res, at, fail, need};
 use crate::hw::{Kind, Seen, Val};
 use crate::names::{PathId, Sym};
 use crate::ops::{int_text, str_text};
-use crate::types::{Ty, TyId};
+use crate::types::{Origin, Ty, TyId};
 use crate::value::Value;
 use parse::ast::{Expr, Pos};
 use resolve::DeclId;
-use syntax::SyntaxKind;
 
 /// The form of a public name of the owner (section 5.6): a scalar port, or a port family with its
 /// direction, `true` for an input.
@@ -68,33 +68,6 @@ impl Ord for PubKey {
 /// The position `b` of an earlier declaration in a message.
 fn at_text(b: Pos) -> String {
     format!("{}:{}", b.line, b.col)
-}
-
-/// The `S022` error "Name rule" of section 6.2 at `kp`, for the name `s` of the kind `kind`.
-fn name_rule<T>(kp: Pos, s: &str, kind: &str) -> Res<T> {
-    fail(
-        Code::S022,
-        kp,
-        format!(
-            "`{}` is not a valid {} name; use an ASCII letter or `_`, then letters, digits, or \
-             `_`",
-            str_text(s),
-            kind
-        ),
-    )
-}
-
-/// The `S022` error "Keyword name" of section 6.2 at `kp`, for the name `s` of the kind `kind`.
-fn keyword_name<T>(kp: Pos, s: &str, kind: &str) -> Res<T> {
-    fail(
-        Code::S022,
-        kp,
-        format!(
-            "`{}` is a keyword, so it cannot be a {} name; choose another name",
-            str_text(s),
-            kind
-        ),
-    )
 }
 
 /// The `S019` error "Scalar port and port family" of section 6.2 at `pos`, for the public name
@@ -255,7 +228,7 @@ impl Evaluator<'_> {
         match self.tys.get(t) {
             Ty::Struct(s) => {
                 let spec = self.tys.spec(*s);
-                spec.prelude() && spec.name() == "PortKey"
+                spec.origin() == Origin::Prelude && spec.name() == "PortKey"
             }
             _ => false,
         }
@@ -354,12 +327,7 @@ impl Evaluator<'_> {
         self.fuel
             .pay(1 + x.chars().count() as u128)
             .map_err(at(kp))?;
-        if !syntax::is_identifier(x) {
-            return name_rule(kp, x, "port");
-        }
-        if SyntaxKind::keyword(x).is_some() {
-            return keyword_name(kp, x, "port");
-        }
+        name_rule(kp, x, "port")?;
         let sym = self.syms.symbol_of(x);
         let binder = Some(self.sym(id));
         match index {

@@ -4,7 +4,7 @@
 
 use crate::int::Int;
 use crate::ops::int_text;
-use crate::types::{Ty, TyId, TyParam, Types};
+use crate::types::{Origin, Ty, TyId, TyParam, Types};
 use crate::value::Value;
 use std::fmt::Write;
 
@@ -107,10 +107,10 @@ impl<'a> Text<'a> {
                     self.work.push(Piece::Lits(inst.args()));
                 }
             }
-            Ty::Enum(e) => self.item_name(tys.enum_name(*e), false),
+            Ty::Enum(e) => self.item_name(tys.enum_name(*e), Origin::User),
             Ty::Struct(s) => {
                 let spec = tys.spec(*s);
-                self.item_name(spec.name(), spec.prelude());
+                self.item_name(spec.name(), spec.origin());
                 if !spec.args().is_empty() {
                     self.out.push('[');
                     self.work.push(Piece::Text("]"));
@@ -122,8 +122,8 @@ impl<'a> Text<'a> {
 
     /// The name of a struct or enum item. A user item with the name of a prelude type is
     /// `crate::X`, so it never reads as the prelude type (design section 5.6).
-    fn item_name(&mut self, name: &str, prelude: bool) {
-        if !prelude && resolve::TYPE_NAMES.contains(&name) {
+    fn item_name(&mut self, name: &str, origin: Origin) {
+        if origin == Origin::User && resolve::TYPE_NAMES.contains(&name) {
             self.out.push_str("crate::");
         }
         self.out.push_str(name);

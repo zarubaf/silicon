@@ -185,7 +185,7 @@ impl Evaluator<'_> {
         }
         let y = self.syms.find(name)?;
         let parts = self.tys.parts(ty?)?;
-        self.field_number_by(parts.item()?, Some(y), name)
+        self.field_number_by(parts.names, Some(y), name)
     }
 
     /// The symbol of the field that the name of the step `n` names, if its key is a name.

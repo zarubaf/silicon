@@ -654,7 +654,7 @@ impl Evaluator<'_> {
             return None;
         }
         let parts = self.tys.parts(ty)?;
-        let number = self.field_number_by(parts.item()?, f.sym, f.name)?;
+        let number = self.field_number_by(parts.names, f.sym, f.name)?;
         Some((number, parts.types.get(number).copied()?))
     }
 
