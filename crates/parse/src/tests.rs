@@ -2101,6 +2101,18 @@ fn builtins_are_primaries_with_their_operands() {
 }
 
 #[test]
+fn a_missing_builtin_name_has_the_text_of_lean() {
+    for input in ["const X: @ = 1;", "const X: T = @;"] {
+        let parsed = parse(input);
+        assert_eq!(
+            parsed.errors.first().map(|e| e.message.as_str()),
+            Some("expected a builtin name"),
+            "{input}"
+        );
+    }
+}
+
+#[test]
 fn a_builtin_in_a_type_and_the_struct_builtin_follow_the_rules_of_a_builtin() {
     let cases = [
         // The same rules in an expression.
