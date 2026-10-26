@@ -88,6 +88,26 @@
 //!   with the index 1 (`BadName`), are `S022`. The four kinds are certain
 //!   where the site always runs.
 //!
+//! - A builtin with a name that is none (`BuiltinName`, also a name of 70
+//!   characters), with one operand more or less (`BuiltinArity`), and the
+//!   operand of `@TypeOf` or `@ports` that is an operator (`QueryOperand`)
+//!   are `S001` in all code. A builtin with an index in a type position
+//!   (`IndexBuiltinType`) is `S007`, and a port in a key of a query
+//!   (`KeyHardware`) is `S005`, in all code. The kinds of pass 5 are certain
+//!   where the site always runs: the domain as the operand of `@TypeOf`
+//!   (`NoType`), a string index in a query (`StringIndex`), a comparison of
+//!   ports as the argument of `@typeInfo` (`QueryHardware`, `S011`), a value
+//!   there (`TypeInfoValue`), an own port as the operand of `@ports`
+//!   (`PortsValue`), the `TypeInfo` of a type in a type position
+//!   (`BuiltinType`), a call with an effect or a mutation in a key of a query
+//!   (`KeyEffect` and `KeyMutation`, `S016`), a field more or less in a
+//!   constructor of a generated record type (`ConstructorArity`, `S007`), and
+//!   its zero when it is no hardware data (`ZeroNonData`, `S010`). A generated
+//!   record type is elaborated at its first use, so a change in the argument
+//!   of `@Struct`, in a field name, in a field type that is the alias itself,
+//!   or a user struct `FieldInfo` (`StructArg`, `FieldName`, `SelfStruct`,
+//!   `UserFieldInfo`) predicts nothing.
+//!
 //! Any other mutation can fail in pass 5 at a point that depends on the
 //! values, or pass, so its prediction is `None`.
 
@@ -212,9 +232,48 @@ enum Kind {
     /// The step before a key that runs a `diagnostic` gets a key out of
     /// range.
     EarlyStep,
+    /// A builtin gets a name that is no builtin.
+    BuiltinName,
+    /// A builtin gets one operand more or less.
+    BuiltinArity,
+    /// The operand of `@TypeOf` or `@ports` becomes an operator.
+    QueryOperand,
+    /// A builtin in a type position gets an index.
+    IndexBuiltinType,
+    /// The operand of `@TypeOf` becomes the domain.
+    NoType,
+    /// The operand of a query indexes a string.
+    StringIndex,
+    /// The argument of `@typeInfo` becomes a port.
+    QueryHardware,
+    /// A key of a query becomes a port.
+    KeyHardware,
+    /// The argument of `@typeInfo` becomes a value.
+    TypeInfoValue,
+    /// The operand of `@ports` becomes an own port.
+    PortsValue,
+    /// A type position gets the `TypeInfo` of its type.
+    BuiltinType,
+    /// A constructor of a generated record type gets a field more or less.
+    ConstructorArity,
+    /// A key of a query calls a function that runs a `diagnostic`.
+    KeyEffect,
+    /// A key of a query calls a function that changes a root.
+    KeyMutation,
+    /// The argument of `@Struct` becomes a value.
+    StructArg,
+    /// A field name of `@Struct` breaks the name rule, or repeats.
+    FieldName,
+    /// A user struct `FieldInfo` hides the prelude one.
+    UserFieldInfo,
+    /// A generated record type has itself as a field type.
+    SelfStruct,
+    /// A constructor of a generated record type that is no hardware data
+    /// loses its fields: the zero of a type that has none.
+    ZeroNonData,
 }
 
-const KINDS: [Kind; 44] = [
+const KINDS: [Kind; 63] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -259,6 +318,25 @@ const KINDS: [Kind; 44] = [
     Kind::ScalarKeyIndex,
     Kind::TargetKey,
     Kind::EarlyStep,
+    Kind::BuiltinName,
+    Kind::BuiltinArity,
+    Kind::QueryOperand,
+    Kind::IndexBuiltinType,
+    Kind::NoType,
+    Kind::StringIndex,
+    Kind::QueryHardware,
+    Kind::KeyHardware,
+    Kind::TypeInfoValue,
+    Kind::PortsValue,
+    Kind::BuiltinType,
+    Kind::ConstructorArity,
+    Kind::KeyEffect,
+    Kind::KeyMutation,
+    Kind::StructArg,
+    Kind::FieldName,
+    Kind::UserFieldInfo,
+    Kind::SelfStruct,
+    Kind::ZeroNonData,
 ];
 
 /// The kinds of ports at the end of `KINDS`, and the draws in `PORT_ODDS`
@@ -277,6 +355,13 @@ const FIELD_ODDS: usize = 6;
 /// splits, so the earlier draws keep their kinds.
 const EARLY_ODDS: usize = 4;
 const EARLY_SPLIT: usize = PORT_ODDS * FIELD_ODDS * FIELD_KINDS;
+/// The kinds of queries at the end of `KINDS`. A draw in `QUERY_ODDS`, read
+/// from the digits above those of `EarlyStep`, picks one of them, if the
+/// program has a site of one. The other draws keep the kinds that they had
+/// before the queries.
+const QUERY_KINDS: usize = 19;
+const QUERY_ODDS: usize = 4;
+const QUERY_SPLIT: usize = EARLY_SPLIT * EARLY_ODDS;
 
 /// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that
 /// no value of the type `w` bits wide has. Three kinds use it: a tag, and a
@@ -303,10 +388,10 @@ impl Kind {
     /// The function that the mutant adds, with its newline.
     fn function(self) -> String {
         match self {
-            Kind::ArmEffect | Kind::TypeEffect | Kind::TargetKey => format!(
+            Kind::ArmEffect | Kind::TypeEffect | Kind::TargetKey | Kind::KeyEffect => format!(
                 "comptime fn {EFFECT_FN}(x: Int) -> Int {{\n    diagnostic(\"{EFFECT_FN}\", x);\n    return x;\n}}\n"
             ),
-            Kind::ArmMutation | Kind::TypeMutation => {
+            Kind::ArmMutation | Kind::TypeMutation | Kind::KeyMutation => {
                 format!("comptime fn {KEEP_FN}(mut n: Int, x: Int) -> Int {{\n    return x;\n}}\n")
             }
             _ => String::new(),
@@ -326,8 +411,25 @@ pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
     let spare = kind as usize / PORT_ODDS;
     let early = (kind as usize / EARLY_SPLIT) % EARLY_ODDS == EARLY_ODDS - 1
         && sites(Kind::EarlyStep, &program.items, &program.top) > 0;
+    // One draw in `QUERY_ODDS` of the digits above those of `EarlyStep` picks
+    // a kind of queries, or the next one in cyclic order that has a site.
+    let queries = KINDS.len() - QUERY_KINDS;
+    let pick = (kind as usize / (QUERY_SPLIT * QUERY_ODDS)) % QUERY_KINDS;
+    let query = ((kind as usize / QUERY_SPLIT) % QUERY_ODDS == QUERY_ODDS - 1)
+        .then(|| {
+            (0..QUERY_KINDS)
+                .map(|i| queries + (pick + i) % QUERY_KINDS)
+                .find(|&i| {
+                    KINDS
+                        .get(i)
+                        .is_some_and(|&k| sites(k, &program.items, &program.top) > 0)
+                })
+        })
+        .flatten();
     let first = if early {
-        KINDS.len() - 1
+        OLD_KINDS + PORT_KINDS + FIELD_KINDS - 1
+    } else if let Some(query) = query {
+        query
     } else if kind as usize % PORT_ODDS == PORT_ODDS - 1 {
         old_kinds + spare % PORT_KINDS
     } else if spare % FIELD_ODDS == FIELD_ODDS - 1 {
