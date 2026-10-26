@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The counters of the work of the walks and the operations, for the tests. A test of the work
 //! counts the nodes that a walk visits and the bytes that an operation makes, so it checks the
-//! work and not the time. A run counts into the entry of its fuel budget, and a test finds its
-//! run by a fuel that no other test uses, as it finds its copies. Thus the tests agree under
-//! `cargo test`, where they share a process, as under `nextest`.
+//! work and not the time. A run counts into the entry of its own number, which a global counter
+//! gives, and a test reads the counts of the last run of its thread. Thus the tests agree
+//! under `cargo test`, where they share a process, as under `nextest`.
 
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The work of one run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -304,38 +305,54 @@ pub(crate) enum Count {
 
 static COUNTS: Mutex<BTreeMap<u64, Counts>> = Mutex::new(BTreeMap::new());
 
+static BY_FUEL: Mutex<BTreeMap<u64, u64>> = Mutex::new(BTreeMap::new());
+
+/// The number of the next run.
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
 thread_local! {
-    /// The fuel budget of the run that this thread works for.
+    /// The number of the run that this thread works for.
     static RUN: Cell<Option<u64>> = const { Cell::new(None) };
 }
 
-/// Starts the counts of the run with the fuel budget `fuel` on this thread. A thread that the
-/// run starts later joins with `join`.
-pub(crate) fn start(fuel: u64) {
+/// Starts the counts of a new run on this thread and gives its number. A thread that the run
+/// starts later joins with `join`.
+pub(crate) fn begin() -> u64 {
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
     if let Ok(mut counts) = COUNTS.lock() {
-        counts.insert(fuel, Counts::default());
+        counts.insert(id, Counts::default());
     }
-    join(fuel);
+    join(id);
+    id
 }
 
-/// Makes this thread count into the run with the fuel budget `fuel`.
-pub(crate) fn join(fuel: u64) {
-    RUN.with(|run| run.set(Some(fuel)));
+/// Starts a run and files it under the fuel budget `fuel`, for the readers of `of` and `run`.
+pub(crate) fn start(fuel: u64) -> u64 {
+    let id = begin();
+    if let Ok(mut by_fuel) = BY_FUEL.lock() {
+        by_fuel.insert(fuel, id);
+    }
+    id
 }
 
-/// The fuel budget of the run that this thread counts into. A thread that works for the run
-/// later, such as the lowering thread, joins it with `join`.
+/// Makes this thread count into the run `id`.
+pub(crate) fn join(id: u64) {
+    RUN.with(|run| run.set(Some(id)));
+}
+
+/// The number of the run that this thread counts into. A thread that works for the run later,
+/// such as the lowering thread, joins it with `join`.
 pub(crate) fn current() -> Option<u64> {
     RUN.with(Cell::get)
 }
 
 /// Adds `n` to the count of the run of this thread. Work outside a run counts nowhere.
 pub(crate) fn add(count: Count, n: u64) {
-    let Some(fuel) = RUN.with(Cell::get) else {
+    let Some(id) = RUN.with(Cell::get) else {
         return;
     };
     if let Ok(mut counts) = COUNTS.lock()
-        && let Some(c) = counts.get_mut(&fuel)
+        && let Some(c) = counts.get_mut(&id)
     {
         let field = match count {
             Count::Scanned => &mut c.scanned,
@@ -394,20 +411,54 @@ pub(crate) fn add(count: Count, n: u64) {
     }
 }
 
+/// The counts of the last run of this thread.
+#[allow(dead_code)]
+pub(crate) fn last() -> Counts {
+    last_run().unwrap_or_default()
+}
+
+/// The counts of the last run of this thread, or `None` when this thread started no run. A
+/// test that needs the run to exist reads the counts with this function.
+#[allow(dead_code)]
+pub(crate) fn last_run() -> Option<Counts> {
+    of_run(current()?)
+}
+
 /// The counts of the last run with the fuel budget `fuel`.
 pub(crate) fn of(fuel: u64) -> Counts {
-    COUNTS
-        .lock()
-        .ok()
-        .and_then(|counts| counts.get(&fuel).copied())
-        .unwrap_or_default()
+    run(fuel).unwrap_or_default()
 }
 
 /// The counts of the last run with the fuel budget `fuel`, or `None` when no such run started.
-/// A test that needs the run to exist reads the counts with this function.
 pub(crate) fn run(fuel: u64) -> Option<Counts> {
+    let id = BY_FUEL.lock().ok()?.get(&fuel).copied()?;
+    of_run(id)
+}
+
+fn of_run(id: u64) -> Option<Counts> {
     COUNTS
         .lock()
         .ok()
-        .and_then(|counts| counts.get(&fuel).copied())
+        .and_then(|counts| counts.get(&id).copied())
+}
+
+/// Where a thread that the run of an evaluator starts leaves the number of its run for the
+/// thread that waits for it.
+pub(crate) type Handoff = Mutex<Option<u64>>;
+
+/// Leaves the number of the run of this thread in `slot`. The thread that started the run
+/// calls this at its end.
+pub(crate) fn report(slot: &Handoff) {
+    if let Ok(mut slot) = slot.lock() {
+        *slot = current();
+    }
+}
+
+/// Makes this thread count into the run that `slot` holds, when a run started.
+pub(crate) fn adopt(slot: &Handoff) {
+    if let Ok(slot) = slot.lock()
+        && let Some(id) = *slot
+    {
+        join(id);
+    }
 }

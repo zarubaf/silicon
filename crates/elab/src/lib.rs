@@ -136,7 +136,7 @@ pub fn eval(
 ) -> Result<Result<(Evaluated, u64), Error>, StackError> {
     let scan = parse::on_stack(expr.depth_with(file), || scan::of(file, Some(expr)))?;
     let stack = scan.stack;
-    finish(stack.run(|| eval::run(file, expr, budget, scan))?)
+    finish(run_on(&stack, || eval::run(file, expr, budget, scan))?)
 }
 
 /// Why an elaboration does not start or does not end: a top selection that is not a module
@@ -222,16 +222,33 @@ fn observe_with(
     }
     let scan = parse::on_stack(file.depth(), || scan::of(file, None)).map_err(Abort::Stack)?;
     let stack = scan.stack;
-    #[cfg(test)]
-    let fuel = budget.fuel;
-    let (records, run) = stack
-        .run(|| eval::elaborate(file, budget, scan, digest, pos, item, xs))
-        .map_err(Abort::Stack)?;
-    // The lowering that follows counts into the run, also from the thread that calls it.
-    #[cfg(test)]
-    counters::join(fuel);
+    let (records, run) = run_on(&stack, || {
+        eval::elaborate(file, budget, scan, digest, pos, item, xs)
+    })
+    .map_err(Abort::Stack)?;
     let outcome = finish(run).map_err(Abort::Stack)?;
     Ok(Observed { records, outcome })
+}
+
+/// Runs `f` on a thread with the stack `stack`. A test then counts into the run that `f`
+/// started, also from the thread that calls this and that lowers the result.
+fn run_on<T: Send>(
+    stack: &parse::NestedStack,
+    f: impl FnOnce() -> T + Send,
+) -> Result<T, StackError> {
+    #[cfg(test)]
+    {
+        let started = counters::Handoff::new(None);
+        let done = stack.run(|| {
+            let done = f();
+            counters::report(&started);
+            done
+        })?;
+        counters::adopt(&started);
+        Ok(done)
+    }
+    #[cfg(not(test))]
+    stack.run(f)
 }
 
 /// The result of an evaluation, or the stack error that stopped it.
