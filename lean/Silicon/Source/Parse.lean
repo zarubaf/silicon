@@ -396,6 +396,18 @@ def arrayTypeAhead : P Bool := do
   return (← read).input.semi.getD (← get).next false
 
 /-!
+A builtin at the `@` token `t`, in an expression and in a type alike: its head, its operands
+from `operands`, and their checks. The result is the builtin, its operands, and their nodes.
+-/
+def builtinOf (t : Token) (operands : P (List Node)) : P (Builtin × List Expr × List Node) := do
+  let (u, b) ← builtinHead t
+  let o := (← peek).pos
+  let xs ← operands
+  let ys := xs.map (·.expr)
+  builtinCheck u b o ys
+  return (b, ys, xs)
+
+/-!
 Each function takes one unit of fuel from its caller. The argument `l` is the binding level of
 `Print`: 1 for `||` to 9 for `*`, and 10 for a prefix operator.
 -/
@@ -581,11 +593,7 @@ mutual
           let xs ← args f "]" true false
           return (⟨.array t.pos (xs.map (·.expr)), height (xs.map (·.height))⟩, false)
       | .symbol "@" =>
-        let (u, b) ← builtinHead t
-        let o := (← peek).pos
-        let xs ← args f ")" true false
-        let ys := xs.map (·.expr)
-        builtinCheck u b o ys
+        let (b, ys, xs) ← builtinOf t (args f ")" true false)
         let e := Expr.builtin t.pos b ys
         return (⟨e, height (xs.map (·.height))⟩, e.place)
       | _ => unexpected t "an expression"
@@ -653,11 +661,7 @@ mutual
         sym "]"
         typeSuffix f t.pos (.array t.pos ty n.expr, height [h, n.height])
       | .symbol "@" =>
-        let (u, b) ← builtinHead t
-        let o := (← peek).pos
-        let xs ← args f ")" true false
-        let ys := xs.map (·.expr)
-        builtinCheck u b o ys
+        let (b, ys, xs) ← builtinOf t (args f ")" true false)
         typeSuffix f t.pos (.builtin t.pos b ys, height (xs.map (·.height)))
       | _ => unexpected t "a type"
 

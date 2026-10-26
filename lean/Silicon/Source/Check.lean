@@ -424,7 +424,7 @@ def receiver (pos : Pos) (m : Ident) (r : Ref) (b : Option Nat) (got : Nat) :
 /-! The local of the root of a place, if the expression is a place with a local root. -/
 def root : Resolve.Expr → Option Nat
   | .name _ _ (.local id) | .name _ _ (.family id _) => some id
-  | .index _ b _ | .select _ b .. | .field _ b _ | .atField _ b _ => root b
+  | .index _ b _ | .select _ b .. | .field _ b _ | .builtin (.atField _ b _) => root b
   | _ => none
 
 /-! Makes the local `id` pending for one more window. `release` ends the windows. -/
@@ -545,13 +545,16 @@ mutual
       let _ ← visit static false x
       for a in as do arm static a
       return none
-    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => do
-      let _ ← visit false false x
+    | .builtin f => do
+      builtinForm static f
       return none
+
+  /-- The operands of a builtin form. -/
+  def builtinForm (static : Bool) : Resolve.BuiltinForm → M Unit
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => do let _ ← visit false false x
     | .atField _ b k => do
       let _ ← visit static false b
       let _ ← visit true false k
-      return none
 
   /-- An arm: the arity of its pattern, then its value. A binder is a plain local. -/
   def arm (static : Bool) : Resolve.Arm → M Unit
@@ -563,11 +566,11 @@ mutual
     | .index p (.name _ n r) xs => do
       if let some h ← head n r then indexArity p h xs
       for x in xs do let _ ← visit true false x
-    | .index p (.builtin e) xs => do
-      if let some b := e.builtin? then
-        arity p s!"a type from `@{b.name}`" 0 xs.length
-          s!"; remove the index after `@{b.name}(...)`"
-      let _ ← visit false false e
+    | .index p (.builtin f) xs => do
+      let b := f.builtin
+      arity p s!"a type from `@{b.name}`" 0 xs.length
+        s!"; remove the index after `@{b.name}(...)`"
+      builtinForm false f
       for x in xs do let _ ← visit true false x
     | .index _ b@(.index _ (.builtin _) _) xs => do
       -- The index right after the builtin reports at the same position, so its text wins.
@@ -583,7 +586,7 @@ mutual
     | .fn _ ps r => do
       for q in ps do fnParam q
       typeExpr r
-    | .builtin e => do let _ ← visit false false e
+    | .builtin f => builtinForm false f
 
   /-- A parameter type of a function type. -/
   def fnParam : Resolve.FnParam → M Unit

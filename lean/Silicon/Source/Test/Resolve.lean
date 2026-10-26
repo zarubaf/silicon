@@ -910,7 +910,7 @@ family with the name of the binder is the ordinary `S002`.
 #guard match run "fn f(x: Nat) -> Nat { return @field(x, 0); }" with
   | .ok items => match items[0]? with
     | some (Resolve.Item.fn _ _ _ _ _
-        [.ret _ (some (.atField _ (.name _ "x" (.local _)) (.num _ 0)))]) => true
+        [.ret _ (some (.builtin (.atField _ (.name _ "x" (.local _)) (.num _ 0))))]) => true
     | _ => false
   | .error _ => false
 
@@ -919,7 +919,8 @@ family with the name of the binder is the ordinary `S002`.
 #guard fails (fnBody "let t = @typeInfo(Q);\nreturn p;") .S003 2 19
 #guard match run "fn f(x: Nat) -> Nat { return @typeInfo(Nat); }" with
   | .ok items => match items[0]? with
-    | some (Resolve.Item.fn _ _ _ _ _ [.ret _ (some (.typeInfo _ (.name _ "Nat" _)))]) => true
+    | some (Resolve.Item.fn _ _ _ _ _
+        [.ret _ (some (.builtin (.typeInfo _ (.name _ "Nat" _))))]) => true
     | _ => false
   | .error _ => false
 
@@ -933,7 +934,7 @@ type node holds the resolved builtin.
 #guard match run "fn f(x: Nat) -> @TypeOf(x) { return @Struct(x); }" with
   | .ok items => match items[0]? with
     | some (Resolve.Item.fn _ _ _ _ (.builtin (.typeOf _ (.name _ "x" (.local _))))
-        [.ret _ (some (.atStruct _ (.name _ "x" (.local _))))]) => true
+        [.ret _ (some (.builtin (.atStruct _ (.name _ "x" (.local _)))))]) => true
     | _ => false
   | .error _ => false
 

@@ -3016,8 +3016,9 @@ mutual
           let t ← enumUse n p i
           let vs ← operands n xs fun _ o => pure o.value
           return some ⟨← variantOf p t j vs, false, none⟩
-        | .typeOf p x => return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
-        | .typeInfo p x => do
+        | .builtin (.typeOf p x) =>
+          return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
+        | .builtin (.typeInfo p x) => do
           -- Steps 2 to 4 of the `@typeInfo` order (section 6.2): the argument under the guard
           -- `arg` and its record, its kind, then the use of `TypeInfo`.
           let r : ArgRec := if (chain x).isSome then .place else .node
@@ -3027,8 +3028,8 @@ mutual
           let ti ← spec n p (Resolve.typeInfoIndex (← read).items.size) []
           return some ⟨.static (← typeInfo p ti t), false, none⟩
         -- TODO(#381): evaluate `@Struct` (section 9.3).
-        | .atStruct p _ => fail .S004 p "a builtin is not supported yet"
-        | .atField p b k => do
+        | .builtin (.atStruct p _) => fail .S004 p "a builtin is not supported yet"
+        | .builtin (.atField p b k) => do
           let o ← need b (← onPlace place (eval n b))
           let c ← changesOf o
           hold o
@@ -3100,7 +3101,7 @@ mutual
         let qs ← params n ps
         fnTy p qs (← typeExpr n r)
       -- TODO(#381): evaluate a builtin in a type position (section 6.2, type position order).
-      | .builtin e => fail .S004 e.pos "a builtin is not supported yet"
+      | .builtin f => fail .S004 f.pos "a builtin is not supported yet"
   termination_by (b, 3)
 
   /-- The parameter types of a function type in their order, each with its `mut` mark. -/
@@ -3726,8 +3727,7 @@ mutual
     | .«match» _ x as => do
       scanExpr x
       for a in as do scanArm a
-    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => scanExpr x
-    | .atField _ b k => do scanExpr b; scanExpr k
+    | .builtin f => scanForm f
     | .num .. | .bool .. | .str .. | .name .. | .unit _ => pure ()
 
   def scanArm : Resolve.Arm → ScanM Unit
@@ -3746,7 +3746,11 @@ mutual
     | .fn _ ps r => do
       for q in ps do scanParam q
       scanType r
-    | .builtin e => scanExpr e
+    | .builtin f => scanForm f
+
+  def scanForm : Resolve.BuiltinForm → ScanM Unit
+    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => scanExpr x
+    | .atField _ b k => do scanExpr b; scanExpr k
 
   def scanParam : Resolve.FnParam → ScanM Unit
     | .mk _ t => scanType t
