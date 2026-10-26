@@ -2,10 +2,15 @@
 //! The list of the records of `diagnostic` (section 8.2), with the records of the early keys of
 //! the reads and places that wait for their walk (`mark_early` in `eval/place`).
 
+use super::super::{Res, Stop};
+use crate::Code;
+use parse::ast::Pos;
+
 /// The records in evaluation order. A key with a call can evaluate before the walk checks the
 /// steps before it. Lean checks those steps first, so the records of such a key are pending until
 /// its walk: the walk keeps the records of the keys whose steps passed, and it drops the others.
-/// A record that is kept is never taken back.
+/// A record that is kept is never taken back. An early key also uses fuel and can change other
+/// locals before the check, so the failed check must end the run (`finish`).
 #[derive(Default)]
 pub(in crate::eval) struct Records {
     kept: Vec<String>,
@@ -13,6 +18,9 @@ pub(in crate::eval) struct Records {
     /// The number of walks with early keys that have not ended. A walk can wait inside the key of
     /// another, so its records stay pending until the outermost one ends.
     open: usize,
+    /// The code and the position of the first failed check that dropped the records of an early
+    /// key.
+    dropped: Option<(Code, Pos)>,
 }
 
 impl Records {
@@ -36,11 +44,14 @@ impl Records {
     }
 
     /// The walk that `open` started ended. With `cut`, a step before an early key failed its
-    /// check, so the records from the mark `cut` go: Lean never evaluated that key. The pending
-    /// records become kept when no walk is open any more.
-    pub(in crate::eval) fn close(&mut self, cut: Option<usize>) {
-        if let Some(mark) = cut {
+    /// check `failed`, so the records from the mark `cut` go: Lean never evaluated that key. The
+    /// pending records become kept when no walk is open any more.
+    pub(in crate::eval) fn close(&mut self, cut: Option<(usize, &Stop)>) {
+        if let Some((mark, failed)) = cut {
             self.pending.truncate(mark);
+            if let (None, Stop::Error(e)) = (self.dropped, failed) {
+                self.dropped = Some((e.code, e.pos));
+            }
         }
         self.open = self.open.saturating_sub(1);
         if self.open == 0 {
@@ -48,8 +59,31 @@ impl Records {
         }
     }
 
-    /// The kept records at the end of the run.
-    pub(in crate::eval) fn take(&mut self) -> Vec<String> {
+    /// The kept records at the end of the run with the result `outcome`. A check that dropped
+    /// the records of an early key ends the run with its error. A run that went on after it, for
+    /// example after an error that a later rule recovers from, would show the early key: its
+    /// fuel, its changes, or its records. The assertion then fails, and the early key must wait
+    /// for the check.
+    pub(in crate::eval) fn finish<T>(&mut self, outcome: &Res<T>) -> Vec<String> {
+        debug_assert!(
+            ended(self.dropped, outcome),
+            "a failed check after an early key did not end the run"
+        );
+        debug_assert!(
+            self.open == 0 && self.pending.is_empty(),
+            "a walk is still open"
+        );
         std::mem::take(&mut self.kept)
+    }
+}
+
+/// Whether the run with the result `outcome` ended at the failed check `dropped`, if one dropped
+/// the records of an early key.
+fn ended<T>(dropped: Option<(Code, Pos)>, outcome: &Res<T>) -> bool {
+    match dropped {
+        None => true,
+        Some((code, pos)) => {
+            matches!(outcome, Err(Stop::Error(e)) if e.code == code && e.pos == pos)
+        }
     }
 }

@@ -850,11 +850,14 @@ impl Evaluator<'_> {
         if keyed.early.is_empty() {
             return walked;
         }
-        let cut = walked
-            .is_err()
-            .then(|| keyed.early.iter().find(|(steps, _)| *steps > passed))
-            .flatten()
-            .map(|&(_, mark)| mark);
+        let cut = match &walked {
+            Err(e) => keyed
+                .early
+                .iter()
+                .find(|(steps, _)| *steps > passed)
+                .map(|&(_, mark)| (mark, e)),
+            Ok(_) => None,
+        };
         self.records.close(cut);
         walked
     }
