@@ -8,10 +8,13 @@
 #          first 48 characters of the text, or `<code> unscannable <file>` for an error site that
 #          builds its message in a helper.
 #   issue  the number of the issue that closes the gap, with no `#`.
+# A row with a closed placeholder needs a pin for each value of each placeholder. The `pin` line of
+# a missing value ends the row with the placeholder and the value: `pin | S010 Builtin as a type
+# {q}=@field | 405`. One line for the row alone excuses no value.
 # A line that starts with `#` is a comment. An entry with no issue, or for a row that is not in
 # the spec, is an error.
 #
-# A placeholder that a note of section 6.2 closes with `Values of `{p}`: ...` needs no line here.
+# A placeholder that a note of section 6.2 closes with `Values of `{p}`: ...` needs no `fix`, `lean`, or `rust` line for a value.
 # The rule expands the row over the values, and a hole of a front-end literal can stand for a value.
 #
 # Two modes. `cargo xtask check` (and `just check`) reports every finding of the rule as a
@@ -19,6 +22,11 @@
 # line. So the `docs` commit that adds a row can pass before the `test` commit that adds its lines.
 # `cargo xtask spec-texts --strict`, which `just ci` runs, makes every finding an error: add or
 # remove the lines in a `test` commit.
+pin | S011 Static handle type {s}=a key of `@TypeOf` | 354
+pin | S011 Static handle type {s}=a key of `@ports` | 354
+pin | S011 Static handle type {s}=a key of `@field` | 354
+pin | S011 Handle at a static position {s}=a const | 354
+pin | S011 Domain at a static position {s}=a const | 354
 lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
 lean | S010 Memory as data | 314
