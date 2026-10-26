@@ -425,6 +425,28 @@ fn value_depth(t: &STy) -> u32 {
     }
 }
 
+/// `@TypeOf` takes a place. A `let` of a type is a type value, so no
+/// program applies `@TypeOf` to the name of one (spec 9.3).
+#[test]
+fn no_type_of_takes_the_name_of_a_type_let() {
+    const TAPES: usize = 4000;
+    let mut lets = 0;
+    for tape in tapes(TAPES) {
+        let Ok(p) = build(tape) else { continue };
+        let text = p.text();
+        for s in stmts_of(&p.items) {
+            if let Stmt::TypeLet(name, _) = s {
+                lets += 1;
+                assert!(
+                    !text.contains(&format!("@TypeOf({name})")),
+                    "@TypeOf takes the type let {name}:\n{text}"
+                );
+            }
+        }
+    }
+    assert!(lets > 0, "no tape binds a type");
+}
+
 /// The depth draw of the budget mode is `1..=8`. At least half of 256
 /// programs hold a container with a depth of at least 2, so the draw
 /// reaches the depth of a value (spec 5.5).
