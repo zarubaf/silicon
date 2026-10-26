@@ -129,12 +129,13 @@ def doubling : Nat → Value
 
 /-! A struct type and a record: `struct Packet(comptime W: Nat) { a: UInt[W], b: Bool }`. -/
 def packet (w : Nat) : Ty :=
-  .struct w "Packet" #[.int w] (Meta.struct [Meta.finite w, Meta.bool] [1])
+  .struct w "Packet" #[.int w] (Meta.struct [Meta.finite w, Meta.bool] [1]) .user
 
-def empty : Ty := .struct 100 "Empty" #[] (Meta.struct [] [])
+def empty : Ty := .struct 100 "Empty" #[] (Meta.struct [] []) .user
 
 /-! `struct Wrap(comptime T: Type) {}` at `T = [[Bool; 1]; 1]`. -/
 def wrap : Ty := .struct 101 "Wrap" #[.type (.array (.array .bool 1) 1)] (Meta.struct [] [3])
+  .user
 
 /-! The forms of section 7.1 for types and records. -/
 #guard (Value.type .type).serialize == "(type type)"
@@ -203,8 +204,9 @@ A chain of structs that doubles at each step: `S(k+1) { a: S(k), b: S(k) }`. The
 exponentially, but each struct stores its numbers, so the metadata and the size stay cheap.
 -/
 def chain : Nat → Ty
-  | 0 => .struct 1000 "S0" #[] (Meta.struct [Meta.finite 1] [])
-  | k + 1 => let t := chain k; .struct (1001 + k) s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] [])
+  | 0 => .struct 1000 "S0" #[] (Meta.struct [Meta.finite 1] []) .user
+  | k + 1 =>
+    let t := chain k; .struct (1001 + k) s!"S{k + 1}" #[] (Meta.struct [t.info, t.info] []) .user
 
 #guard (chain 200).info == ⟨2 ^ 200, 2 ^ 200, 3 * 2 ^ 200 - 1, 202, true, false, false, false⟩
 #guard (chain 200).size == 1
@@ -315,11 +317,11 @@ sets the function flag.
 #guard !(Ty.array (.list .string) 2).info.funcs
 #guard !(packet 8).info.funcs
 #guard !(chain 200).info.funcs
-#guard (Ty.struct 102 "Holder" #[] (Meta.struct [pred.info] [])).info.funcs
-#guard (Ty.list (.struct 102 "Holder" #[] (Meta.struct [pred.info] []))).info.funcs
+#guard (Ty.struct 102 "Holder" #[] (Meta.struct [pred.info] []) .user).info.funcs
+#guard (Ty.list (.struct 102 "Holder" #[] (Meta.struct [pred.info] []) .user)).info.funcs
 
 /-! The function flag of a struct comes from its field types, not from its static arguments. -/
-#guard !(Ty.struct 103 "Tag" #[.type pred] (Meta.struct [] [pred.depth])).info.funcs
+#guard !(Ty.struct 103 "Tag" #[.type pred] (Meta.struct [] [pred.depth]) .user).info.funcs
 
 /-! Equality of function types compares the parameter types, the `mut` marks, and the result. -/
 #guard incTy == .fn #[.mk true (.uint 8), .mk false .bool] .unit
@@ -392,7 +394,7 @@ def flag : Ty := .enum 8 "Flag" (Meta.enum 1 0)
 #guard op.same (.enum 7 "Other" (Meta.enum 2 9)) && !op.same flag
 #guard (Ty.array op 4).info.enums && (Ty.tuple #[.bool, op]).info.enums
 #guard (Ty.list op).info.enums && (Ty.fn #[.mk false op] .bool).info.enums
-#guard (Ty.struct 9 "H" #[] (Meta.struct [op.info] [])).info.enums
+#guard (Ty.struct 9 "H" #[] (Meta.struct [op.info] []) .user).info.enums
 #guard !(packet 8).info.enums && !(Ty.array (.list .bool) 2).info.enums
 #guard (Value.enum op 2 1 8 3).serialize == "(enum (enum root Op ()) 1 (uint 8 3))"
 #guard (Value.enum flag 1 0 0 0).serialize == "(enum (enum root Flag ()) 0)"
@@ -489,9 +491,9 @@ def huge : Nat → Ty
 A user struct or enum with a prelude type name prints as `crate::X` at each depth (section 5.6).
 A prelude struct keeps its source form. The cut at the bound applies to the text with the marker.
 -/
-def userBool : Ty := .struct 102 "Bool" #[] (Meta.struct [Meta.finite 1] [])
+def userBool : Ty := .struct 102 "Bool" #[] (Meta.struct [Meta.finite 1] []) .user
 #guard userBool.text == "crate::Bool"
-#guard (Ty.struct 103 "Reg" #[.int 3] (Meta.struct [] [1])).text == "crate::Reg[3]"
+#guard (Ty.struct 103 "Reg" #[.int 3] (Meta.struct [] [1]) .user).text == "crate::Reg[3]"
 #guard (Ty.enum 4 "PortKey" Meta.bool).text == "crate::PortKey"
 #guard (Ty.array (.list userBool) 4).text == "[List[crate::Bool]; 4]"
 #guard (Ty.tuple #[.bool, userBool]).text == "(Bool, crate::Bool)"
@@ -499,7 +501,7 @@ def userBool : Ty := .struct 102 "Bool" #[] (Meta.struct [Meta.finite 1] [])
 #guard (Ty.struct 5 "PortKey" #[] (Meta.struct [] []) .prelude).text == "PortKey"
 #guard (Ty.struct 0 "ReadResponse" #[.type (.uint 8)] (Meta.struct [] [1]) .prelude).text ==
   "ReadResponse[UInt[8]]"
-#guard (Ty.struct 104 "Packet2" #[] (Meta.struct [] [])).text == "Packet2"
+#guard (Ty.struct 104 "Packet2" #[] (Meta.struct [] []) .user).text == "Packet2"
 #guard boundText (userBool.put (String.ofList (List.replicate 1020 'a'))) ==
   String.ofList (List.replicate 1020 'a') ++ "crat..."
 #guard boundText (userBool.put (String.ofList (List.replicate 1030 'a'))) ==
@@ -528,15 +530,16 @@ example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
 #guard (Value.tuple (Array.replicate 3000 (.tuple #[.uint 8 0, .bool true]))).text.utf8ByteSize
   == 1027
 def named (n : Nat) : Ty := .struct 0 "S" #[.str (String.ofList (List.replicate n 'a'))] Meta.static
+  .user
 #guard (named 1019).text == "S[\"" ++ String.ofList (List.replicate 1019 'a') ++ "\"]"
 #guard (named 1020).text == "S[\"" ++ String.ofList (List.replicate 1020 'a') ++ "\"..."
 #guard (huge 64).text.utf8ByteSize == 1027 && (huge 64).text.endsWith "(((Bool, Bo..."
 #guard (Value.tuple (Array.replicate 1000 (.uint 8 0))).text.utf8ByteSize == 1027
 #guard (Value.str (String.ofList (List.replicate 5000 'é'))).literal.utf8ByteSize == 1026
-#guard (Ty.struct 0 "S" #[.str (String.ofList (List.replicate 5000 'é'))] Meta.static).text ==
+#guard (Ty.struct 0 "S" #[.str (String.ofList (List.replicate 5000 'é'))] Meta.static .user).text ==
   "S[\"" ++ String.ofList (List.replicate 510 'é') ++ "..."
 #guard (Ty.array .bool (2 ^ 256)).text == "[Bool; an integer of 257 bits]"
-#guard (Ty.struct 0 "P" #[.int (-(2 ^ 300))] Meta.static).text ==
+#guard (Ty.struct 0 "P" #[.int (-(2 ^ 300))] Meta.static .user).text ==
   "P[a negative integer of 301 bits]"
 #guard (Value.enum (.enum 0 "E" (Meta.enum 300 0)) 300 (2 ^ 299) 0 0).literal ==
   "an integer of 300 bits"
@@ -548,8 +551,7 @@ one field `a` of type `UInt[8]` thus gives the size 5 (section 5.4). A name coun
 not bytes. Its depth is 1 plus the largest depth of a field type, and 1 without fields.
 -/
 def gen (k : Nat) (fs : List (String × Ty)) : Ty :=
-  .struct k "" (fs.flatMap fun (x, t) => [Value.str x, .type t]).toArray
-    (Meta.struct (fs.map (·.2.info)) []) .gen
+  .struct k "" #[] (Meta.struct (fs.map (·.2.info)) []) (.gen fs)
 #guard (gen 0 [("a", .uint 8)]).size == 5
 #guard (gen 0 [("a", .uint 8), ("bc", .bool)]).size == 9
 #guard (gen 0 [("é", .bool)]).size == 4
@@ -573,7 +575,7 @@ without fields (section 7.1). A record of it keeps the type, as a record of a st
   == "(record (gstruct ((\"a\" (uint 8)) (\"b\" bool))) ((uint 8 3) (bool false)))"
 #guard (gen 0 [("a\"", .bool)]).serialize == "(gstruct ((\"a\\\"\" bool)))"
 #guard (gen 3 [("a", .bool)]).serialize != (Ty.struct 3 "" #[.str "a", .type .bool]
-  (Meta.struct [Meta.bool] [])).serialize
+  (Meta.struct [Meta.bool] []) .user).serialize
 
 /-!
 A message prints a generated record type as `@Struct { a: UInt[8], b: Bool }`, and as
@@ -596,9 +598,9 @@ def wideGen (n : Nat) : Ty := gen 0 ((List.range n).map fun k => (s!"f{k}", .uin
 #guard (wideGen 3).text == "@Struct { f0: UInt[8], f1: UInt[8], f2: UInt[8] }"
 #guard (gen 0 ((List.range 30).map fun k => (longName 60 ++ toString k, .bool))).text.utf8ByteSize
   == 1027
-example (o : String) (h : textLimit < o.utf8ByteSize) (xs : List Value) :
-    Value.putGen o xs = o := by
-  unfold Value.putGen; simp [h]
+example (o : String) (h : textLimit < o.utf8ByteSize) (fs : List (String × Ty)) :
+    Origin.putAll o fs = o := by
+  unfold Origin.putAll; simp [h]
 
 /-!
 A generated record type compares by its number, as a struct type does. A struct type with the
@@ -607,5 +609,6 @@ same number and arguments but another origin is another type.
 #guard (gen 0 [("a", .bool)]).same (gen 0 [("a", .bool)])
 #guard !(gen 0 [("a", .bool)]).same (gen 1 [("a", .bool)])
 #guard gen 3 [("a", .bool)] != Ty.struct 3 "" #[.str "a", .type .bool] (Meta.struct [Meta.bool] [])
+  .user
 
 end Silicon.Source.Test.Value

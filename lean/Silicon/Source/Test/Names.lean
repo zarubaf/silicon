@@ -154,7 +154,7 @@ A module argument of a generated record type has the digest form, because its se
 holds each name and field type (section 7.1).
 -/
 def genArg : Value :=
-  .type (.struct 0 "" #[.str "a", .type (.uint 8)] (Meta.struct [Meta.finite 8] []) .gen)
+  .type (.struct 0 "" #[] (Meta.struct [Meta.finite 8] []) (.gen [("a", .uint 8)]))
 #guard encode (moduleName sha16 (id "M" [genArg])) ==
   "M$0h" ++ sha16 "(instantiation root M ((type (gstruct ((\"a\" (uint 8)))))))"
 

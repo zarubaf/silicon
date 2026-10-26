@@ -42,7 +42,8 @@ These rules settle the open points of the spec:
 - A prelude struct has the token `prelude` in the place of `root`:
   `(struct prelude ReadResponse ((type (uint 8))))` or `(struct prelude PortKey ())`. A user
   struct with the same name thus has another serialization.
-- A generated record type (origin `gen`) serializes each name and field type in order:
+- A generated record type (origin `gen`) holds the name and the type of each field in its
+  origin, and no arguments. It serializes each name and field type in order:
   `(gstruct (("a" (uint 8)) ("b" bool)))`, and `(gstruct ())` without fields. Its identity is
   structural, so its size is 1 plus the size of each name as a string and of each field type.
   Its depth is 1 plus the largest depth of a field type. A message prints it as
@@ -86,16 +87,6 @@ structure Meta where
   handles : Bool
   deriving Repr, DecidableEq, BEq, Inhabited
 
-/-!
-The origin of a struct type (section 5.6): a struct item (`user`), a prelude struct
-(`prelude`), or a generated record type of `@Struct` (`gen`).
--/
-inductive Origin where
-  | user
-  | prelude
-  | gen
-  deriving Repr, DecidableEq, Inhabited
-
 mutual
   /--
   A type as a static value. Its forms are the scalar types of slice 1 with a static width and
@@ -103,9 +94,8 @@ mutual
   tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
   entry in the table of specializations, its item, its static arguments, its metadata, and its
   origin. The origin `prelude` marks a prelude struct (section 7.1). A generated record type
-  has the origin `gen`, no item, and the name and the type of each field as its arguments, in
-  the order `[name, type, ...]` (`Eval.genArgs`). An enum type is the
-  index of its item, its name, and its metadata.
+  has the origin `gen` with the name and the type of each field in order, no item, and no
+  arguments. An enum type is the index of its item, its name, and its metadata.
   `String` and `List[T]` are static types only. A function type is its parameter types with
   their `mut` marks, and its result type. The handle types `Reg[T]`, `Wire[T]`, `Input[T]`,
   `Mem[T, N]`, and `Instance[M, args]` are static types too (section 5.1). An instance type is
@@ -119,8 +109,7 @@ mutual
     | type
     | array (elem : Ty) (len : Nat)
     | tuple (elems : Array Ty)
-    | struct (spec : Nat) (item : String) (args : Array Value) (info : Meta)
-        (origin : Origin := .user)
+    | struct (spec : Nat) (item : String) (args : Array Value) (info : Meta) (origin : Origin)
     | string
     | list (elem : Ty)
     | fn (params : Array TyParam) (ret : Ty)
@@ -130,6 +119,16 @@ mutual
     | input (data : Ty)
     | mem (word : Ty) (depth : Nat)
     | inst (item : Nat) (name : String) (args : Array Value)
+
+  /--
+  The origin of a struct type (section 5.6): a struct item (`user`), a prelude struct
+  (`prelude`), or a generated record type of `@Struct` (`gen`). The origin `gen` holds the name
+  and the type of each field, in order.
+  -/
+  inductive Origin where
+    | user
+    | prelude
+    | gen (fields : List (String × Ty))
 
   /-- A parameter type of a function type, with its `mut` mark. -/
   inductive TyParam where
@@ -159,7 +158,7 @@ mutual
         (payload : Core.Semantics.Value p)
 end
 
-deriving instance Repr for Ty, TyParam, Value
+deriving instance Repr for Ty, TyParam, Value, Origin
 
 instance : Inhabited Ty := ⟨.unit⟩
 instance : Inhabited Value := ⟨.unit⟩
@@ -174,7 +173,7 @@ mutual
     | .list s, .list t => Ty.beq s t
     | .tuple ⟨xs⟩, .tuple ⟨ys⟩ => Ty.beqs xs ys
     | .struct a i ⟨xs⟩ m e, .struct b j ⟨ys⟩ n f =>
-      a == b && i == j && Value.beqs xs ys && decide (m = n) && e == f
+      a == b && i == j && Value.beqs xs ys && decide (m = n) && Origin.beq e f
     | .fn ⟨ps⟩ r, .fn ⟨qs⟩ s => TyParam.beqs ps qs && Ty.beq r s
     | .enum a i m, .enum b j n => a == b && i == j && decide (m = n)
     | .reg s, .reg t | .wire s, .wire t | .input s, .input t => Ty.beq s t
@@ -190,6 +189,16 @@ mutual
   def TyParam.beqs : List TyParam → List TyParam → Bool
     | [], [] => true
     | .mk m s :: ps, .mk n t :: qs => m == n && Ty.beq s t && TyParam.beqs ps qs
+    | _, _ => false
+
+  def Origin.beq : Origin → Origin → Bool
+    | .user, .user | .prelude, .prelude => true
+    | .gen fs, .gen gs => Origin.beqs fs gs
+    | _, _ => false
+
+  def Origin.beqs : List (String × Ty) → List (String × Ty) → Bool
+    | [], [] => true
+    | (x, s) :: fs, (y, t) :: gs => x == y && Ty.beq s t && Origin.beqs fs gs
     | _, _ => false
 
   def Value.beq : Value → Value → Bool
@@ -235,7 +244,8 @@ mutual
       rcases b with _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨ys⟩⟩ | ⟨_, _, ⟨ys⟩, _, _⟩ | _ | _ | _ | _
         | _ | _ | _ | _ | ⟨_, _, ⟨ys⟩⟩ <;>
         simp [Ty.beq] at h ⊢
-      exact ⟨h.1.1.1.1, h.1.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.1.2], h.1.2, h.2⟩
+      exact ⟨h.1.1.1.1, h.1.1.1.2, by rw [Value.eqs_of_beqs _ _ h.1.1.2], h.1.2,
+        Origin.eq_of_beq _ _ h.2⟩
     | .fn ⟨ps⟩ _, b, h => by
       rcases b with _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | _ | ⟨⟨qs⟩, _⟩ | _
         | _ | _ | _ | _ | _ <;>
@@ -266,6 +276,18 @@ mutual
     | .mk _ _ :: ps, qs, h => by
       rcases qs with _ | ⟨⟨_, _⟩, qs⟩ <;> simp [TyParam.beqs] at h ⊢
       exact ⟨⟨h.1.1, Ty.eq_of_beq _ _ h.1.2⟩, TyParam.eqs_of_beqs _ _ h.2⟩
+
+  theorem Origin.eq_of_beq : ∀ a b : Origin, a.beq b = true → a = b
+    | .user, b, h | .prelude, b, h => by cases b <;> simp_all [Origin.beq]
+    | .gen fs, b, h => by
+      cases b <;> simp [Origin.beq] at h ⊢
+      exact Origin.eqs_of_beqs _ _ h
+
+  theorem Origin.eqs_of_beqs : ∀ fs gs : List (String × Ty), Origin.beqs fs gs = true → fs = gs
+    | [], gs, h => by cases gs <;> simp_all [Origin.beqs]
+    | (_, _) :: fs, gs, h => by
+      rcases gs with _ | ⟨⟨_, _⟩, gs⟩ <;> simp [Origin.beqs] at h ⊢
+      exact ⟨⟨h.1.1, Ty.eq_of_beq _ _ h.1.2⟩, Origin.eqs_of_beqs _ _ h.2⟩
 
   theorem Value.eq_of_beq : ∀ a b : Value, a.beq b = true → a = b
     | .int _, b, h | .bool _, b, h | .str _, b, h | .unit, b, h => by
@@ -309,7 +331,7 @@ mutual
     | .bool | .nat | .int | .unit | .type | .uint _ | .sint _ | .string => by simp [Ty.beq]
     | .array s _ | .list s => by simp [Ty.beq, Ty.beq_self s]
     | .tuple ⟨xs⟩ => by simp [Ty.beq, Ty.beqs_self xs]
-    | .struct _ _ ⟨xs⟩ _ _ => by simp [Ty.beq, Value.beqs_self xs]
+    | .struct _ _ ⟨xs⟩ _ o => by simp [Ty.beq, Value.beqs_self xs, Origin.beq_self o]
     | .fn ⟨ps⟩ r => by simp [Ty.beq, TyParam.beqs_self ps, Ty.beq_self r]
     | .enum .. => by simp [Ty.beq]
     | .reg s | .wire s | .input s | .mem s _ => by simp [Ty.beq, Ty.beq_self s]
@@ -322,6 +344,14 @@ mutual
   theorem TyParam.beqs_self : ∀ ps : List TyParam, TyParam.beqs ps ps = true
     | [] => by simp [TyParam.beqs]
     | .mk _ t :: ps => by simp [TyParam.beqs, Ty.beq_self t, TyParam.beqs_self ps]
+
+  theorem Origin.beq_self : ∀ o : Origin, o.beq o = true
+    | .user | .prelude => by simp [Origin.beq]
+    | .gen fs => by simp [Origin.beq, Origin.beqs_self fs]
+
+  theorem Origin.beqs_self : ∀ fs : List (String × Ty), Origin.beqs fs fs = true
+    | [] => by simp [Origin.beqs]
+    | (_, t) :: fs => by simp [Origin.beqs, Ty.beq_self t, Origin.beqs_self fs]
 
   theorem Value.beq_self : ∀ a : Value, a.beq a = true
     | .int _ | .bool _ | .str _ | .uint .. | .sint .. | .unit => by simp [Value.beq]
@@ -412,6 +442,16 @@ mutual
     | _, [] => .gt
     | x :: xs, y :: ys => (Value.cmp x y).then (Value.cmps xs ys)
 end
+
+/-!
+An order of the field lists of generated record types: by the name, then by the type of each
+field, in order. It is the key order of their table (section 5.6).
+-/
+def Origin.cmps : List (String × Ty) → List (String × Ty) → Ordering
+  | [], [] => .eq
+  | [], _ => .lt
+  | _, [] => .gt
+  | (x, s) :: fs, (y, t) :: gs => ((compare x y).then (Ty.cmp s t)).then (Origin.cmps fs gs)
 
 /-!
 The equality of two types by their numbers. For the types of one evaluation it agrees with `=`,
@@ -596,7 +636,7 @@ mutual
       Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
     | .struct _ i ⟨xs⟩ _ .prelude =>
       Print.node "struct" ["prelude", i, Print.list (Value.serializeAll xs)]
-    | .struct _ _ ⟨xs⟩ _ .gen => Print.node "gstruct" [Print.list (Value.serializeGen xs)]
+    | .struct _ _ _ _ (.gen fs) => Print.node "gstruct" [Print.list (Origin.serializeAll fs)]
     | .string => "string"
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
@@ -637,13 +677,10 @@ mutual
     | [] => []
     | x :: xs => x.serialize :: Value.serializeAll xs
 
-  /--
-  The fields of a generated record type from its arguments: `("a" (uint 8))` for each name and
-  field type. Its arguments are always such pairs.
-  -/
-  def Value.serializeGen : List Value → List String
-    | .str x :: .type t :: xs => Print.list [Print.quote x, t.serialize] :: Value.serializeGen xs
-    | _ => []
+  /-- The fields of a generated record type: `("a" (uint 8))` for each name and field type. -/
+  def Origin.serializeAll : List (String × Ty) → List String
+    | [] => []
+    | (x, t) :: fs => Print.list [Print.quote x, t.serialize] :: Origin.serializeAll fs
 end
 
 /-!
@@ -664,6 +701,7 @@ mutual
     | .array t n => 1 + t.size + intSize n
     | .list t => 1 + t.size
     | .tuple ⟨ts⟩ => 1 + Ty.sizeAll ts
+    | .struct _ _ ⟨xs⟩ _ (.gen fs) => 1 + Value.sizeAll xs + Origin.sizeAll fs
     | .struct _ _ ⟨xs⟩ _ _ => 1 + Value.sizeAll xs
     | .fn ⟨ps⟩ r => 1 + TyParam.sizeAll ps + r.size
     | .enum .. => 1
@@ -678,6 +716,11 @@ mutual
   def TyParam.sizeAll : List TyParam → Nat
     | [] => 0
     | .mk m t :: ps => (if m then 1 else 0) + t.size + TyParam.sizeAll ps
+
+  /-- The fields of a generated record type: each name as a string and each field type. -/
+  def Origin.sizeAll : List (String × Ty) → Nat
+    | [] => 0
+    | (x, t) :: fs => 1 + x.length + t.size + Origin.sizeAll fs
 
   def Value.size : Value → Nat
     | .int n => intSize n
@@ -771,10 +814,10 @@ mutual
     | .array t n => t.put (o ++ "[") ++ s!"; {intText n}]"
     | .tuple ⟨[t]⟩ => t.put (o ++ "(") ++ ",)"
     | .tuple ⟨ts⟩ => Ty.putAll (o ++ "(") ts ++ ")"
-    | .struct _ _ ⟨[]⟩ _ .gen => o ++ "@Struct {}"
-    | .struct _ _ ⟨xs⟩ _ .gen => Value.putGen (o ++ "@Struct { ") xs ++ " }"
-    | .struct _ i ⟨[]⟩ _ p => o ++ itemText (p == .prelude) i
-    | .struct _ i ⟨xs⟩ _ p => Value.putAll (o ++ itemText (p == .prelude) i ++ "[") xs ++ "]"
+    | .struct _ _ _ _ (.gen []) => o ++ "@Struct {}"
+    | .struct _ _ _ _ (.gen fs) => Origin.putAll (o ++ "@Struct { ") fs ++ " }"
+    | .struct _ i ⟨[]⟩ _ p => o ++ itemText (p matches .prelude) i
+    | .struct _ i ⟨xs⟩ _ p => Value.putAll (o ++ itemText (p matches .prelude) i ++ "[") xs ++ "]"
     | .string => o ++ "String"
     | .list t => t.put (o ++ "List[") ++ "]"
     | .fn ⟨ps⟩ r => r.put (TyParam.putAll (o ++ "fn (") ps ++ ") -> ")
@@ -829,15 +872,15 @@ mutual
     | x :: xs => Value.putAll (x.put o ++ ", ") xs
 
   /--
-  The fields of a generated record type from its arguments: `a: UInt[8]` for each name and
-  field type, with `, ` between them. A name has the limit of a string (`strText`).
+  The fields of a generated record type: `a: UInt[8]` for each name and field type, with `, `
+  between them. A name has the limit of a string (`strText`).
   -/
-  def Value.putGen (o : String) (xs : List Value) : String :=
+  def Origin.putAll (o : String) (fs : List (String × Ty)) : String :=
     if textLimit < o.utf8ByteSize then o
-    else match xs with
-    | [.str x, .type t] => t.put (o ++ strText x ++ ": ")
-    | .str x :: .type t :: xs => Value.putGen (t.put (o ++ strText x ++ ": ") ++ ", ") xs
-    | _ => o
+    else match fs with
+    | [] => o
+    | [(x, t)] => t.put (o ++ strText x ++ ": ")
+    | (x, t) :: fs => Origin.putAll (t.put (o ++ strText x ++ ": ") ++ ", ") fs
 end
 
 /-! The text of a type in a message, at most `textLimit` bytes and `...`. -/

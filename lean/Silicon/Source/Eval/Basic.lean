@@ -72,26 +72,19 @@ The table of specializations. A struct type holds the number of its entry. `inde
 number of an entry by its key in logarithmic time (section 5.6). A comparison of two keys walks
 at most the smaller arguments, so the lookup stays in the charge of the arguments. `gens` is the
 table of generated record types. It finds the type of an entry by its field list in
-logarithmic time. The field list is the arguments of the type (`genArgs`). Its entries share
-the numbers of `entries`, so each struct type has one number. `enums` is the table of enums by
-their item, also in logarithmic time.
+logarithmic time (`Origin.cmps`). Its entries share the numbers of `entries`, so each struct
+type has one number. `enums` is the table of enums by their item, also in logarithmic time.
 -/
 structure Specs where
   entries : Array Spec := #[]
   index : Std.TreeMap (Nat × List Value) Nat Spec.cmp := {}
-  gens : Std.TreeMap (List Value) Ty Value.cmps := {}
+  gens : Std.TreeMap (List (String × Ty)) Ty Origin.cmps := {}
   enums : Std.TreeMap Nat EnumState compare := {}
 
 /-! The number and the entry of the struct item `i` with the static arguments `args`. -/
 def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec) := do
   let k ← s.index[(i, args)]?
   return (k, ← s.entries[k]?)
-
-/-!
-The arguments of a generated record type with the fields `fs`: the name and the type of each
-field, in order (section 5.4). They are the key of its entry in `Specs.gens`.
--/
-def genArgs (fs : List (String × Ty)) : List Value := fs.flatMap fun (x, t) => [.str x, .type t]
 
 /-!
 The generated record type of the fields `fs` with the member map `ms` (section 5.6). It is the
@@ -101,13 +94,12 @@ charges the work before the look-up.
 -/
 def Specs.generate (s : Specs) (fs : List (String × Ty)) (ms : Std.TreeMap Nat Nat compare) :
     Specs × Ty :=
-  let key := genArgs fs
-  match s.gens[key]? with
+  match s.gens[fs]? with
   | some t => (s, t)
   | none =>
-    let t := Ty.struct s.entries.size "" key.toArray (Meta.struct (fs.map (·.2.info)) []) .gen
+    let t := Ty.struct s.entries.size "" #[] (Meta.struct (fs.map (·.2.info)) []) (.gen fs)
     ({ s with entries := s.entries.push ⟨.gen ms, .done t fs.toArray⟩,
-              gens := s.gens.insert key t }, t)
+              gens := s.gens.insert fs t }, t)
 
 /-! The tag width and the payload width of the enum type `t`, from its done entry. -/
 def Specs.widths (s : Specs) : Ty → Option (Nat × Nat)
