@@ -29,6 +29,7 @@ method parse::ParsedExpr::depth
 method parse::ParsedExpr::expr
 method parse::ParsedExpr::into_parts
 method parse::ast::Builtin::name
+method parse::ast::Expr::builtin_operands
 method parse::ast::Expr::pos
 method parse::ast::Item::name
 method parse::ast::Nat::as_str
