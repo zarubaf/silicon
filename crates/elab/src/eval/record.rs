@@ -17,7 +17,7 @@ use crate::names::Sym;
 use crate::ops::{int_text, str_text};
 use crate::types::{PartNames, Ty, TyId};
 use crate::value::{Value, int_size, width_size};
-use parse::ast::{Expr, Ident, Item, Pos};
+use parse::ast::{Expr, Ident, Pos};
 
 /// A field name at a selection: its symbol, if the file or the run has one, and its text. A name
 /// that comes from a key has the limit of a string in a message (section 5.5), and a name of the
@@ -321,8 +321,9 @@ impl Evaluator<'_> {
 
     /// The number of the field with the symbol `y` and the name `name` among the parts `names` of
     /// a struct type. Each look-up of a field by its name reads the member map here and nowhere
-    /// else. No symbol is a name that the scan did not intern, and the top expression has no
-    /// symbols for its fields. It runs once, so a search by name stays within its size.
+    /// else. No symbol is a name that the scan did not intern. The top expression has no symbols
+    /// for its fields, so its name finds the symbol. It runs once, so a search by name stays
+    /// within its size.
     pub(super) fn field_number_by(
         &self,
         names: PartNames<'_>,
@@ -332,10 +333,7 @@ impl Evaluator<'_> {
         match (y, self.names) {
             (Some(sym), _) => names.number(&self.syms.struct_fields, sym),
             (None, Names::File) => None,
-            (None, Names::Top) => match self.file.ast().get(names.item()?)? {
-                Item::Struct { fields, .. } => fields.iter().position(|d| d.name.name == name),
-                _ => None,
-            },
+            (None, Names::Top) => names.number(&self.syms.struct_fields, self.syms.find(name)?),
         }
     }
 
