@@ -26,7 +26,7 @@ use num_bigint::BigInt;
 
 /// The most generated types of a program, and the most fields of one.
 const GENERATED: u32 = 2;
-const FIELDS: u32 = 3;
+const FIELDS: u32 = 4;
 /// A field name of this many characters is valid, and a message cuts it
 /// (#386).
 const LONG_NAME: usize = 70;
@@ -107,7 +107,7 @@ impl Builder {
     /// The fields of a new type: hardware data, or values.
     fn gen_fields(&mut self) -> Vec<(String, FieldTy)> {
         let hardware = self.tape.flag();
-        let count = self.tape.between(1, FIELDS);
+        let count = self.tape.between(2, FIELDS);
         (0..count)
             .map(|i| {
                 let name = if self.tape.below(16) == 0 {
@@ -401,12 +401,12 @@ impl Builder {
     ) -> bool {
         let other = self.gens.get(self.tape.index(self.gens.len())).cloned();
         let text = |t: &str| QExpr::Text(t.to_owned());
-        let (form, held) = match (self.tape.below(3), other) {
-            (0, Some(o)) => (
+        let (form, held) = match (self.tape.below(6), other) {
+            (0 | 1, Some(o)) => (
                 QExpr::Eq(Box::new(text(&g.def.name)), Box::new(text(&o.def.name))),
                 g.id == o.id,
             ),
-            (1, _) => (
+            (2 | 3, _) => (
                 QExpr::Eq(
                     Box::new(struct_of(fields_of(&g.def.name))),
                     Box::new(text(&g.def.name)),

@@ -610,6 +610,9 @@ struct Stats {
     query_widths: u32,
     query_types: u32,
     query_pairs: u32,
+    /// The reads of a type with 3 fields or more, or of a child with 3 ports
+    /// or more.
+    query_wide: u32,
     struct_groups: u32,
     query_mixes: u32,
     /// The kinds of the types that the groups reflect.
@@ -632,6 +635,7 @@ impl Stats {
         self.query_mixes = inner.query_mixes;
         self.query_types = inner.query_types;
         self.query_pairs = inner.query_pairs;
+        self.query_wide = inner.query_wide;
         self.query_kinds.clone_from(&inner.query_kinds);
         self.struct_groups = inner.struct_groups;
         self
