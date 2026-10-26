@@ -1252,7 +1252,8 @@ impl<'a> Walk<'a> {
         match t {
             Ty::UInt(w) | Ty::SInt(w) => self.width(w),
             Ty::Enum(name) => self.use_name(name),
-            Ty::Bool => {}
+            // A site inside the type would change what the query hides.
+            Ty::Bool | Ty::Query(..) => {}
         }
     }
 

@@ -663,6 +663,7 @@ impl Writer<'_> {
             Ty::UInt(w) => Ty::UInt(self.fold(w, fr)),
             Ty::SInt(w) => Ty::SInt(self.fold(w, fr)),
             Ty::Enum(name) => Ty::Enum(name.clone()),
+            Ty::Query(t, _) => self.ty(t, fr),
         }
     }
 

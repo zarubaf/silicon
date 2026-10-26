@@ -200,6 +200,20 @@ pub(crate) enum Ty {
     SInt(SExpr),
     /// An enum, by name. It has the two leaves `tag` and `payload`.
     Enum(String),
+    /// A type as a query spells it, `@TypeOf(x)`: the printer writes the
+    /// query, and the rest of the generator reads the type that the builder
+    /// drew (ADR 0032).
+    Query(Box<Ty>, QExpr),
+}
+
+impl Ty {
+    /// The type that the builder drew, without the query that spells it.
+    pub(crate) fn resolved(&self) -> &Ty {
+        match self {
+            Ty::Query(t, _) => t.resolved(),
+            t => t,
+        }
+    }
 }
 
 /// The type of a formal or a result of a helper.
@@ -1134,6 +1148,7 @@ fn ty(t: &Ty) -> String {
         Ty::UInt(w) => format!("UInt[{}]", sexpr(w)),
         Ty::SInt(w) => format!("SInt[{}]", sexpr(w)),
         Ty::Enum(name) => name.clone(),
+        Ty::Query(_, q) => qexpr(q),
     }
 }
 
