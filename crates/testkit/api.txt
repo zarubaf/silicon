@@ -16,6 +16,7 @@ fn testkit::source::agreed
 fn testkit::source::budget
 fn testkit::source::check
 fn testkit::source::compare_observe
+fn testkit::source::makes_records
 fn testkit::source::corpus
 fn testkit::source::elab
 fn testkit::source::parse
