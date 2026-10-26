@@ -49,8 +49,16 @@ impl Parser<'_> {
             ModuleKw => self.node(ModuleItem, Self::module_item),
             StructKw => self.node(StructItem, Self::struct_item),
             TypeKw => self.node(AliasItem, Self::alias_item),
-            ImportKw | PubKw | ExternKw => {
-                self.later_slice(self.offset(), "this item");
+            ImportKw => {
+                self.later_slice(self.offset(), "an import");
+                None
+            }
+            PubKw => {
+                self.later_slice(self.offset(), "`pub`");
+                None
+            }
+            ExternKw => {
+                self.later_slice(self.offset(), "an extern module");
                 None
             }
             EnumKw => self.node(EnumItem, Self::enum_item),
@@ -120,7 +128,7 @@ impl Parser<'_> {
             self.domains_clause()?;
         }
         if self.is(ConformsKw) {
-            self.later_slice(self.offset(), "a contract");
+            self.later_slice(self.offset(), "a contract attachment");
             return None;
         }
         self.block()
@@ -229,7 +237,7 @@ impl Parser<'_> {
             while !p.is(RParen) {
                 // Only a name after the comma is a second domain.
                 if names == 1 && p.is(Ident) {
-                    p.later_slice(p.offset(), "a second clock domain");
+                    p.second_domain(p.offset());
                     return None;
                 }
                 p.expect(Ident, "a domain name")?;
