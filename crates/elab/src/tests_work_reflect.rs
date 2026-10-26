@@ -5,7 +5,7 @@
 //! same run without them. The tests count the steps of the walks and the bytes that they copy,
 //! and not the time.
 
-use crate::tests_work_handles::{Run, passing, run_with};
+use crate::tests_work_handles::{Run, passing, run, run_with};
 use std::fmt::Write;
 
 /// The key of the first run of this file. It keeps the fuel of each run unique.
@@ -276,5 +276,263 @@ fn w11_the_names_of_the_result_are_paid_by_their_length() {
         "the work {} for {} units",
         long.0,
         long.1
+    );
+}
+
+/// The module `M` with `n` lets of `@Struct(fs)` after the declarations `decls`.
+fn struct_module(decls: &str, fs: &str, n: usize) -> String {
+    let mut src = format!("{decls}module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n");
+    for k in 0..n {
+        writeln!(src, "    let t{k} = @Struct({fs});").unwrap();
+    }
+    src.push_str("    o := x;\n}\n");
+    src
+}
+
+/// The declarations of a constant `FS` with `f` fields named `n0`, `n1`, ... of the type `ty`.
+fn fields_decls(f: usize, ty: &str) -> String {
+    named_decls(f, "n", ty)
+}
+
+/// The declarations of a constant `FS` with `f` fields. The name of the field `i` is `prefix` and
+/// the number `i`.
+fn named_decls(f: usize, prefix: &str, ty: &str) -> String {
+    format!(
+        "comptime fn fields(comptime f: Nat) -> List[FieldInfo] {{\n    \
+         let mut l = list(FieldInfo);\n    \
+         comptime for i in 0..f {{ l.push(FieldInfo(\"{prefix}\" + str(i), {ty})); }}\n    \
+         return l;\n}}\nconst FS: List[FieldInfo] = fields({f});\n"
+    )
+}
+
+/// The run of `n` calls of `@Struct` with `f` fields.
+fn fields_run(f: usize, n: usize, key: u64) -> Run {
+    passing(
+        KEY + key,
+        1000,
+        &struct_module(&fields_decls(f, "Bool"), "FS", n),
+    )
+}
+
+/// W3. `@Struct` with `F` field names, `n` times. Each call inserts the `F` symbols into the
+/// member map of the new type, so a call takes `O(F log F)` compares of two symbols, and a map
+/// that compares each earlier symbol takes `F` times `F`. The count is that of the compares in the
+/// map, not of its calls.
+#[test]
+fn w3_the_member_map_of_a_struct_takes_log_compares() {
+    let n = 4;
+    let at = |f: usize, key: u64| {
+        let (more, fewer) = (fields_run(f, 2 * n, key), fields_run(f, n, key + 1));
+        (more.counts.mapped - fewer.counts.mapped) / n as u64
+    };
+    let (small, large) = (at(128, 60), at(256, 62));
+    let bound = |f: u64| 4 * f * u64::from(f.ilog2());
+    assert!(small > 0, "the map compared nothing");
+    assert!(small <= bound(128), "{small} compares for 128 names");
+    assert!(large <= bound(256), "{large} compares for 256 names");
+    assert!(
+        large <= 3 * small,
+        "{small} compares at F and {large} at 2F"
+    );
+}
+
+/// W4. A name of 2^20 characters that breaks the name rule at its last character. The name
+/// charges its size first, so the fuel that ends at that charge scans nothing. The rule scans the
+/// name once, and the error text names at most 64 characters of it, so no text copies the name.
+#[test]
+fn w4_a_long_invalid_name_is_scanned_once_after_its_charge() {
+    let len = 1usize << 20;
+    let name = format!("{}-", "a".repeat(len));
+    let src = struct_module("", &format!("[FieldInfo(\"{name}\", Bool)]"), 1);
+    let whole = run_with(920_000_000 + KEY + 70, 1000, &src);
+    let (code, text) = whole.error.clone().unwrap_or_default();
+    assert_eq!(code, "S022", "{text}");
+    assert!(
+        text.contains(&format!("({} characters)", len + 1)),
+        "{text}"
+    );
+    assert!(text.len() < 256, "{} bytes of text", text.len());
+    assert_eq!(
+        whole.counts.scanned,
+        len as u64 + 1,
+        "the name is scanned once"
+    );
+    assert!(
+        whole.counts.text_bytes <= 1024,
+        "{} bytes of text for the error",
+        whole.counts.text_bytes
+    );
+    // The charge of the name comes before its scan: the least fuel that reaches the name rule
+    // pays the charge, and the fuel one unit below it scans nothing.
+    let named = |r: &Run| r.error.as_ref().is_some_and(|e| e.0 == "S022");
+    let first = first_fuel(&src, (1, 100_000_000), named);
+    let below = run_with(first - 1, 1000, &src);
+    let (code, text) = below.error.unwrap_or_default();
+    assert_eq!(code, "S015", "{text}");
+    assert!(
+        text.contains(&format!("cannot pay {} unit(s)", len + 2)),
+        "the charge of the name: {text}"
+    );
+    assert_eq!(below.counts.scanned, 0, "a name scanned before its charge");
+}
+
+/// The run of two chains of `d` nested generated record types: each type holds the one before it,
+/// and the second chain repeats the first, so each of its types is a hit of the table.
+fn nest_run(d: usize, key: u64) -> Run {
+    let mut src = "module M() {\n    input x: UInt[8];\n    output o: UInt[8];\n".to_owned();
+    for chain in ["t", "u"] {
+        writeln!(src, "    let {chain}0 = @Struct([FieldInfo(\"a\", Bool)]);").unwrap();
+        for k in 1..d {
+            let before = k - 1;
+            writeln!(
+                src,
+                "    let {chain}{k} = @Struct([FieldInfo(\"a\", {chain}{before})]);"
+            )
+            .unwrap();
+        }
+    }
+    src.push_str("    o := x;\n}\n");
+    passing(KEY + key, 1000, &src)
+}
+
+/// W5. `@Struct` over a chain of `d` nested generated record types, then again over the same
+/// chain. The look-up of each type compares ids, so a level costs a constant number of steps, and
+/// the work doubles with `d`. The copy of a type value pays the size of its term, which grows with
+/// `d` times `d`, so the work leaves out the counter of the copies. A compare of the field types
+/// themselves walks the nest at each level.
+#[test]
+fn w5_a_nest_of_generated_types_compares_ids() {
+    let (small, large) = (nest_run(64, 72), nest_run(128, 73));
+    let work = |r: &Run| r.counts.total() - r.counts.copies;
+    let (a, b) = (work(&small), work(&large));
+    assert!(a < b && b <= 2 * a + 64, "the work {a} at d and {b} at 2d");
+    assert_eq!(small.counts.generated, 64);
+    assert_eq!(large.counts.generated, 128);
+    assert_eq!(small.counts.matched, 64, "one id compared for each hit");
+    assert_eq!(large.counts.matched, 128);
+}
+
+/// W6. `n` equal calls of `@Struct` make one entry of the table, and each call after the first
+/// compares the field list of the entry once. A call that does not look up the table makes `n`
+/// entries.
+#[test]
+fn w6_equal_calls_share_one_entry() {
+    let (fewer, more) = (fields_run(16, 1, 80), fields_run(16, 32, 81));
+    assert_eq!(fewer.counts.generated, 1);
+    assert_eq!(more.counts.generated, 1, "an entry for each call");
+    assert_eq!(
+        more.counts.matched,
+        31 * 16,
+        "one compare of F pairs for each hit"
+    );
+}
+
+/// The run of a module `C` with a parameter `t: Type` and the instance of `C` with the generated
+/// record type of `FS`.
+fn argument_run(decls: &str, key: u64) -> Run {
+    let src = format!(
+        "{decls}module C(comptime t: Type) {{\n    output o: Bool;\n    o := true;\n}}\n\
+         module M() {{\n    output o: Bool;\n    instance u = C(@Struct(FS));\n    o := u.o;\n}}\n"
+    );
+    passing(KEY + key, 1000, &src)
+}
+
+/// W8. A generated record type as the argument of a module has the digest form of its
+/// serialization. The serialization writes each name and each field type once, so its bytes stay
+/// within a constant times the units of the run, and they double with `F`.
+#[test]
+fn w8_the_serialization_of_a_module_argument_follows_its_charge() {
+    let at = |f: usize, key: u64| argument_run(&fields_decls(f, "UInt[8]"), key);
+    let (small, large) = (at(64, 90), at(128, 91));
+    let (a, b) = (small.counts.serialized, large.counts.serialized);
+    // A field writes its name in quotes, its type, and four more bytes: 17 bytes for `n12`.
+    assert!(a > 0 && b <= 2 * a + 64, "{a} bytes at F and {b} at 2F");
+    assert!(b <= 18 * 128, "{b} bytes for 128 fields");
+    assert!(4 * b <= large.used, "{b} bytes for {} units", large.used);
+}
+
+/// W7. The text of a generated record type with `F` field names of 200 characters in an error. The
+/// walk stops soon after the limit of the text, and each name is cut at 64 characters. So the
+/// bytes of text stay within a constant times the limit at any `F`. A text that renders every
+/// field and then cuts grows with `F` times the length of a name.
+#[test]
+fn w7_the_text_of_a_type_with_long_names_is_bounded() {
+    let at = |f: usize, key: u64| {
+        let decls = named_decls(f, &"a".repeat(200), "Bool");
+        let src = format!(
+            "{decls}module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    \
+             let t = @Struct(FS);\n    let y: UInt[8] = t();\n    o := x;\n}}\n"
+        );
+        let r = run(KEY + key, 1000, &src);
+        let (code, text) = r.error.clone().unwrap_or_default();
+        assert_eq!(code, "S010", "{text}");
+        assert!(text.contains("@Struct { aaaa"), "{text}");
+        assert!(text.len() <= 2 * 1024 + 64, "{} bytes of text", text.len());
+        r
+    };
+    let (few, many) = (at(16, 100), at(256, 101));
+    for r in [&few, &many] {
+        assert!(
+            r.counts.text_bytes <= 2 * 1024,
+            "{} bytes of text",
+            r.counts.text_bytes
+        );
+    }
+    assert!(
+        many.counts.text_bytes <= few.counts.text_bytes + 256,
+        "{} bytes at 16 fields, {} at 256",
+        few.counts.text_bytes,
+        many.counts.text_bytes
+    );
+}
+
+/// The run of `k` generated record types of `f` fields that differ in the last name, then `n`
+/// more calls of the first.
+fn lookup_run(f: usize, (k, n): (usize, usize), key: u64) -> Run {
+    let mut decls = String::new();
+    for j in 0..k {
+        let names: Vec<String> = (0..f)
+            .map(|i| {
+                let name = if i + 1 == f {
+                    format!("z{j}")
+                } else {
+                    format!("n{i}")
+                };
+                format!("FieldInfo(\"{name}\", Bool)")
+            })
+            .collect();
+        writeln!(
+            decls,
+            "const FS{j}: [FieldInfo; {f}] = [{}];",
+            names.join(", ")
+        )
+        .unwrap();
+    }
+    let mut src = format!("{decls}module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n");
+    for j in 0..k {
+        writeln!(src, "    let t{j} = @Struct(FS{j});").unwrap();
+    }
+    for m in 0..n {
+        writeln!(src, "    let u{m} = @Struct(FS0);").unwrap();
+    }
+    src.push_str("    o := x;\n}\n");
+    passing(KEY + key, 1000, &src)
+}
+
+/// W12. The look-up of a generated record type compares its field list with the entries of its
+/// fingerprint only. `K` types that differ in the last name of `F` fields make `K` misses with no
+/// compare, and each call that repeats one makes one compare of `F` pairs. A compare with every
+/// entry of the table costs `K` times `F` for a call.
+#[test]
+fn w12_the_lookup_compares_only_the_bucket_of_the_fingerprint() {
+    let f = 32;
+    let (k, n) = (24, 8);
+    let r = lookup_run(f, (k, n), 110);
+    assert_eq!(r.counts.generated, k as u64);
+    assert_eq!(
+        r.counts.matched,
+        (n * f) as u64,
+        "{} pairs for {n} hits of {f} pairs",
+        r.counts.matched
     );
 }
