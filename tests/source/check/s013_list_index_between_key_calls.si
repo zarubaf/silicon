@@ -1,4 +1,4 @@
-// S013: The read `l[0][one()][7][two()]` checks the range of `[7]` after `one()` evaluates and before `two()` evaluates. Only the value of a list gives its length, so the key `one()` evaluates before the walk checks the steps before it, and the failed check of `[7]` takes back the record of `two()` only.
+// S013: The read `l[0][one()][7][two()]` checks the range of `[7]` after `one()` evaluates and before `two()` evaluates. Only the value of a list gives its length, so the key `one()` evaluates before the walk checks the steps before it, and the failed check of `[7]` drops the pending record of `two()` only.
 // TOP M()
 // OBSERVE-COUNT-1: (string "one")
 // OBSERVE-NOT: (string "two")

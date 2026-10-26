@@ -1,4 +1,4 @@
-// S013: The place `n[3][one()][two()][spin()]` fails the range check of the first step `[3]`. Lean checks it before the keys `one()`, `two()`, and `spin()` evaluate. In Rust the keys evaluate early, and the failed check takes back their records. So no record stays, and the `S015` of `spin()` loses to the failed check.
+// S013: The place `n[3][one()][two()][spin()]` fails the range check of the first step `[3]`. Lean checks it before the keys `one()`, `two()`, and `spin()` evaluate. In Rust the keys evaluate early, their records wait for the walk, and the failed check drops them. So no record stays, and the `S015` of `spin()` loses to the failed check.
 // TOP M()
 // OBSERVE-NOT: (record
 fn one() -> Nat {
