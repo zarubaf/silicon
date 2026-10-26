@@ -1,50 +1,69 @@
 // SPDX-License-Identifier: Apache-2.0
-//! The queries `@TypeOf` and `@typeInfo` of a hardware name (front-end spec
-//! 9.3, ADR 0032).
+//! The queries `@TypeOf` and `@typeInfo` (front-end spec 9.3, ADR 0032).
 //!
-//! A query reads a name that the builder declared, so the builder knows the
-//! type and writes the static result as the value of the query node. Three
-//! forms use it:
+//! A query reads a name or a type that the builder drew, so the builder
+//! knows the answer and writes it as the value of the query node. The
+//! sources are the hardware names of the open frames (inputs, registers,
+//! wires, the ports of a child, the child itself), the static names (a
+//! parameter, a `const`, a static `let`, and the parts of a container), the
+//! functions, and type literals. The builder picks the kind of the type
+//! first, then a source of that kind, so that each kind is as likely as
+//! another. Three forms use a query:
 //!
-//! - a group, `let s0: Nat = @typeInfo(@TypeOf(w0)).width;` with a
+//! - a group, `let s0: Nat = @typeInfo(@TypeOf(z0)).width;` with a
 //!   `diagnostic` of the result;
-//! - a width, `wire w1: UInt[data_bits(@TypeOf(i0))];`, which a port or a
+//! - a width, `wire z1: UInt[data_bits(@TypeOf(i0))];`, which a port or a
 //!   vector then shows;
 //! - a mix of the low bit of a result into an output, so that the twin and
-//!   the run oracle see the value: `o0 := o1 ^ UInt[4](@typeInfo(@TypeOf(w0)).width & 1)`.
+//!   the run oracle see the value: `o0 := o1 ^ UInt[4](@typeInfo(@TypeOf(z0)).width & 1)`.
 //!
 //! Every draw comes from the query tape (`on_query`), which no other form
 //! reads, and the names that a query can read live in `Builder::ops`, which
-//! only this tape reads. A program with no query is thus the program of the
-//! other tapes alone.
+//! only this tape reads. One program in two has no query at all. A wire, a
+//! register, and a static `let` that only queries read have their own names
+//! (`z<n>`, `N<n>`), and a module takes them only if one of its queries was
+//! drawn. A program with no query text is thus the program of the other
+//! tapes alone.
 
 use super::hw::Want;
 use super::inst::Child;
 use super::reflect::{self, RTy};
-use super::{Builder, Built, Ctx, Lane, Names};
+use super::{Builder, Built, Ctx, Lane, Module, Names};
 use crate::eval::Value;
-use crate::program::{HBin, HExpr, QExpr, Query, SBin, SExpr, STy, Scalar, Stmt, Ty, Un, string};
+use crate::program::{
+    FnTy, HBin, HExpr, Place, QExpr, Query, SBin, SExpr, STy, Scalar, Stmt, Ty, Un, string,
+};
 use num_bigint::BigInt;
+use std::collections::BTreeSet;
 
-/// A name that a query can read: its text and the type that the builder
-/// drew for it.
+/// What a query reads: a place and the type that the builder drew for it
+/// (`@TypeOf(text)`), or a type literal (`text`).
 #[derive(Clone, Debug)]
 pub(super) struct Op {
     text: String,
     ty: RTy,
+    place: bool,
 }
 
 /// One statement of a frame in this many is followed by a group, and the
 /// most groups of a program.
-const GROUP_ODDS: u32 = 36;
-const MAX_GROUPS: u32 = 12;
+const GROUP_ODDS: u32 = 3;
+const MAX_GROUPS: u32 = 14;
+/// The most groups at the end of a module body.
+const TAIL: u32 = 3;
 /// A module mixes a query into its outputs in this many modules.
-const MIX_ODDS: u32 = 8;
+const MIX_ODDS: u32 = 3;
 /// A wire or a register takes a query as its width in this many.
 const WIDTH_ODDS: u32 = 1;
+/// The most steps of a place and of a type value.
+const STEPS: u32 = 3;
 
-/// The tags of the kinds that the operands have.
-const KINDS: [&str; 6] = ["bool", "uint", "sint", "reg", "wire", "input"];
+/// The tags of the kinds: the true tag of a type and another one make a
+/// test that holds and a test that fails.
+const KINDS: [&str; 19] = [
+    "bool", "uint", "sint", "unit", "array", "tuple", "record", "int", "nat", "string", "type",
+    "function", "list", "reg", "wire", "mem", "input", "instance", "enum",
+];
 
 /// `e` with the arguments `args` for the parameters `params`, or `None` for
 /// a form that a width of a port does not take.
@@ -81,6 +100,10 @@ fn read(base: QExpr, suffix: &str) -> QExpr {
     QExpr::Read(Box::new(base), suffix.to_owned())
 }
 
+fn is(base: QExpr, text: &str) -> QExpr {
+    QExpr::Eq(Box::new(base), Box::new(QExpr::Text(string(text))))
+}
+
 impl Builder {
     /// Runs `f` on the query tape, isolated from the other tapes.
     pub(super) fn on_query<T>(&mut self, f: impl FnOnce(&mut Builder) -> T) -> T {
@@ -94,6 +117,7 @@ impl Builder {
             self.ops.push(Op {
                 text: text.to_owned(),
                 ty,
+                place: true,
             });
         }
     }
@@ -120,6 +144,7 @@ impl Builder {
             };
             RTy::of(&t)
         };
+        self.add_op(&child.name, Some(RTy::Instance));
         for (q, t) in &child.sig.outputs {
             self.add_op(&format!("{}.{q}", child.name), outer(t));
         }
@@ -129,118 +154,408 @@ impl Builder {
         }
     }
 
-    /// A name of the pool. Half of the draws take a handle, if there is one,
-    /// because only a handle has an `element`.
-    fn pick_op(&mut self) -> Option<Op> {
-        let handles: Vec<&Op> = self
-            .ops
+    /// The places that the static names of the frame give. A parameter, a
+    /// `const`, and a static `let` have a declared type (spec 9.3). A loop
+    /// binder and a binder of a `match` have none, so they stay out. A step
+    /// stops at a list, which checks its length at run time, and at a
+    /// string, which has no element type.
+    fn static_ops(&mut self, ctx: &Ctx) -> Vec<Op> {
+        let mut out = Vec::new();
+        let names: Vec<(String, STy)> = ctx
+            .statics
             .iter()
-            .filter(|op| reflect::info(&op.ty).element.is_some())
+            .filter(|(n, _)| n.starts_with(['P', 'C', 's']))
+            .cloned()
             .collect();
-        let handle = self.tape.flag();
-        let at = self.tape.index(self.ops.len());
-        let pick = self.tape.index(handles.len());
-        match handles.get(pick) {
-            Some(op) if handle => Some((*op).clone()),
-            _ => self.ops.get(at).cloned(),
+        for (name, ty) in names {
+            self.chain(&name, &ty, STEPS, &mut out);
+        }
+        out
+    }
+
+    /// The place `text` of the declared type `ty`, and the places of its
+    /// parts, `levels` steps deep. A tuple gives each part, and an array
+    /// one.
+    fn chain(&mut self, text: &str, ty: &STy, levels: u32, out: &mut Vec<Op>) {
+        out.push(Op {
+            text: if self.tape.below(8) == 0 {
+                format!("({text})")
+            } else {
+                text.to_owned()
+            },
+            ty: RTy::from_static(ty),
+            place: true,
+        });
+        if levels == 0 {
+            return;
+        }
+        match ty {
+            STy::Tuple(ts) => {
+                for (k, t) in ts.iter().enumerate() {
+                    let step = self.step_key(text, &k.to_string(), false);
+                    self.chain(&step, t, levels - 1, out);
+                }
+            }
+            STy::Array(t, n) => {
+                let k = self.tape.index(*n as usize);
+                let step = self.step_key(text, &k.to_string(), true);
+                self.chain(&step, t, levels - 1, out);
+            }
+            STy::Record(r) => {
+                for (f, t) in &r.fields {
+                    let step = self.step_name(text, f);
+                    self.chain(&step, t, levels - 1, out);
+                }
+            }
+            _ => {}
         }
     }
 
-    /// The type value of `op`: `@TypeOf(x)`, or the `element` of that type
-    /// if it has one. With `data`, a handle gives its element.
-    fn type_value(&mut self, op: &Op, data: bool) -> (QExpr, RTy) {
-        let of = builtin("TypeOf", QExpr::Text(op.text.clone()));
-        let element = reflect::info(&op.ty).element;
-        if let Some(element) = element
-            && (data || self.tape.below(4) != 0)
-        {
-            let info = builtin("typeInfo", of);
-            return (read(info, ".element"), element);
+    /// The step `.k`, `[k]`, or `@field(base, k)` of a tuple or an array.
+    fn step_key(&mut self, base: &str, k: &str, array: bool) -> String {
+        match self.tape.below(3) {
+            0 => format!("@field({base}, {k})"),
+            _ if array => format!("{base}[{k}]"),
+            _ => format!("{base}.{k}"),
         }
-        (of, op.ty.clone())
+    }
+
+    /// The step `.f` or `@field(base, "f")` of a record.
+    fn step_name(&mut self, base: &str, f: &str) -> String {
+        if self.tape.below(3) == 0 {
+            format!("@field({base}, {})", string(f))
+        } else {
+            format!("{base}.{f}")
+        }
+    }
+
+    /// The type literals, and the roots that name no binding: a function,
+    /// and a type under `@TypeOf`.
+    fn root_ops(&mut self) -> Vec<Op> {
+        let width = self.tape.between(1, 16);
+        let len = self.tape.between(1, 4);
+        let literal = |text: String, ty: RTy| Op {
+            text,
+            ty,
+            place: false,
+        };
+        let data = RTy::UInt(int(width as usize));
+        let array = STy::Array(Box::new(STy::Int), len);
+        let list = STy::List(Box::new(STy::Nat));
+        let mut out = vec![
+            Op {
+                text: format!("UInt[{width}]"),
+                ty: RTy::Type,
+                place: true,
+            },
+            literal("Bool".to_owned(), RTy::Bool),
+            literal(format!("UInt[{width}]"), data.clone()),
+            literal(format!("SInt[{width}]"), RTy::SInt(int(width as usize))),
+            literal("Nat".to_owned(), RTy::Static(STy::Nat)),
+            literal("Int".to_owned(), RTy::Static(STy::Int)),
+            literal("String".to_owned(), RTy::Static(STy::Str)),
+            literal("Unit".to_owned(), RTy::Unit),
+            literal("Type".to_owned(), RTy::Type),
+            literal(array.text(), RTy::from_static(&array)),
+            literal(list.text(), RTy::from_static(&list)),
+            literal(
+                format!("Reg[UInt[{width}]]"),
+                RTy::Reg(Box::new(data.clone())),
+            ),
+            literal(
+                format!("Wire[UInt[{width}]]"),
+                RTy::Wire(Box::new(data.clone())),
+            ),
+            literal(
+                format!("Input[UInt[{width}]]"),
+                RTy::Input(Box::new(data.clone())),
+            ),
+            literal(
+                format!("Mem[UInt[{width}], {len}]"),
+                RTy::Mem(Box::new(data), len),
+            ),
+        ];
+        for f in &self.fns {
+            let params = f.params.iter().map(|(_, t)| (false, t.clone())).collect();
+            let ty = STy::Fn(Box::new(FnTy {
+                params,
+                ret: f.ret.clone(),
+            }));
+            out.push(Op {
+                text: f.name.clone(),
+                ty: RTy::from_static(&ty),
+                place: true,
+            });
+        }
+        for def in &self.enums {
+            out.push(literal(
+                def.name.clone(),
+                RTy::Static(STy::Enum(Box::new(def.clone()))),
+            ));
+        }
+        if let Some(record) = self.record_ty() {
+            out.push(literal(record.text(), RTy::from_static(&record)));
+        }
+        out
+    }
+
+    /// What a query reads: the kind comes first, so that each kind that the
+    /// frame can reflect is as likely as another; then a name of that kind.
+    fn source(&mut self, ctx: &Ctx) -> Option<Op> {
+        let mut pool: Vec<Op> = self.ops.clone();
+        pool.extend(self.static_ops(ctx));
+        pool.extend(self.root_ops());
+        let kinds: BTreeSet<&str> = pool.iter().map(|op| reflect::info(&op.ty).kind).collect();
+        // A tuple, a record, and an enum have names to read, so they count
+        // twice.
+        let kinds: Vec<&str> = kinds
+            .into_iter()
+            .flat_map(|k| {
+                let names = matches!(k, "tuple" | "record" | "enum");
+                std::iter::repeat_n(k, 1 + usize::from(names))
+            })
+            .collect();
+        let kind = *kinds.get(self.tape.index(kinds.len()))?;
+        let of_kind: Vec<Op> = pool
+            .into_iter()
+            .filter(|op| reflect::info(&op.ty).kind == kind)
+            .collect();
+        of_kind.get(self.tape.index(of_kind.len())).cloned()
+    }
+
+    /// The type value of `op`: `@TypeOf(x)` or the literal, and then steps
+    /// to the `element` or to the type of a field. With `data`, a handle
+    /// gives its element and nothing else.
+    fn type_value(&mut self, op: &Op, data: bool) -> (QExpr, RTy) {
+        let mut tq = if op.place {
+            builtin("TypeOf", QExpr::Text(op.text.clone()))
+        } else {
+            QExpr::Text(op.text.clone())
+        };
+        let mut t = op.ty.clone();
+        let (element, steps) = if data {
+            (t.handled().cloned(), 1)
+        } else {
+            (None, self.tape.below(STEPS))
+        };
+        if let Some(element) = element {
+            return (read(builtin("typeInfo", tq), ".element"), element);
+        }
+        if data {
+            return (tq, t);
+        }
+        for _ in 0..steps {
+            let info = reflect::info(&t);
+            let typed = builtin("typeInfo", tq.clone());
+            if !info.fields.is_empty() && self.tape.below(3) != 0 {
+                let i = self.tape.index(info.fields.len());
+                tq = read(typed, &format!(".fields[{i}].ty"));
+                t = info.fields[i].1.clone();
+            } else if info.element != RTy::Unit || self.tape.flag() {
+                tq = read(typed, ".element");
+                t = info.element;
+            }
+        }
+        (tq, t)
     }
 
     /// A numeric read of the type value `tq` of the drawn type `t`: the
-    /// query and its static result. A `varying` read is a width, which
-    /// differs between names, not a length that is mostly 0.
-    fn size(&mut self, tq: QExpr, t: &RTy, varying: bool) -> (QExpr, SExpr) {
+    /// query and its static result. A `varying` read is a width, a number of
+    /// bits, or a tag, which differ between names, not a length that is
+    /// mostly 0.
+    fn size(&mut self, tq: &QExpr, t: &RTy, varying: bool) -> (QExpr, SExpr) {
         let info = reflect::info(t);
-        let reads = |suffix| read(builtin("typeInfo", tq.clone()), suffix);
-        let pick = if varying {
-            2 + self.tape.below(2)
-        } else {
-            self.tape.below(4)
-        };
-        match pick {
-            0 => (reads(".length"), info.length),
-            1 => (
-                QExpr::Call("len", Box::new(reads(".fields"))),
-                int(info.fields),
-            ),
-            2 => match reflect::data_bits(t) {
-                Some(bits) => (QExpr::Call("data_bits", Box::new(tq)), bits),
-                None => (reads(".width"), info.width),
-            },
-            _ => (reads(".width"), info.width),
+        let typed = || builtin("typeInfo", tq.clone());
+        let nat = |n: usize| int(n);
+        let mut reads = Vec::new();
+        reads.push((read(typed(), ".width"), info.width.clone()));
+        if let Some(bits) = reflect::data_bits(t) {
+            reads.push((QExpr::Call("data_bits", Box::new(tq.clone())), bits));
         }
+        if !info.variants.is_empty() {
+            let i = self.tape.index(info.variants.len());
+            let tag = SExpr::Int(
+                BigInt::from(info.variants[i].1.clone()),
+                crate::program::Radix::Dec,
+            );
+            reads.push((read(typed(), &format!(".variants[{i}].tag")), tag));
+        }
+        if !varying {
+            reads.push((read(typed(), ".length"), info.length.clone()));
+            let fields = read(typed(), ".fields");
+            reads.push((QExpr::Call("len", Box::new(fields)), nat(info.fields.len())));
+            let variants = read(typed(), ".variants");
+            reads.push((
+                QExpr::Call("len", Box::new(variants)),
+                nat(info.variants.len()),
+            ));
+        }
+        let at = self.tape.index(reads.len());
+        reads.swap_remove(at)
     }
 
-    /// The `.kind` test of the type value `tq`: it holds for the true tag
+    /// A test of the type value `tq` of the drawn type `t`: the kind, or the
+    /// name of a field, or the name of a variant. It holds for the true text
     /// and fails for another one.
-    fn kind(&mut self, tq: QExpr, t: &RTy) -> (QExpr, SExpr) {
-        let truth = reflect::info(t).kind;
-        let tag = if self.tape.flag() {
-            truth
+    fn test(&mut self, tq: QExpr, t: &RTy) -> (QExpr, SExpr) {
+        let info = reflect::info(t);
+        let typed = builtin("typeInfo", tq);
+        let names: Vec<(String, String)> = info
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(i, (n, _))| (format!(".fields[{i}].name"), n.clone()))
+            .chain(
+                info.variants
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (n, _))| (format!(".variants[{i}].name"), n.clone())),
+            )
+            .collect();
+        let (suffix, truth) = if !names.is_empty() && self.tape.below(4) != 0 {
+            names[self.tape.index(names.len())].clone()
         } else {
-            let others: Vec<&str> = KINDS.iter().copied().filter(|k| *k != truth).collect();
-            others
-                .get(self.tape.index(others.len()))
-                .copied()
-                .unwrap_or(truth)
+            (".kind".to_owned(), info.kind.to_owned())
         };
-        let kind = read(builtin("typeInfo", tq), ".kind");
-        let test = QExpr::Eq(Box::new(kind), Box::new(QExpr::Text(string(tag))));
-        (test, SExpr::Bool(tag == truth))
+        let tag = if self.tape.flag() {
+            truth.clone()
+        } else if suffix == ".kind" {
+            let others: Vec<&str> = KINDS.iter().copied().filter(|k| *k != truth).collect();
+            others[self.tape.index(others.len())].to_owned()
+        } else {
+            format!("{truth}x")
+        };
+        let held = tag == truth;
+        (is(read(typed, &suffix), &tag), SExpr::Bool(held))
     }
 
     /// A group of statements after a statement of the frame, if the query
-    /// tape says so: a static `let` of one query, and its record.
+    /// tape says so.
     pub(super) fn query_group(
         &mut self,
         ctx: &Ctx,
         names: &mut Names,
         out: &mut Vec<Stmt>,
     ) -> Built {
-        if self.queries >= MAX_GROUPS || self.ops.is_empty() || ctx.envs.is_empty() {
+        if !self.query_on {
             return Ok(());
         }
         self.on_query(|b| {
-            if b.tape.below(GROUP_ODDS) != GROUP_ODDS - 1 {
-                return Ok(());
+            if b.tape.below(GROUP_ODDS) == GROUP_ODDS - 1 {
+                b.one_group(ctx, names, out);
             }
-            let Some(op) = b.pick_op() else {
-                return Ok(());
-            };
-            let (tq, t) = b.type_value(&op, false);
-            let boolean = b.tape.flag();
-            let (form, value) = if boolean {
-                b.kind(tq, &t)
-            } else {
-                b.size(tq, &t, false)
-            };
-            if b.values(&value, &ctx.envs).is_none() {
-                return Ok(());
-            }
-            b.queries += 1;
-            note!(b, query_groups);
-            let name = names.fresh("s");
-            let ty = if boolean { STy::Bool } else { STy::Nat };
-            let query = SExpr::Query(Box::new(Query { form, value }));
-            out.push(Stmt::StaticLet(name.clone(), ty, query));
-            let message = b.next_message();
-            out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
             Ok(())
         })
+    }
+
+    /// Up to `TAIL` groups at the end of a module body, which sees each name
+    /// of the top frame.
+    pub(super) fn query_tail(&mut self, ctx: &Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
+        if !self.query_on {
+            return;
+        }
+        self.on_query(|b| {
+            for _ in 0..b.tape.below(TAIL + 1) {
+                b.one_group(ctx, names, out);
+            }
+        });
+    }
+
+    /// A wire and a register that only the queries read, and a static `let`
+    /// of a container, for the start of a module body. A wire and a register
+    /// have a `:=` at once, so no binding is missing. They have names of their
+    /// own (`z<n>`, `N<n>`), and the module takes them only if one of its
+    /// queries was drawn: a program with no query text is thus the program of
+    /// the other tapes alone.
+    pub(super) fn query_decls(&mut self, ctx: &Ctx, m: &mut Module) -> Built<Vec<Stmt>> {
+        if !self.query_on || ctx.envs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        self.on_query(|b| {
+            for _ in 0..b.tape.below(3) {
+                // Half of the declarations copy the width of a name, so that
+                // the width can be a query on that name.
+                let widths: Vec<(SExpr, bool)> =
+                    b.ops.iter().filter_map(|op| op.ty.data()).collect();
+                let copy = widths.get(b.tape.index(widths.len())).cloned();
+                let ty = match copy {
+                    Some((w, true)) if b.tape.flag() => Ty::SInt(w),
+                    Some((w, false)) if b.tape.flag() => Ty::UInt(w),
+                    _ => b.decl_ty(b.reach(ctx), &ctx.envs),
+                };
+                let types = b.types(&ty, &ctx.envs)?;
+                let want = Want {
+                    types,
+                    ty: Some(ty.clone()),
+                };
+                let register = m.clocked && b.tape.flag();
+                let name = format!("z{}", b.query_decls);
+                b.query_decls += 1;
+                let handle = RTy::of(&ty).map(|t| {
+                    if register {
+                        RTy::Reg(Box::new(t))
+                    } else {
+                        RTy::Wire(Box::new(t))
+                    }
+                });
+                let shown = b.query_ty(ctx, ty, &want);
+                if register {
+                    let reset = b.fit(&want.types, b.reach(ctx), &ctx.envs);
+                    out.push(Stmt::Reg(name.clone(), shown, reset));
+                } else {
+                    out.push(Stmt::Wire(name.clone(), shown));
+                }
+                let driver = b.driver_at(ctx, &want, 1);
+                out.push(Stmt::Connect(Place::Name(name.clone()), driver));
+                b.add_op(&name, handle);
+            }
+            if b.tape.flag() {
+                let ty = b.static_container_ty();
+                let value = b.container(&ty, super::stat::DEPTH, b.reach(ctx));
+                if b.values(&value, &ctx.envs).is_some() {
+                    let name = format!("N{}", b.query_decls);
+                    b.query_decls += 1;
+                    let mut ops = Vec::new();
+                    b.chain(&name, &ty, STEPS, &mut ops);
+                    b.ops.extend(ops);
+                    out.push(Stmt::StaticLet(name, ty, value));
+                }
+            }
+            Ok(out)
+        })
+    }
+
+    /// A static `let` of one query, and its record, if the frame can
+    /// reflect something.
+    fn one_group(&mut self, ctx: &Ctx, names: &mut Names, out: &mut Vec<Stmt>) {
+        if self.queries >= MAX_GROUPS || ctx.envs.is_empty() {
+            return;
+        }
+        let Some(op) = self.source(ctx) else {
+            return;
+        };
+        let (tq, t) = self.type_value(&op, false);
+        let boolean = self.tape.flag();
+        let (form, value) = if boolean {
+            self.test(tq, &t)
+        } else {
+            self.size(&tq, &t, false)
+        };
+        if self.values(&value, &ctx.envs).is_none() {
+            return;
+        }
+        self.queries += 1;
+        self.emitted += 1;
+        note!(self, query_groups);
+        #[cfg(test)]
+        self.stats.query_kinds.insert(reflect::info(&t).kind);
+        let name = names.fresh("s");
+        let ty = if boolean { STy::Bool } else { STy::Nat };
+        let query = SExpr::Query(Box::new(Query { form, value }));
+        out.push(Stmt::StaticLet(name.clone(), ty, query));
+        let message = self.next_message();
+        out.push(Stmt::Diagnostic(message, SExpr::Name(name)));
     }
 
     /// The width `w` of a wire or a register as a query on a name of the
@@ -259,7 +574,7 @@ impl Builder {
                 Scalar::Bool => None,
             })
             .collect();
-        if self.ops.is_empty() || widths.len() != ctx.envs.len() {
+        if !self.query_on || self.ops.is_empty() || widths.len() != ctx.envs.len() {
             return ty;
         }
         let w = w.clone();
@@ -282,6 +597,7 @@ impl Builder {
             let op = ops.get(b.tape.index(ops.len()))?;
             let (tq, _) = b.type_value(op, true);
             note!(b, query_widths);
+            b.emitted += 1;
             Some(SExpr::Query(Box::new(Query {
                 form: QExpr::Call("data_bits", Box::new(tq)),
                 value: w,
@@ -299,25 +615,24 @@ impl Builder {
     /// for a `Bool`. The twin writes the result of the query, so its outputs
     /// differ from the program if the generator and a front end disagree
     /// on a type that the output reads.
-    pub(super) fn mix_query(&mut self, outputs: &mut [(String, Want, HExpr)]) {
-        if self.ops.is_empty() || outputs.is_empty() {
+    pub(super) fn mix_query(&mut self, ctx: &Ctx, outputs: &mut [(String, Want, HExpr)]) {
+        if !self.query_on || outputs.is_empty() {
             return;
         }
-        let ops = self.ops.clone();
         self.on_query(|b| {
             if b.tape.below(MIX_ODDS) != 0 {
                 return;
             }
             let at = b.tape.index(outputs.len());
-            let Some(op) = ops.get(b.tape.index(ops.len())) else {
+            let Some(op) = b.source(ctx) else {
                 return;
             };
             let Some((_, want, driver)) = outputs.get_mut(at) else {
                 return;
             };
             let Some(ty) = want.printable() else { return };
-            let (tq, t) = b.type_value(op, false);
-            let (form, value) = b.size(tq, &t, true);
+            let (tq, t) = b.type_value(&op, false);
+            let (form, value) = b.size(&tq, &t, true);
             let number = SExpr::Query(Box::new(Query { form, value }));
             let low = SExpr::Binary(SBin::And, Box::new(number), Box::new(int(1)));
             let (op, mixed) = match ty {
@@ -335,46 +650,132 @@ impl Builder {
             let old = std::mem::replace(driver, HExpr::Unit);
             *driver = HExpr::Binary(op, Box::new(old), Box::new(mixed));
             note!(b, query_mixes);
+            b.emitted += 1;
         });
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::Stats;
     use super::super::tests::tapes;
     use super::*;
     use std::collections::BTreeMap;
 
+    /// The roots of the operands of the `@TypeOf` queries in `text`.
+    fn roots(text: &str) -> Vec<&'static str> {
+        let mut out = Vec::new();
+        for part in text.split("@TypeOf(").skip(1) {
+            let mut at = part;
+            while let Some(rest) = at.strip_prefix('(').or_else(|| at.strip_prefix("@field(")) {
+                at = rest;
+            }
+            let name: String = at.chars().take_while(char::is_ascii_alphanumeric).collect();
+            out.push(match at.bytes().next().unwrap_or(b' ') {
+                b'z' if text.contains(&format!("reg {name}:")) => "reg",
+                b'z' | b'w' => "wire",
+                b'N' | b's' => "static let",
+                b'i' => "input",
+                b'r' => "reg",
+                b'P' => "param",
+                b'C' => "const",
+                b'f' => "function",
+                b'U' => "type",
+                b'u' => match at.split_once('.').and_then(|(_, r)| r.bytes().next()) {
+                    Some(b'i') => "child input",
+                    Some(_) => "child output",
+                    None => "instance",
+                },
+                _ => "other",
+            });
+        }
+        out
+    }
+
     /// The forms of the queries in a program.
-    fn forms(text: &str, s: &super::super::Stats) -> [(&'static str, bool); 6] {
-        [
-            ("any query", text.contains("@TypeOf")),
-            ("group", s.query_groups > 0),
-            ("width", s.query_widths > 0),
-            ("mix", s.query_mixes > 0),
-            ("kind test", text.contains(".kind == ")),
-            ("element", text.contains(".element")),
-        ]
+    fn forms(text: &str, s: &Stats) -> Vec<(String, bool)> {
+        let literal = [
+            "@typeInfo(Nat)",
+            "@typeInfo(Int)",
+            "@typeInfo(String)",
+            "@typeInfo(Unit)",
+            "@typeInfo(Type)",
+            "@typeInfo(Bool)",
+            "@typeInfo(UInt[",
+            "@typeInfo(SInt[",
+            "@typeInfo([",
+            "@typeInfo(List[",
+            "@typeInfo(Reg[",
+            "@typeInfo(Wire[",
+            "@typeInfo(Input[",
+            "@typeInfo(Mem[",
+        ];
+        let mut forms = vec![
+            ("group".to_owned(), s.query_groups > 0),
+            ("width".to_owned(), s.query_widths > 0),
+            ("mix".to_owned(), s.query_mixes > 0),
+            ("kind test".to_owned(), text.contains(".kind == ")),
+            ("element".to_owned(), text.contains(".element")),
+            (
+                "field or variant".to_owned(),
+                text.contains(".name == ") || text.contains(".ty)") || text.contains(".variants["),
+            ),
+            (
+                "type literal".to_owned(),
+                literal.iter().any(|l| text.contains(l)),
+            ),
+        ];
+        let found = roots(text);
+        for root in [
+            "input",
+            "reg",
+            "wire",
+            "param",
+            "const",
+            "static let",
+            "function",
+            "type",
+            "child input",
+            "child output",
+        ] {
+            forms.push((format!("root {root}"), found.contains(&root)));
+        }
+        for kind in KINDS {
+            forms.push((format!("kind {kind}"), s.query_kinds.contains(kind)));
+        }
+        forms
     }
 
     /// Each form of the queries occurs in at least 10% of 256 programs, and
-    /// some program has no query.
+    /// each root and each kind in 1 program in 32.
     #[test]
     fn programs_cover_the_queries() {
         const TAPES: usize = 256;
-        let mut with = BTreeMap::<&str, usize>::new();
+        let mut with = BTreeMap::<String, usize>::new();
+        let mut any = 0;
         for tape in tapes(TAPES) {
             let mut b = Builder::new(tape);
             let p = b.program();
             assert!(p.is_ok(), "a program faults: {p:?}");
             let Ok(p) = p else { continue };
             assert!(b.queries <= MAX_GROUPS, "{} groups", b.queries);
-            for (form, seen) in forms(&p.text(), &b.stats) {
+            let text = p.text();
+            any += usize::from(text.contains("@TypeOf") || text.contains("@typeInfo"));
+            for (form, seen) in forms(&text, &b.stats) {
                 *with.entry(form).or_default() += usize::from(seen);
             }
         }
+        assert!(
+            any * 10 >= TAPES * 3 && any * 10 <= TAPES * 7,
+            "{any} programs"
+        );
         for (form, n) in &with {
-            assert!(n * 10 >= TAPES, "{form} occurs in {n} of {TAPES}: {with:?}");
+            let floor = if form.starts_with("root ") || form.starts_with("kind ") {
+                TAPES / 32
+            } else {
+                TAPES / 10
+            };
+            assert!(*n >= floor, "{form} occurs in {n} of {TAPES}: {with:?}");
         }
     }
 }
