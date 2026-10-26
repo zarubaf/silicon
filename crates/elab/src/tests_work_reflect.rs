@@ -218,26 +218,33 @@ fn chain_run(d: usize, (fns, key): (&str, &str), run_key: u64) -> Run {
 /// with a call.
 #[test]
 fn w10_a_key_with_a_call_in_a_typeinfo_argument_holds_the_root_once() {
-    let info = (
-        "fn f() -> Type { return P; }\n",
+    for (k, key) in [
         "@typeInfo(f()).length - 1",
-    );
-    let plain = ("fn g() -> P { return P(0); }\n", "g().a");
-    let (small, large) = (chain_run(32, info, 20), chain_run(64, info, 21));
-    let (plain_small, plain_large) = (chain_run(32, plain, 22), chain_run(64, plain, 23));
-    let (a, b) = (small.counts.stepped, large.counts.stepped);
-    assert!(a > 0 && b <= 2 * a + 16, "the steps {a} at d and {b} at 2d");
-    assert_eq!(a, plain_small.counts.stepped);
-    assert_eq!(b, plain_large.counts.stepped);
-    assert_eq!(large.counts.copies, plain_large.counts.copies);
-    assert_eq!(large.counts.logged, plain_large.counts.logged);
-    // The scan marks the key as an index with a call, so the steps before it pass their checks.
-    assert!(
-        large.counts.checked >= 64,
-        "{} checks",
-        large.counts.checked
-    );
-    assert_eq!(large.counts.checked, plain_large.counts.checked);
+        "len(@typeInfo(f()).fields) - 1",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let k = 4 * k as u64;
+        let info = ("fn f() -> Type { return P; }\n", key);
+        let plain = ("fn g() -> P { return P(0); }\n", "g().a");
+        let (small, large) = (chain_run(32, info, 20 + k), chain_run(64, info, 21 + k));
+        let (plain_small, plain_large) =
+            (chain_run(32, plain, 22 + k), chain_run(64, plain, 23 + k));
+        let (a, b) = (small.counts.stepped, large.counts.stepped);
+        assert!(a > 0 && b <= 2 * a + 16, "the steps {a} at d and {b} at 2d");
+        assert_eq!(a, plain_small.counts.stepped);
+        assert_eq!(b, plain_large.counts.stepped);
+        assert_eq!(large.counts.copies, plain_large.counts.copies);
+        assert_eq!(large.counts.logged, plain_large.counts.logged);
+        // The scan marks the key as an index with a call, so the steps before it pass their checks.
+        assert!(
+            large.counts.checked >= 64,
+            "{} checks",
+            large.counts.checked
+        );
+        assert_eq!(large.counts.checked, plain_large.counts.checked);
+    }
 }
 
 /// The run of a struct `S` with `f` fields whose names have `len` characters, `n` times.
@@ -535,4 +542,64 @@ fn w12_the_lookup_compares_only_the_bucket_of_the_fingerprint() {
         "{} pairs for {n} hits of {f} pairs",
         r.counts.matched
     );
+}
+
+/// The run of a module with the chain `p.f...f` of `d + 1` steps over a static record that nests `d`
+/// structs. `form` selects the use: the type of a `let` (`Type`), the expression `@TypeOf` of a
+/// `let` (`Expr`), or none (`Base`).
+fn place_form_run(d: usize, form: Form, run_key: u64) -> Run {
+    let mut src = "struct S0 {\n    f: UInt[8],\n}\n".to_owned();
+    for i in 1..=d {
+        writeln!(src, "struct S{i} {{\n    f: S{},\n}}", i - 1).unwrap();
+    }
+    let value = (0..=d).fold("0".to_owned(), |v, i| format!("S{i}({v})"));
+    let place = format!("p{}", ".f".repeat(d + 1));
+    let line = match form {
+        Form::Type => format!("    let y: @TypeOf({place}) = 0;\n"),
+        Form::Expr => format!("    let t = @TypeOf({place});\n"),
+        Form::Base => String::new(),
+    };
+    let src = format!(
+        "{src}module M() {{\n    input x: UInt[8];\n    output o: UInt[8];\n    let p = {value};\n\
+         {line}    o := x;\n}}\n"
+    );
+    passing(KEY + run_key, 100_000, &src)
+}
+
+/// The use of a place chain in `place_form_run`.
+#[derive(Clone, Copy)]
+enum Form {
+    Type,
+    Expr,
+    Base,
+}
+
+/// W9. `@TypeOf(p.f...f)` of depth `d` as the type of a `let`. The type node charges 1, and then the
+/// builtin evaluates as in an expression. The work of the type form is that of the expression form
+/// plus a constant, and it doubles with `d`. A type position that walks the place again from the
+/// root at each step gives `d` times `d`.
+#[test]
+fn w9_a_builtin_in_a_type_position_walks_its_place_once() {
+    let at = |d: usize, key: u64| {
+        let base = place_form_run(d, Form::Base, key);
+        let typed = place_form_run(d, Form::Type, key + 1);
+        let expr = place_form_run(d, Form::Expr, key + 2);
+        (extra(&typed, &base), extra(&expr, &base))
+    };
+    let (((a, ua), (ea, uea)), ((b, ub), (eb, ueb))) = (at(32, 200), at(64, 203));
+    assert!(a < b && b <= 2 * a + 16, "the work {a} at d and {b} at 2d");
+    assert!(
+        a <= ea + 8 && b <= eb + 8,
+        "the work {a} and {b} against {ea} and {eb} of the expression"
+    );
+    assert_eq!(ua - uea, ub - ueb, "the units beyond the expression form");
+    assert!(ua > uea && ub > ueb, "the type node charges");
+}
+
+/// The work and the units that the run `with` costs over the run `without`.
+fn extra(with: &Run, without: &Run) -> (u64, u64) {
+    (
+        with.counts.total() - without.counts.total(),
+        with.used - without.used,
+    )
 }
