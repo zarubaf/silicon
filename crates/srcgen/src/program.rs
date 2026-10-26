@@ -360,6 +360,10 @@ pub(crate) enum SExpr {
     DataBits(String, Vec<SExpr>),
     /// `base.f` of a record.
     Field(Box<SExpr>, String),
+    /// `@field(base, key)`: the selection of a record field by a `String`,
+    /// or of an element of an array, a list, or a tuple by a `Nat`. After
+    /// the base and the key it is the ordinary selection.
+    At(Box<SExpr>, Box<SExpr>),
     /// A string literal.
     Str(String),
     /// `str(n)`.
@@ -1190,6 +1194,7 @@ pub(crate) fn sexpr(e: &SExpr) -> String {
         SExpr::Zero(s, targs) => format!("{}()", struct_use(s, targs)),
         SExpr::DataBits(s, targs) => format!("data_bits({})", struct_use(s, targs)),
         SExpr::Field(b, f) => format!("{}.{f}", postfix_base(b)),
+        SExpr::At(b, k) => format!("@field({}, {})", sexpr(b), sexpr(k)),
         SExpr::Str(s) => string(s),
         SExpr::StrOf(n) => format!("str({})", sexpr(n)),
         SExpr::Convert(t, e) => format!("{}({})", t.text(), sexpr(e)),

@@ -1249,7 +1249,10 @@ impl<'a> Walk<'a> {
                 self.sexpr(a);
                 self.lazily(|w| w.sexpr(b));
             }
-            SExpr::Index(a, b) | SExpr::PortKey(a, _, b) | SExpr::Binary(_, a, b) => {
+            SExpr::Index(a, b)
+            | SExpr::At(a, b)
+            | SExpr::PortKey(a, _, b)
+            | SExpr::Binary(_, a, b) => {
                 self.sexpr(a);
                 self.sexpr(b);
             }

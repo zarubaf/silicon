@@ -117,6 +117,28 @@ impl Value {
     }
 }
 
+/// `@field(base, key)` after both operands have a value: a record takes the
+/// `String` of one of its fields, and a tuple, an array, and a list take a
+/// `Nat` below their length.
+fn selected(base: Value, key: Value) -> Result<Value, Fault> {
+    match (base, key) {
+        (Value::Record(ty, xs), Value::Str(field)) => ty
+            .fields
+            .iter()
+            .position(|(f, _)| *f == field)
+            .and_then(|k| xs.into_iter().nth(k))
+            .ok_or(Fault::Type),
+        (Value::Tuple(xs) | Value::Array(xs) | Value::List(_, xs), Value::Int(n)) => {
+            if n.sign() == Sign::Minus {
+                return Err(Fault::Nat);
+            }
+            let at = usize::try_from(&n).map_err(|_| Fault::Bound)?;
+            xs.into_iter().nth(at).ok_or(Fault::Bound)
+        }
+        _ => Err(Fault::Type),
+    }
+}
+
 fn serialized(xs: &[Value]) -> String {
     xs.iter()
         .map(Value::serialize)
@@ -614,6 +636,10 @@ impl Evaluator<'_> {
                 Value::Tuple(xs) => xs.into_iter().nth(*k as usize).ok_or(Fault::Bound)?,
                 _ => return Err(Fault::Type),
             },
+            SExpr::At(base, key) => {
+                let base = self.eval(base, env)?;
+                selected(base, self.eval(key, env)?)?
+            }
             SExpr::Len(base) => match self.eval(base, env)? {
                 Value::Array(xs) | Value::List(_, xs) => Value::Int(BigInt::from(xs.len())),
                 Value::Str(s) => Value::Int(BigInt::from(s.chars().count())),
@@ -1459,6 +1485,35 @@ mod tests {
         );
         assert_eq!(run_in(&scope, &field(zero, "m1")), Ok(Value::Bool(false)));
         assert_eq!(run_in(&scope, &field(record, "m9")), Err(Fault::Type));
+    }
+
+    #[test]
+    fn field_selects_like_an_ordinary_selection() {
+        let scope = structs();
+        let at = |b: SExpr, k: SExpr| SExpr::At(Box::new(b), Box::new(k));
+        let key = |f: &str| SExpr::Str(f.to_owned());
+        let record = SExpr::Record(
+            "S1".to_owned(),
+            Vec::new(),
+            vec![int(5), tuple(vec![int(-1), SExpr::Bool(true)])],
+        );
+        assert_eq!(run_in(&scope, &at(record.clone(), key("m0"))), value(5));
+        // A key that joins two strings names the field too.
+        let joined = bin(SBin::Add, key("m"), SExpr::StrOf(Box::new(int(0))));
+        assert_eq!(run_in(&scope, &at(record.clone(), joined)), value(5));
+        let inner = at(record.clone(), key("m1"));
+        assert_eq!(run_in(&scope, &at(inner, int(0))), value(-1));
+        assert_eq!(run_in(&scope, &at(record, key("m9"))), Err(Fault::Type));
+        let a = array(vec![int(10), int(20), int(30)]);
+        assert_eq!(run_in(&scope, &at(a.clone(), int(2))), value(30));
+        assert_eq!(run_in(&scope, &at(a.clone(), int(3))), Err(Fault::Bound));
+        assert_eq!(run_in(&scope, &at(a.clone(), int(-1))), Err(Fault::Nat));
+        assert_eq!(run_in(&scope, &at(a.clone(), key("m0"))), Err(Fault::Type));
+        let t = tuple(vec![int(7), SExpr::Bool(true)]);
+        assert_eq!(run_in(&scope, &at(t, int(1))), Ok(Value::Bool(true)));
+        // The base evaluates before the key: a fault of the base wins.
+        let faulty = at(index(a, int(9)), bin(SBin::Div, int(1), int(0)));
+        assert_eq!(run_in(&scope, &faulty), Err(Fault::Bound));
     }
 
     #[test]

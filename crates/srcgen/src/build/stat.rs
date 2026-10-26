@@ -210,7 +210,7 @@ impl Builder {
     /// A call of one of the first `r.fns` `comptime fn`s. In an env set, a
     /// call whose count leaves `0..=COUNT` or that faults in an env takes
     /// the arguments of its base case, which the sample check covers.
-    fn fn_call(&mut self, d: u32, r: Reach<'_>) -> SExpr {
+    pub(super) fn fn_call(&mut self, d: u32, r: Reach<'_>) -> SExpr {
         let i = self.tape.index(r.fns);
         let Some((name, params)) = self.fns.get(i).map(|f| (f.name.clone(), f.params.clone()))
         else {
