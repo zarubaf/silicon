@@ -425,11 +425,13 @@ pub(crate) fn last_run() -> Option<Counts> {
 }
 
 /// The counts of the last run with the fuel budget `fuel`.
+#[allow(dead_code)]
 pub(crate) fn of(fuel: u64) -> Counts {
     run(fuel).unwrap_or_default()
 }
 
 /// The counts of the last run with the fuel budget `fuel`, or `None` when no such run started.
+#[allow(dead_code)]
 pub(crate) fn run(fuel: u64) -> Option<Counts> {
     let id = BY_FUEL.lock().ok()?.get(&fuel).copied()?;
     of_run(id)
