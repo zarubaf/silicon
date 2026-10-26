@@ -39,6 +39,13 @@ enum Part {
     Type(TyId),
 }
 
+/// The end of the operand of a query: the part that the walk reached, or the result of a root that
+/// names no binding, which evaluated as an ordinary expression.
+enum Operand {
+    Part(Part),
+    Out(super::Out),
+}
+
 /// What the walk knows of the part after its pending steps, to tell if it is an `Instance`
 /// handle.
 #[derive(Clone, Copy)]
@@ -108,14 +115,16 @@ impl<'a> Walk<'a> {
 impl Evaluator<'_> {
     /// The query `@TypeOf(x)` at `pos`: the node charged 1. The result is the type as a new value.
     pub(super) fn type_of_builtin(&mut self, pos: Pos, operand: &Expr) -> Res<super::Out> {
-        let ty = self.type_of_part(pos, operand)?;
+        let part = self.query_operand(Builtin::TypeOf, pos, operand)?;
+        let ty = self.query_ty(pos, part)?;
         Ok(super::Out::Made(Val::Static(Value::Type(ty))))
     }
 
-    /// The type of the place `x` of `@TypeOf` at `pos`. The root resolves with no charge. Its
-    /// steps then run once from the root outward (`query_walk`). A root that names no binding
-    /// evaluates the whole operand as an expression (`query_whole`).
-    fn type_of_part(&mut self, pos: Pos, operand: &Expr) -> Res<TyId> {
+    /// The end of the place `operand` of the query `q` at `pos` (Lean `queryPart`).
+    /// The root resolves with no charge. Its steps then run once from the root outward
+    /// (`query_walk`). A root that names no binding evaluates the whole operand as an expression
+    /// (`query_whole`).
+    fn query_operand(&mut self, q: Builtin, pos: Pos, operand: &Expr) -> Res<Operand> {
         let Some((
             Expr::Name {
                 pos: rp,
@@ -125,27 +134,27 @@ impl Evaluator<'_> {
             steps,
         )) = chain(operand)
         else {
-            return self.query_whole(pos, operand);
+            return self.query_whole(q, operand);
         };
         let Some(Target::Decl(decl)) = self.target(*id) else {
-            return self.query_whole(pos, operand);
+            return self.query_whole(q, operand);
         };
         let start = match self.decl_ref(decl).kind {
             Kind::Family { .. } => {
-                return self.query_family(pos, (*rp, root.as_str(), decl), &steps);
+                return self.query_family(q, pos, (*rp, root.as_str(), decl), &steps);
             }
             Kind::Const if self.items.contains_key(&decl) => {
                 let super::Out::Ref(r) = self.constant(*rp, root, decl)? else {
-                    return self.query_whole(pos, operand);
+                    return self.query_whole(q, operand);
                 };
                 let declared = self.store.root_ty(&r.root);
                 self.held(r, declared)
             }
             Kind::Const | Kind::Fn | Kind::Module | Kind::Struct | Kind::Enum => {
-                return self.query_whole(pos, operand);
+                return self.query_whole(q, operand);
             }
             Kind::Alias if self.items.contains_key(&decl) => {
-                return self.query_whole(pos, operand);
+                return self.query_whole(q, operand);
             }
             Kind::Domain => {
                 self.keep_domain(decl, root);
@@ -153,8 +162,7 @@ impl Evaluator<'_> {
             }
             _ => {
                 let Some(slot) = self.store.slot(decl) else {
-                    let out = self.name(*rp, *id, root)?;
-                    return self.query_out(pos, &out);
+                    return Ok(Operand::Out(self.name(*rp, *id, root)?));
                 };
                 let declared = self.declared_ty(decl, slot);
                 let r = Ref {
@@ -164,9 +172,9 @@ impl Evaluator<'_> {
                 self.held(r, declared)
             }
         };
-        let mut walk = self.query_walk(start, &steps)?;
+        let mut walk = self.query_walk(q, start, &steps)?;
         self.settle_walk(&mut walk)?;
-        self.query_ty(pos, walk.part)
+        Ok(Operand::Part(walk.part))
     }
 
     /// The type that the slot of the local `decl` declares: the annotation of a `let`, the type
@@ -195,36 +203,25 @@ impl Evaluator<'_> {
 
     /// The root that names no binding: the whole operand evaluates as an ordinary expression in
     /// a structural context of the kind `Query`. It has no declared type.
-    fn query_whole(&mut self, pos: Pos, x: &Expr) -> Res<TyId> {
-        let o = self.guarded(GuardKind::Query(Builtin::TypeOf), |ev| {
+    fn query_whole(&mut self, q: Builtin, x: &Expr) -> Res<Operand> {
+        let o = self.guarded(GuardKind::Query(q), |ev| {
             let o = ev.eval(x)?;
             need(x, o)
         })?;
-        self.query_out(pos, &o)
+        Ok(Operand::Out(o))
     }
 
-    /// The type of the result `o` of a root that names no binding.
-    fn query_out(&mut self, pos: Pos, o: &super::Out) -> Res<TyId> {
-        let ending = Self::ending(
-            &self.graph,
-            &mut self.tys,
-            &mut self.fuel,
-            pos,
-            self.store.seen(o),
-        )?;
-        self.ended(pos, ending)
-    }
-
-    /// The query of an entry `req[k]` of the own family `x` with the binder `family`, at `pos`
-    /// (section 6.2). The index node charged 1 at `q`, the name node at `rp` charges 1, and the
+    /// The part of the query `q` at `pos` for an entry `req[k]` of the own family `x` with the
+    /// binder `family` (section 6.2). The index node charged 1 at `q`, the name node at `rp` charges 1, and the
     /// key evaluates in a structural context of the kind `Query`. A family without a key is
     /// "Family as a value".
     fn query_family(
         &mut self,
+        q: Builtin,
         pos: Pos,
         (rp, family_name, family): (Pos, &str, resolve::DeclId),
         steps: &[Sel<'_>],
-    ) -> Res<TyId> {
+    ) -> Res<Operand> {
         let Some(&Sel::Index(index_pos, keys)) = steps.first() else {
             return super::family_value(rp, family_name);
         };
@@ -237,16 +234,16 @@ impl Evaluator<'_> {
             );
         };
         self.charge(rp, 1)?;
-        let out = self.guarded(GuardKind::Query(Builtin::TypeOf), |ev| {
+        let out = self.guarded(GuardKind::Query(q), |ev| {
             let out = ev.eval(key)?;
             need(key, out)
         })?;
         let number = self.selection_key(rp, key.pos(), family_name, &out)?;
         let entry = self.entry_val(key.pos(), family_name, family, number)?;
         let start = self.part_of_val(pos, entry)?;
-        let mut walk = self.query_walk(start, steps.get(1..).unwrap_or_default())?;
+        let mut walk = self.query_walk(q, start, steps.get(1..).unwrap_or_default())?;
         self.settle_walk(&mut walk)?;
-        self.query_ty(pos, walk.part)
+        Ok(Operand::Part(walk.part))
     }
 
     /// The walk that starts at the value `entry` of an entry of a family. A hardware value and a
@@ -287,14 +284,19 @@ impl Evaluator<'_> {
         }
     }
 
-    /// The steps `steps` of a `@TypeOf` operand from the part of `w`, once from the root outward
+    /// The steps `steps` of an operand of the query `q` from the part of `walk`, once from the root outward
     /// (section 6.2, **`@TypeOf` order**). A step charges 1 at its node, then the key of an index
     /// evaluates, and the step waits for the pass of `settle_walk`. An error first applies the steps
     /// that wait, so a failed check wins over a later error.
-    fn query_walk<'a>(&mut self, mut walk: Walk<'a>, steps: &[Sel<'a>]) -> Res<Walk<'a>> {
+    fn query_walk<'a>(
+        &mut self,
+        q: Builtin,
+        mut walk: Walk<'a>,
+        steps: &[Sel<'a>],
+    ) -> Res<Walk<'a>> {
         let mut at = 0;
         while at < steps.len() {
-            if let Err(err) = self.query_step(&mut walk, steps, &mut at) {
+            if let Err(err) = self.query_step(q, &mut walk, steps, &mut at) {
                 self.settle_walk(&mut walk)?;
                 return Err(err);
             }
@@ -306,6 +308,7 @@ impl Evaluator<'_> {
     /// past the steps taken.
     fn query_step<'a>(
         &mut self,
+        q: Builtin,
         walk: &mut Walk<'a>,
         steps: &[Sel<'a>],
         at: &mut usize,
@@ -323,7 +326,7 @@ impl Evaluator<'_> {
                         "an index of a value has one argument".to_owned(),
                     );
                 };
-                let index = self.query_key(key)?;
+                let index = self.query_key(q, key)?;
                 self.wait(walk, Key::Index(pos, key.pos(), index));
                 *at += 1;
             }
@@ -334,8 +337,7 @@ impl Evaluator<'_> {
             }
             Sel::Key(pos, base, key) => {
                 self.charge(pos, 1)?;
-                let key =
-                    self.named_key(pos, base, key, Some(GuardKind::Query(Builtin::TypeOf)))?;
+                let key = self.named_key(pos, base, key, Some(GuardKind::Query(q)))?;
                 // The part is known after the step only when its name is paid: the look-up of a
                 // name reads it after its charge. A later `.f` then tells from the type that the
                 // part is no `Instance` handle, and the pass along the part does not run again.
@@ -355,7 +357,7 @@ impl Evaluator<'_> {
                     return Ok(());
                 };
                 if let Some(&Sel::Index(index_pos, args)) = steps.get(*at + 1) {
-                    self.instance_pair(walk, info, (pos, field), (index_pos, args))?;
+                    self.instance_pair(q, walk, info, (pos, field), (index_pos, args))?;
                     *at += 2;
                 } else {
                     self.charge(pos, 1)?;
@@ -396,6 +398,7 @@ impl Evaluator<'_> {
     /// then takes its key as a step of the part.
     fn instance_pair<'a>(
         &mut self,
+        q: Builtin,
         walk: &mut Walk<'a>,
         info: InstInfo,
         (pos, field): (Pos, &'a Ident),
@@ -414,7 +417,7 @@ impl Evaluator<'_> {
             .port_sym(field)
             .filter(|sym| self.has_family(info.inst, *sym));
         if let Some(sym) = family {
-            let out = self.guarded(GuardKind::Query(Builtin::TypeOf), |ev| {
+            let out = self.guarded(GuardKind::Query(q), |ev| {
                 let out = ev.eval(key)?;
                 need(key, out)
             })?;
@@ -427,7 +430,7 @@ impl Evaluator<'_> {
         } else {
             let port = self.port_find(pos, info, field)?;
             *walk = Self::port_walk(info, port);
-            let index = self.query_key(key)?;
+            let index = self.query_key(q, key)?;
             self.wait(walk, Key::Index(index_pos, key.pos(), index));
         }
         Ok(())
@@ -460,16 +463,17 @@ impl Evaluator<'_> {
         Walk::new(start, Known::Not)
     }
 
-    /// The key `key` of an index step of a `@TypeOf` operand (section 6.2, **`@TypeOf` order**).
+    /// The key `key` of an index step of an operand of the query `q` (section 6.2, **`@TypeOf`
+    /// order**).
     /// It evaluates in a structural context of the kind `Query` (`S016`). Then it is static
     /// (`S011`): a handle gives "Handle at a static position", and another hardware value gives
     /// "Value not static".
-    fn query_key(&mut self, key: &Expr) -> Res<Index> {
-        let out = self.guarded(GuardKind::Query(Builtin::TypeOf), |ev| {
+    fn query_key(&mut self, q: Builtin, key: &Expr) -> Res<Index> {
+        let out = self.guarded(GuardKind::Query(q), |ev| {
             let out = ev.eval(key)?;
             need(key, out)
         })?;
-        self.static_position(key.pos(), "a key of `@TypeOf`", &out)?;
+        self.static_position(key.pos(), &format!("a key of `@{}`", q.name()), &out)?;
         self.check_static(key.pos(), &out)?;
         Ok(self.index_of(&out))
     }
@@ -826,17 +830,24 @@ impl Evaluator<'_> {
 
     /// The type of the part at the end of the walk (section 9.3). A declared type is the result.
     /// A part in the store gives its type (`ending`).
-    fn query_ty(&mut self, pos: Pos, part: Part) -> Res<TyId> {
-        let ending = match part {
-            Part::Type(t) | Part::Held(_, Some(t)) => return Ok(t),
-            Part::Held(r, None) => Self::ending(
+    fn query_ty(&mut self, pos: Pos, operand: Operand) -> Res<TyId> {
+        let ending = match operand {
+            Operand::Part(Part::Type(t) | Part::Held(_, Some(t))) => return Ok(t),
+            Operand::Part(Part::Held(r, None)) => Self::ending(
                 &self.graph,
                 &mut self.tys,
                 &mut self.fuel,
                 pos,
                 self.store.at(&r),
             )?,
-            Part::Handle(h) => Ending::Handle(h),
+            Operand::Part(Part::Handle(h)) => Ending::Handle(h),
+            Operand::Out(o) => Self::ending(
+                &self.graph,
+                &mut self.tys,
+                &mut self.fuel,
+                pos,
+                self.store.seen(&o),
+            )?,
         };
         self.ended(pos, ending)
     }
