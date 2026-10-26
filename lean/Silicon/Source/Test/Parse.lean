@@ -988,6 +988,36 @@ selection of a place, at any depth.
   "`@TypeOf` takes a name or a selection of a name; bind the value with `let` and pass the name"
 
 /-!
+`@ports` (section 9.3) is a primary at its `@`, in an expression and in a type. Its operand is a
+place, as for `@TypeOf` (F32). Each other form is `S001` "Query operand" with the builtin
+`@ports`, and another number of operands is `S001` "Builtin arity".
+-/
+#guard ex "@ports(u)" == "(builtin ports ((name \"u\")))"
+#guard ex "@ports((us[0]).1.a)" ==
+  "(builtin ports ((field (select (index (name \"us\") ((num 0))) 1) \"a\")))"
+#guard ex "@ports(@field(us, 0))" == "(builtin ports ((builtin field ((name \"us\") (num 0)))))"
+#guard ex "@ports(u)[0].ty" ==
+  "(field (index (builtin ports ((name \"u\"))) ((num 0))) \"ty\")"
+#guard st "let y: @ports(u) = x;" ==
+  "(local false \"y\" (some (builtin ports ((name \"u\")))) (name \"x\"))"
+#guard st "@ports(u);" == "(expr (builtin ports ((name \"u\"))))"
+#guard match constValue "@ports(u)" with
+  | .ok (.builtin q (.ports (.name r "u"))) => q == ⟨1, 14⟩ && r == ⟨1, 21⟩
+  | _ => false
+#guard ex "@ports(f(u))" == "error S001 1:21"
+#guard ex "@ports((a + b))" == "error S001 1:21"
+#guard ex "@ports(@ports(u))" == "error S001 1:21"
+#guard ex "@TypeOf(@ports(u))" == "error S001 1:22"
+#guard fails "fn f() -> @ports(M()) {}" .S001 1 18
+#guard message "const X: T = @ports(u.m());" ==
+  "`@ports` takes a name or a selection of a name; bind the value with `let` and pass the name"
+#guard ex "@ports()" == "error S001 1:15"
+#guard ex "@ports(u, v)" == "error S001 1:15"
+#guard message "const X: T = @ports();" ==
+  "`@ports` takes 1 argument(s), but it has 0; write `@ports(h)`"
+#guard reparse "fn f() -> @ports(u) { return @ports(us[0])[1].key; }"
+
+/-!
 A builtin has the number of operands of its name, else `S001` "Builtin arity" at the name after
 `@`. The parser reads the operands first, so an error in an operand wins.
 -/

@@ -775,6 +775,19 @@ operand in it.
 #guard ok (modBody "reg r: Bool = false;\nlet t = @Struct(r);")
 
 /-!
+The operand of `@ports` is no static position, also in a static position, but its indices and
+keys are (G1). Thus `@ports(us[r])` is `S005` at `r`, also in a type position.
+-/
+#guard ok (modBody "reg r: Bool = false;\nlet t = @ports(r);")
+#guard ok (modBody "reg r: Bool = false;\nlet x: UInt[data_bits(@ports(r))] = 0;")
+#guard ok (modBody "reg r: Bool = false;\nlet y: @ports(r) = 0;")
+#guard fails (modBody "let us = [1];\nreg r: UInt[1] = 0;\nlet t = @ports(us[r]);") .S005 4 19
+#guard message (modBody "let us = [1];\nreg r: UInt[1] = 0;\nlet t = @ports(us[r]);") ==
+  "`r` is a register; a static position needs a static value"
+#guard fails (modBody "let us = [1];\nwire w: Bool;\nlet y: @ports(@field(us, w)) = 0;")
+  .S005 4 26
+
+/-!
 A builtin in a type position (F39) is no static position, so `@field(rs, 0)` there names the
 registers `rs` without `S005`. The key of `@field` there is still static. An index after the
 builtin is `S007` "Index of a builtin type" at the `@`, at 1, 2, and 3 levels.
@@ -796,5 +809,11 @@ builtin is `S007` "Index of a builtin type" at the `@`, at 1, 2, and 3 levels.
 #guard fails (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") .S007 3 9
 #guard message (modBody "let fs = [];\nlet y: [@Struct(fs)[8, 2]; 2] = 0;") ==
   "a type from `@Struct` takes 0 argument(s), but it has 2; remove the index after `@Struct(...)`"
+
+/-! `@ports` gives a list and not a type, so its index in a type has its own text (section 6.2). -/
+#guard fails (modBody "let u = 1;\nlet y: @ports(u)[0] = 0;") .S007 3 8
+#guard message (modBody "let u = 1;\nlet y: @ports(u)[0][1] = 0;") ==
+  "`@ports` gives a `List[PortInfo]`; select a port type with `@field(@ports(u)[0], \"ty\")`"
+#guard ok (modBody "let u = 1;\nlet y = @ports(u)[0];")
 
 end Silicon.Source.Test.Check

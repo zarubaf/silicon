@@ -424,4 +424,9 @@ def bi (a : BuiltinArgs) : Expr := .builtin p a
 #guard exprText (bi (.typeInfo (.index p (v "UInt") [n 8]))) == "@typeInfo(UInt[8])"
 #guard exprText (.field p (bi (.typeInfo (v "T"))) (nm "fields")) == "@typeInfo(T).fields"
 
+/-! `@ports` dumps and prints as the other builtins. -/
+#guard exprDump (bi (.ports (v "u"))) == "(builtin ports ((name \"u\")))"
+#guard exprText (bi (.ports (.index p (v "us") [n 0]))) == "@ports(us[0])"
+#guard exprText (.index p (bi (.ports (v "u"))) [n 0]) == "@ports(u)[0]"
+
 end Silicon.Source.Test.Print
