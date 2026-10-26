@@ -54,14 +54,23 @@ fn holds_user_field_info(tys: &Types, t: TyId) -> bool {
     }
 }
 
-/// The records of the argument if it is an array or a list of the prelude `FieldInfo`
-/// (Lean `structArg`). It reads the type of the argument, and no record.
-fn field_list<'v>(tys: &Types, seen: Seen<'v>) -> Option<&'v [Value]> {
+/// The name and the type of each record of the argument, if it is an array or a list of the
+/// prelude `FieldInfo` (Lean `structArg`). It checks every record before any charge, as Lean
+/// does, and reads no part of a record other than its two leaves.
+fn field_list<'v>(tys: &Types, seen: Seen<'v>) -> Option<Vec<(&'v str, TyId)>> {
     match seen {
         Seen::Static(Value::Array(t, xs) | Value::List(t, xs))
             if is_prelude_field_info(tys, *t) =>
         {
-            Some(xs)
+            xs.iter()
+                .map(|x| match x {
+                    Value::Record(_, parts) => match parts.as_slice() {
+                        [Value::Str(name), Value::Type(t)] => Some((name.as_str(), *t)),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect()
         }
         _ => None,
     }
@@ -94,13 +103,12 @@ impl Evaluator<'_> {
         if !matches!(self.store.seen(&out), Seen::Pending(_, Part::Empty(_))) {
             return Ok(out);
         }
-        let Some(i) = self.file.prelude_struct(FIELD_INFO) else {
-            return fail(Code::S010, pos, format!("{FIELD_INFO} has no entry"));
-        };
-        let typed = self.spec(pos, i, &[]).and_then(|field| {
-            let t = self.tys.array(field, Int::from_u64(0));
-            self.settle(pos, t, out)
-        });
+        let typed = self
+            .spec(pos, self.file.field_info_struct(), &[])
+            .and_then(|field| {
+                let t = self.tys.array(field, Int::from_u64(0));
+                self.settle(pos, t, out)
+            });
         at_use(pos, typed)
     }
 
@@ -147,22 +155,19 @@ impl Evaluator<'_> {
     /// look-up comes last.
     fn generated(&mut self, pos: Pos, at_arg: Pos, out: &Out) -> Res<TyId> {
         let seen = self.store.seen(out);
-        let Some(xs) = field_list(&self.tys, seen) else {
+        let Some(fields) = field_list(&self.tys, seen) else {
             return self.struct_arg_error(at_arg, out);
         };
         let mut members = BTreeMap::new();
-        let mut order = Vec::with_capacity(xs.len());
-        let mut types = Vec::with_capacity(xs.len());
-        let mut names = Vec::with_capacity(xs.len());
+        let mut order = Vec::with_capacity(fields.len());
+        let mut types = Vec::with_capacity(fields.len());
+        let mut names = Vec::with_capacity(fields.len());
         let mut term = 1u128;
-        for (k, x) in xs.iter().enumerate() {
-            let Value::Record(_, parts) = x else {
-                return self.struct_arg_error(at_arg, out);
-            };
-            let [Value::Str(name), Value::Type(t)] = parts.as_slice() else {
-                return self.struct_arg_error(at_arg, out);
-            };
-            let cost = 1 + name.chars().count() as u128;
+        for (k, (name, t)) in fields.into_iter().enumerate() {
+            let chars = name.chars().count() as u64;
+            #[cfg(test)]
+            crate::counters::add(crate::counters::Count::Scanned, chars);
+            let cost = 1 + u128::from(chars);
             self.fuel.pay(cost).map_err(at(pos))?;
             term += cost;
             name_rule(pos, name, "field")?;
@@ -185,8 +190,8 @@ impl Evaluator<'_> {
                 }
             }
             order.push(y);
-            names.push(name.clone());
-            types.push(*t);
+            names.push(name.to_owned());
+            types.push(t);
         }
         limit::metadata(limit::sum_bits(types.iter().map(|t| self.tys.meta(*t))))
             .map_err(at(pos))?;
