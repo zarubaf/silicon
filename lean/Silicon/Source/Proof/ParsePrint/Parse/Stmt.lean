@@ -813,7 +813,7 @@ theorem Expr.place_head (e : Expr) :
       simp [Expr.toks, Expr.level, postfixLevel]
     rw [h11, Expr.toks_place h 11 (Nat.le_refl _)]
     exact head?_append_of hn
-  | case20 p b xs _ =>
+  | case20 p a _ =>
     intro _
     exact ⟨.symbol "@", by simp [Expr.toks, Expr.level, postfixLevel], Or.inr rfl⟩
   | _ => intro h; simp [Expr.place] at h

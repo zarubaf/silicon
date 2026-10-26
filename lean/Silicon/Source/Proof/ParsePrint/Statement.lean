@@ -205,42 +205,37 @@ The builtins (slice 4): each operand form of `@TypeOf`, `@typeInfo`, `@Struct`, 
 with any operand, and an `@field` selection of a place as a target. A builtin in a type position,
 also with an index and inside the other type forms.
 -/
-example : Printable [.const p (nm "X") (t "T") (.tuple p [.builtin p .typeOf [v "a"],
-    .builtin p .typeOf [.index p (.field p (v "a") (nm "b")) [.num p 0]],
-    .builtin p .typeOf [.select p (.builtin p .field [v "a", .str p "f"]) p 1],
-    .builtin p .field [.call p (v "g") [], .num p 0],
-    .field p (.builtin p .field [v "a", .num p 0]) (nm "c")])] := by decide +kernel
-example : Printable [.const p (nm "X") (t "T") (.tuple p [.builtin p .typeInfo [v "T"],
-    .builtin p .typeInfo [.call p (v "g") [.num p 1]],
-    .field p (.builtin p .typeInfo [.builtin p .typeOf [v "a"]]) (nm "fields")])] := by
+example : Printable [.const p (nm "X") (t "T") (.tuple p [.builtin p (.typeOf (v "a")),
+    .builtin p (.typeOf (.index p (.field p (v "a") (nm "b")) [.num p 0])),
+    .builtin p (.typeOf (.select p (.builtin p (.field (v "a") (.str p "f"))) p 1)),
+    .builtin p (.field (.call p (v "g") []) (.num p 0)),
+    .field p (.builtin p (.field (v "a") (.num p 0))) (nm "c")])] := by decide +kernel
+example : Printable [.const p (nm "X") (t "T") (.tuple p [.builtin p (.typeInfo (v "T")),
+    .builtin p (.typeInfo (.call p (v "g") [.num p 1])),
+    .field p (.builtin p (.typeInfo (.builtin p (.typeOf (v "a"))))) (nm "fields")])] := by
   decide +kernel
 example : Printable [.fn p false (nm "f") [] (t "T")
-    [.assign p (.builtin p .field [.field p (v "a") (nm "b"), .num p 0]) (v "x"),
-     .expr p (.builtin p .typeOf [v "a"])]] := by decide +kernel
-example : Printable [.alias p (nm "R") (.builtin p .struct [.array p [v "f"]]),
-    .const p (nm "X") (.index p (.builtin p .typeOf [v "a"]) [.num p 8])
-      (.builtin p .struct [.call p (v "g") []]),
-    .fn p false (nm "f") [] (.tuple p [.builtin p .typeInfo [v "T"],
-      .fn p [.mk false (.builtin p .field [v "a", .num p 0])] (.builtin p .typeOf [v "b"])])
-    [.local p false (nm "y") (some (.array p (.builtin p .struct [v "fs"]) (.num p 2))) (v "x"),
-     .expr p (.arrayType p (.builtin p .typeOf [v "x"]) (.num p 4))]] := by decide +kernel
+    [.assign p (.builtin p (.field (.field p (v "a") (nm "b")) (.num p 0))) (v "x"),
+     .expr p (.builtin p (.typeOf (v "a")))]] := by decide +kernel
+example : Printable [.alias p (nm "R") (.builtin p (.struct (.array p [v "f"]))),
+    .const p (nm "X") (.index p (.builtin p (.typeOf (v "a"))) [.num p 8])
+      (.builtin p (.struct (.call p (v "g") []))),
+    .fn p false (nm "f") [] (.tuple p [.builtin p (.typeInfo (v "T")),
+      .fn p [.mk false (.builtin p (.field (v "a") (.num p 0)))] (.builtin p (.typeOf (v "b")))])
+    [.local p false (nm "y") (some (.array p (.builtin p (.struct (v "fs"))) (.num p 2))) (v "x"),
+     .expr p (.arrayType p (.builtin p (.typeOf (v "x"))) (.num p 4))]] := by decide +kernel
 
 /-!
-A builtin with another number of operands, and an operand of `@TypeOf` that is not a place. Also
-an `@field` selection of a value that is not a place, as a target.
+An operand of `@TypeOf` that is not a place. Also an `@field` selection of a value that is not
+a place, as a target. A builtin with another number of operands has no AST (`BuiltinArgs`).
 -/
-example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .field [v "a"])] := by decide
-example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .typeOf [])] := by decide
-example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .typeInfo [v "a", v "b"])] := by
-  decide
 example : ¬ Printable [.fn p false (nm "f") [] (t "T")
-    [.assign p (.builtin p .typeInfo [v "a"]) (v "x")]] := by decide
-example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p .typeOf [.num p 1])] := by decide
-example : ¬ Printable [.const p (nm "X") (.builtin p .struct []) (v "a")] := by decide
-example : ¬ Printable [.const p (nm "X") (.builtin p .typeOf [.num p 1]) (v "a")] := by decide
+    [.assign p (.builtin p (.typeInfo (v "a"))) (v "x")]] := by decide
+example : ¬ Printable [.const p (nm "X") (t "T") (.builtin p (.typeOf (.num p 1)))] := by decide
+example : ¬ Printable [.const p (nm "X") (.builtin p (.typeOf (.num p 1))) (v "a")] := by decide
 example : ¬ Printable [.const p (nm "X") (t "T")
-    (.builtin p .typeOf [.builtin p .typeOf [v "a"]])] := by decide
+    (.builtin p (.typeOf (.builtin p (.typeOf (v "a")))))] := by decide
 example : ¬ Printable [.fn p false (nm "f") [] (t "T")
-    [.assign p (.builtin p .field [.call p (v "g") [], .num p 0]) (v "x")]] := by decide
+    [.assign p (.builtin p (.field (.call p (v "g") []) (.num p 0))) (v "x")]] := by decide
 
 end Silicon.Source.ParsePrint

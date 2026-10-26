@@ -335,12 +335,14 @@ mutual
     | .variant p t v _ _ xs called =>
       if called then .call p (.path p t v) (xs.map Expr.source) else .path p t v
     | .«match» p x as => .«match» p x.source (as.map Arm.source)
-    | .builtin f => .builtin f.pos f.builtin f.args
+    | .builtin f => .builtin f.pos f.source
 
   /-- The parsed operands of a builtin form. -/
-  def BuiltinForm.args : BuiltinForm → List Source.Expr
-    | .typeOf _ x | .typeInfo _ x | .atStruct _ x => [x.source]
-    | .atField _ b k => [b.source, k.source]
+  def BuiltinForm.source : BuiltinForm → Source.BuiltinArgs
+    | .typeOf _ x => .typeOf x.source
+    | .typeInfo _ x => .typeInfo x.source
+    | .atStruct _ x => .struct x.source
+    | .atField _ b k => .field b.source k.source
 
   def TypeExpr.source : TypeExpr → Source.TypeExpr
     | .name p x _ => .name p x
@@ -349,7 +351,7 @@ mutual
     | .tuple p ts => .tuple p (ts.map TypeExpr.source)
     | .array p t n => .array p t.source n.source
     | .fn p ps r => .fn p (ps.map FnParam.source) r.source
-    | .builtin f => .builtin f.pos f.builtin f.args
+    | .builtin f => .builtin f.pos f.source
 
   def FnParam.source : FnParam → Source.FnParam
     | .mk m t => .mk m t.source
@@ -872,24 +874,14 @@ mutual
     | .«match» p x as => do
       let x ← expr x
       return .«match» p x (← as.mapM arm)
-    | .builtin p b xs => do
-      match ← builtinForm p b xs with
-      | some f => return .builtin f
-      | none => return .unit p
+    | .builtin p a => return .builtin (← builtinForm p a)
 
-  /--
-  The form of the builtin `b` at `p` with the operands `xs`. The case `none` only makes the
-  match total. The parser checks the number of operands (`Parse.builtinCheck`) and reports
-  first, so only a tree that the parser did not make reaches it.
-  -/
-  def builtinForm (p : Pos) : Builtin → List Source.Expr → M (Option BuiltinForm)
-    | .typeOf, [x] => return some (.typeOf p (← expr x))
-    | .typeInfo, [x] => return some (.typeInfo p (← expr x))
-    | .struct, [x] => return some (.atStruct p (← expr x))
-    | .field, [b, k] => return some (.atField p (← expr b) (← expr k))
-    | b, xs => do
-      recordUnknown ⟨.S001, p, b.arityText xs.length⟩
-      return none
+  /-- The form of the builtin at `p` with the operands `a`. -/
+  def builtinForm (p : Pos) : Source.BuiltinArgs → M BuiltinForm
+    | .typeOf x => return .typeOf p (← expr x)
+    | .typeInfo x => return .typeInfo p (← expr x)
+    | .struct x => return .atStruct p (← expr x)
+    | .field b k => return .atField p (← expr b) (← expr k)
 
   def typeExpr : Source.TypeExpr → M TypeExpr
     | .name p n => do
@@ -907,10 +899,7 @@ mutual
     | .fn p ps r => do
       let ps ← ps.mapM fnParam
       return .fn p ps (← typeExpr r)
-    | .builtin p b xs => do
-      match ← builtinForm p b xs with
-      | some f => return .builtin f
-      | none => return .unit p
+    | .builtin p a => return .builtin (← builtinForm p a)
 
   /--
   The arguments of an index. The first argument of the prelude `Instance` (`inst`) resolves by

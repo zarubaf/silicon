@@ -43,7 +43,7 @@ The proof is an induction on the number of kinds. These parts of the parser need
 - `primary` at a name: a `::` after the name starts a variant path, and `Runs.primary_path`
   reads it. No `::` follows the second name.
 - `primary` at `@`: `Runs.primary_builtin` reads the name and the operands of a builtin. Its
-  checks pass, because `Printable` holds `Builtin.operandsOk`, and the erasure keeps a place.
+  checks pass, because `Printable` holds `BuiltinArgs.ok`, and the erasure keeps a place.
 - `typeExpr` at `@`: a builtin in a type position. `Runs.builtinHead` reads `@name(` for it and
   for `primary`, then `Runs.args` reads the operands, and the type suffixes follow.
 - `expr` at `match`: `Runs.arms` reads the arms up to the `}`, and `Runs.pattern` reads each
@@ -501,17 +501,27 @@ theorem argToks_mem {xs : List Expr} {y : Expr} (hy : y ∈ xs) :
     · omega
     · have := commaToks_mem hy; omega
 
+/-!
+A list of operands with the erasure of the operands `a` gives operands of the builtin of `a` with
+the erasure of `a`.
+-/
+theorem BuiltinArgs.ofList?_erase {a : BuiltinArgs} {ys : List Expr}
+    (h : ys.map Expr.erase = a.list.map Expr.erase) :
+    ∃ a', BuiltinArgs.ofList? a.builtin ys = some a' ∧ a'.erase = a.erase ∧ a'.list = ys := by
+  cases a <;> rcases ys with _ | ⟨y, _ | ⟨z, _ | ⟨w, ws⟩⟩⟩ <;>
+    simp_all [BuiltinArgs.ofList?, BuiltinArgs.list, BuiltinArgs.erase, BuiltinArgs.builtin]
+
 /-! The checks of a builtin pass on operands that fit it. -/
-theorem Runs.builtinCheck {ctx : Ctx} {i : Nat} {u : Token} {b : Builtin} {o : Pos}
-    {ys : List Expr} (h : b.operandsOk ys = true) :
-    Runs (Parse.builtinCheck u b o ys) ctx i i (fun _ => True) := by
-  have h1 : (ys.length != b.arity) = false := by
-    simp only [Builtin.operandsOk, Bool.and_eq_true, beq_iff_eq] at h
-    simp [h.1]
+theorem Runs.builtinCheck {ctx : Ctx} {i : Nat} {u : Token} {o : Pos} {a : BuiltinArgs}
+    {ys : List Expr} (hys : ys.map Expr.erase = a.list.map Expr.erase) (hok : a.ok = true) :
+    Runs (Parse.builtinCheck u a.builtin o ys) ctx i i
+      (fun a' => a'.erase = a.erase ∧ a'.list = ys) := by
+  obtain ⟨a', hof, he, hl⟩ := BuiltinArgs.ofList?_erase hys
+  have hok' : a'.ok = true := by rw [← BuiltinArgs.ok_erase, he, BuiltinArgs.ok_erase]; exact hok
   unfold Parse.builtinCheck
-  simp only [h1, h, Bool.false_eq_true, ite_false]
+  simp only [hof, hok']
   intro _
-  exact ⟨(), rfl, trivial⟩
+  exact ⟨a', rfl, he, hl⟩
 
 /-! The head `@name(` of a builtin: the parser reads its three kinds and gives the builtin. -/
 theorem Runs.builtinHead {b : Builtin} {ctx : Ctx} {i : Nat} {t : Token} {R : List Kind}
@@ -526,13 +536,14 @@ theorem Runs.builtinHead {b : Builtin} {ctx : Ctx} {i : Nat} {t : Token} {R : Li
 /-!
 A builtin at its `@`: the parser reads its head, then the operands of `ops`, then it checks them.
 -/
-theorem Runs.builtinOf {b : Builtin} {ctx : Ctx} {i j : Nat} {R : List Kind}
+theorem Runs.builtinOf {a : BuiltinArgs} {ctx : Ctx} {i j : Nat} {R : List Kind}
     {ops : P (List Node)} {Q : List Node → Prop}
-    (hw : Win ctx.input i (.symbol "@" :: .ident b.name :: .symbol "(" :: R))
+    (hw : Win ctx.input i (.symbol "@" :: .ident a.builtin.name :: .symbol "(" :: R))
     (hops : Runs ops ctx (i + 1 + 1 + 1) j Q)
-    (hok : ∀ ns, Q ns → b.operandsOk (ns.map (·.expr)) = true) :
+    (hys : ∀ ns, Q ns → (ns.map (·.expr)).map Expr.erase = a.list.map Expr.erase)
+    (hok : a.ok = true) :
     Runs (Parse.builtinOf (tokenAt ctx.input i) ops) ctx i j
-      (fun r => r.1 = b ∧ r.2.1 = r.2.2.map (·.expr) ∧ Q r.2.2) := by
+      (fun r => r.1.erase = a.erase ∧ Q r.2) := by
   unfold Parse.builtinOf
   refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_
   obtain ⟨u, b'⟩ := ub
@@ -540,40 +551,34 @@ theorem Runs.builtinOf {b : Builtin} {ctx : Ctx} {i j : Nat} {R : List Kind}
   subst b'
   refine Runs.peek_bind ?_
   refine Runs.bind hops fun ns hns => ?_
-  exact Runs.bind (Runs.builtinCheck (hok ns hns)) fun _ _ => Runs.pure ⟨rfl, rfl, hns⟩
+  exact Runs.bind (Runs.builtinCheck (hys ns hns) hok) fun _ ha => Runs.pure ⟨ha.1, hns⟩
 
 /-!
 A builtin `@name(args)`: the parser reads `@`, the name, and the operands up to `)`, then it
 checks them.
 -/
-theorem Runs.primary_builtin {p : Pos} {b : Builtin} {xs : List Expr}
-    (hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true) (hok : b.operandsOk xs = true) {ctx : Ctx}
+theorem Runs.primary_builtin {p : Pos} {a : BuiltinArgs}
+    (hE : ∀ x ∈ a.list, EGoal x ∧ x.printable = true) (hok : a.ok = true) {ctx : Ctx}
     {i f : Nat} {R : List Kind}
-    (hw : Win ctx.input i (.symbol "@" :: .ident b.name :: .symbol "(" ::
-      (argToks (xs.map (Expr.toks 0)) ++ .symbol ")" :: R)))
-    (hf : 4 * (argToks (xs.map (Expr.toks 0))).length + 3 ≤ f) :
-    Runs (primary (f + 1)) ctx i (i + ((argToks (xs.map (Expr.toks 0))).length + 4)) (fun r =>
-      r.1.expr.erase = (Expr.builtin p b xs).erase ∧
-        r.1.height ≤ (argToks (xs.map (Expr.toks 0))).length + 1 ∧
-        r.2 = (Expr.builtin p b xs).place) := by
+    (hw : Win ctx.input i (.symbol "@" :: .ident a.builtin.name :: .symbol "(" ::
+      (argToks (a.list.map (Expr.toks 0)) ++ .symbol ")" :: R)))
+    (hf : 4 * (argToks (a.list.map (Expr.toks 0))).length + 3 ≤ f) :
+    Runs (primary (f + 1)) ctx i (i + ((argToks (a.list.map (Expr.toks 0))).length + 4))
+      (fun r => r.1.expr.erase = (Expr.builtin p a).erase ∧
+        r.1.height ≤ (argToks (a.list.map (Expr.toks 0))).length + 1 ∧
+        r.2 = (Expr.builtin p a).place) := by
   rw [Parse.primary]
   refine Runs.peek_bind ?_
   simp only [hw.head]
   refine Runs.bind (Runs.builtinOf hw (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false)
-    hE (fun _ => rfl) ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp)) fun ns hns => by
-      have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
-        rw [List.map_map]; exact hns.1
-      rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok)
-    fun r hr => ?_
-  obtain ⟨b', ys, ns⟩ := r
+    hE (fun _ => rfl) ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp))
+    (fun ns hns => by rw [List.map_map]; exact hns.1) hok) fun r hr => ?_
+  obtain ⟨a', ns⟩ := r
   simp only at hr
-  obtain ⟨rfl, rfl, hns⟩ := hr
-  have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
-    rw [List.map_map]; exact hns.1
-  have he : ∀ c, (Expr.builtin (tokenAt ctx.input i).pos c (ns.map (·.expr))).erase =
-      (Expr.builtin p c xs).erase := fun c => by
-    simp only [Expr.erase, hys]
-  refine Runs.idx (by omega) (Runs.pure ⟨he _, ?_, ?_⟩)
+  obtain ⟨ha, hns⟩ := hr
+  have he : (Expr.builtin (tokenAt ctx.input i).pos a').erase = (Expr.builtin p a).erase := by
+    simp only [Expr.erase, ha]
+  refine Runs.idx (by omega) (Runs.pure ⟨he, ?_, ?_⟩)
   · refine height_le fun x hx => ?_
     simp only [List.mem_map] at hx
     obtain ⟨m, hm, rfl⟩ := hx
@@ -1271,16 +1276,16 @@ theorem Runs.type_of (B : Nat) (hE : ∀ x, (x.toks 0).length < B → EGoal x) (
     have hw2 := hw.drop
     exact ⟨Runs.typeSuffix_stop (by rw [hw2.head]; exact hu'.1) (by rw [hw2.head]; exact hu'.2),
       hk a.1 a.2 (f + 1) hx1 hx2 (by omega)⟩
-  | case7 p b xs =>
+  | case7 p a =>
     intro hB
     refine ⟨fun hp ctx i f u R hw hu _ hf l Q hk => ?_, nf _ fun _ _ _ h => by cases h⟩
-    simp only [TypeExpr.printable, Bool.and_eq_true, Expr.printableAll_eq,
+    simp only [TypeExpr.printable, Bool.and_eq_true, BuiltinArgs.printable_eq,
       List.all_eq_true] at hp
     obtain ⟨hok, hpxs⟩ := hp
-    simp only [TypeExpr.toks, List.length_append, List.length_cons, List.length_nil]
-      at hw hf hk hB
+    simp only [TypeExpr.toks, BuiltinArgs.toks_eq, List.length_append, List.length_cons,
+      List.length_nil] at hw hf hk hB
     simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
-    have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+    have hE : ∀ x ∈ a.list, EGoal x ∧ x.printable = true := fun x hx =>
       ⟨hE x (by have := argToks_mem hx; omega), hpxs x hx⟩
     obtain ⟨f, rfl⟩ : ∃ g, f = g + 1 := ⟨f - 1, by omega⟩
     rw [Parse.typeExpr]
@@ -1288,19 +1293,14 @@ theorem Runs.type_of (B : Nat) (hE : ∀ x, (x.toks 0).length < B → EGoal x) (
     simp only [hw.head]
     refine Runs.bind (Runs.builtinOf hw (Runs.args (Or.inl rfl) (allowEmpty := true)
       (top := false) hE (fun _ => rfl) ctx (i + 1 + 1 + 1) f (u :: R) hw.tail.tail.tail
-      (by omega) (by simp)) fun ns hns => by
-        have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
-          rw [List.map_map]; exact hns.1
-        rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok)
+      (by omega) (by simp)) (fun ns hns => by rw [List.map_map]; exact hns.1) hok)
       fun r hr => ?_
-    obtain ⟨b', ys, ns⟩ := r
+    obtain ⟨a', ns⟩ := r
     simp only at hr
-    obtain ⟨rfl, rfl, hns⟩ := hr
-    have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
-      rw [List.map_map]; exact hns.1
+    obtain ⟨ha, hns⟩ := hr
     refine Runs.start (by omega) (hk _ _ f ?_ ?_ (by omega))
-    · simp only [TypeExpr.erase, hys]
-    · refine Nat.le_trans (height_le (B := (argToks (xs.map (Expr.toks 0))).length) ?_)
+    · simp only [TypeExpr.erase, ha]
+    · refine Nat.le_trans (height_le (B := (argToks (a.list.map (Expr.toks 0))).length) ?_)
         (by omega)
       intro x hx
       simp only [List.mem_map] at hx
@@ -1578,22 +1578,23 @@ theorem Runs.postfix_paren (u : Expr) (hl : u.level < 11) (hpl : u.place = false
 
 theorem Runs.postfix (u : Expr) : PGoal u := by
   induction u using Expr.ind with
-  | case20 p b xs _ =>
+  | case20 p a _ =>
     intro hp hIH ctx i f t R hw ht _ hf l Q hk
     unfold SufK at hk
-    simp only [Expr.printable, Bool.and_eq_true, Expr.printableAll_eq, List.all_eq_true] at hp
+    simp only [Expr.printable, Bool.and_eq_true, BuiltinArgs.printable_eq, List.all_eq_true]
+      at hp
     obtain ⟨hok, hpxs⟩ := hp
-    have hT : (Expr.builtin p b xs).toks 11 = .symbol "@" :: .ident b.name :: .symbol "(" ::
-        (argToks (xs.map (Expr.toks 0)) ++ [.symbol ")"]) := by
+    have hT : (Expr.builtin p a).toks 11 = .symbol "@" :: .ident a.builtin.name :: .symbol "(" ::
+        (argToks (a.list.map (Expr.toks 0)) ++ [.symbol ")"]) := by
       simp [Expr.toks, Expr.level, postfixLevel]
     rw [hT] at hw hf hk hIH
     simp only [List.length_cons, List.length_append, List.length_nil] at hf hk hIH
     simp only [List.cons_append, List.append_assoc, List.nil_append] at hw
     obtain ⟨f, rfl⟩ : ∃ g, f = g + 2 := ⟨f - 2, by omega⟩
-    have hE : ∀ x ∈ xs, EGoal x ∧ x.printable = true := fun x hx =>
+    have hE : ∀ x ∈ a.list, EGoal x ∧ x.printable = true := fun x hx =>
       ⟨hIH x (by have := argToks_mem hx; omega), hpxs x hx⟩
-    refine Runs.postfix_base (T := (argToks (xs.map (Expr.toks 0))).length + 4)
-      (u := .builtin p b xs) (pl := (Expr.builtin p b xs).place)
+    refine Runs.postfix_base (T := (argToks (a.list.map (Expr.toks 0))).length + 4)
+      (u := .builtin p a) (pl := (Expr.builtin p a).place)
       (Runs.mono (Runs.primary_builtin (p := p) hE hok hw (by omega)) ?_) ?_
     · rintro r ⟨h1, h2, h3⟩
       exact ⟨⟨h1, by omega⟩, h3⟩

@@ -69,10 +69,14 @@ mutual
       | .«match» _ s arms =>
         [.keyword "match", .symbol "("] ++ s.toks 0 ++ [.symbol ")", .symbol "{"]
           ++ (arms.map Arm.toks).flatten ++ [.symbol "}"]
-      | .builtin _ b xs =>
-        [.symbol "@", .ident b.name, .symbol "("] ++ argToks (xs.map (Expr.toks 0)) ++
-          [.symbol ")"]
+      | .builtin _ a =>
+        [.symbol "@", .ident a.builtin.name, .symbol "("] ++ argToks a.toks ++ [.symbol ")"]
     if e.level < ctx then .symbol "(" :: body ++ [.symbol ")"] else body
+
+  /-- The kinds of each operand of a builtin, in source order. -/
+  def BuiltinArgs.toks : BuiltinArgs → List (List Kind)
+    | .typeOf x | .typeInfo x | .struct x => [x.toks 0]
+    | .field b k => [b.toks 0, k.toks 0]
 
   def TypeExpr.toks : TypeExpr → List Kind
     | .name _ n => [.ident n]
@@ -87,9 +91,8 @@ mutual
     | .fn _ ps r =>
       [.keyword "fn", .symbol "("] ++ argToks (ps.map FnParam.toks) ++ [.symbol ")", .symbol "->"]
         ++ r.toks
-    | .builtin _ b xs =>
-      [.symbol "@", .ident b.name, .symbol "("] ++ argToks (xs.map (Expr.toks 0)) ++
-        [.symbol ")"]
+    | .builtin _ a =>
+      [.symbol "@", .ident a.builtin.name, .symbol "("] ++ argToks a.toks ++ [.symbol ")"]
 
   def FnParam.toks : FnParam → List Kind
     | .mk m t => (if m then [.keyword "mut"] else []) ++ t.toks
@@ -98,6 +101,9 @@ mutual
   def Arm.toks : Arm → List Kind
     | .mk q v => q.toks ++ .symbol "=>" :: v.toks 0 ++ [.symbol ","]
 end
+
+@[simp] theorem BuiltinArgs.toks_eq (a : BuiltinArgs) : a.toks = a.list.map (Expr.toks 0) := by
+  cases a <;> simp [BuiltinArgs.toks, BuiltinArgs.list]
 
 /-! The kinds of the `as` key of a port: `as` and the key, or nothing. -/
 def PortForm.asToks : PortForm Expr → List Kind

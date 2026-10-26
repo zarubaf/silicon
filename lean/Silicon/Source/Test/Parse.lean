@@ -828,11 +828,11 @@ def helper : Item :=
 #guard roundtrip
   [.module p (nm "M") [] none [.mem p (nm "m") (uint (n 8)) (bin .add (v "N") (n 1))]]
 #guard roundtrip []
-#guard roundtrip [.alias p (nm "R") (.builtin p .struct [v "fs"]),
-  .const p (nm "X") (.index p (.builtin p .typeOf [v "a"]) [n 8]) (.builtin p .struct [v "fs"]),
-  .fn p false (nm "f") [⟨p, .none, nm "x", .builtin p .typeOf [v "a"]⟩]
-    (.tuple p [.builtin p .typeInfo [v "T"], .array p (.builtin p .field [v "a", n 0]) (n 2)])
-    [.local p false (nm "y") (some (.builtin p .struct [.array p []])) (v "x")]]
+#guard roundtrip [.alias p (nm "R") (.builtin p (.struct (v "fs"))),
+  .const p (nm "X") (.index p (.builtin p (.typeOf (v "a"))) [n 8]) (.builtin p (.struct (v "fs"))),
+  .fn p false (nm "f") [⟨p, .none, nm "x", .builtin p (.typeOf (v "a"))⟩]
+    (.tuple p [.builtin p (.typeInfo (v "T")), .array p (.builtin p (.field (v "a") (n 0))) (n 2)])
+    [.local p false (nm "y") (some (.builtin p (.struct (.array p [])))) (v "x")]]
 
 /-! Parse, print, and parse again. The second parse gives the AST of the first. -/
 def reparse (s : String) : Bool :=
@@ -967,7 +967,7 @@ selection of a place, at any depth.
 #guard ex "-@TypeOf(x)" == "(unary neg (builtin TypeOf ((name \"x\"))))"
 #guard ex "@ field (x, 0,)" == "(builtin field ((name \"x\") (num 0)))"
 #guard match constValue "@TypeOf(x)" with
-  | .ok (.builtin q .typeOf [.name r "x"]) => q == ⟨1, 14⟩ && r == ⟨1, 22⟩
+  | .ok (.builtin q (.typeOf (.name r "x"))) => q == ⟨1, 14⟩ && r == ⟨1, 22⟩
   | _ => false
 
 /-! Each other form of the operand of `@TypeOf` is `S001` "Query operand" at its first token. -/
@@ -1077,21 +1077,21 @@ Another builtin is no target.
 #guard stFails "@field(x, 0).m() = 1;" .S001 18
 
 /-! The parser reads the printed text of each form back to the same AST. -/
-def bi (b : Builtin) (xs : List Expr) : Expr := .builtin p b xs
-#guard [bi .typeOf [v "x"], bi .typeOf [.field p (v "x") (nm "f")],
-    bi .typeOf [.select p (v "t") p 1], bi .typeOf [.index p (v "xs") [bin .add (v "i") (n 1)]],
-    bi .typeOf [.select p (bi .field [.field p (v "x") (nm "f"), .str p "a"]) p 0],
-    bi .typeOf [.index p (v "UInt") [n 8]], bi .field [.call p (v "f") [], n 0],
-    .field p (bi .field [v "x", n 0]) (nm "a"), bin .add (bi .typeOf [v "x"]) (n 1),
-    .call p (bi .field [v "x", n 0]) [n 1], .method p (bi .field [v "x", n 0]) (nm "m") [],
-    .unary p .neg (bi .typeOf [v "x"]),
-    .index p (v "x") [bi .typeOf [bi .field [v "y", bi .typeOf [v "z"]]]],
-    bi .typeInfo [v "T"], bi .typeInfo [.index p (v "UInt") [n 8]],
-    bi .typeInfo [bi .typeOf [.index p (v "xs") [n 0]]], bi .typeInfo [.call p (v "f") [n 1]],
-    .field p (bi .typeInfo [v "T"]) (nm "fields"),
-    bi .field [bi .typeInfo [v "T"], .str p "element"]].all constRoundtrip
-#guard fnRoundtrip [.assign p (bi .field [v "x", n 0]) (n 1),
-  .connect p (.field p (bi .field [.field p (v "u") (nm "a"), n 0]) (nm "b")) (n 1),
-  .expr p (bi .typeOf [v "x"]), .expr p (bin .eq (bi .field [v "x", n 0]) (n 1))]
+def bi (a : BuiltinArgs) : Expr := .builtin p a
+#guard [bi (.typeOf (v "x")), bi (.typeOf (.field p (v "x") (nm "f"))),
+    bi (.typeOf (.select p (v "t") p 1)), bi (.typeOf (.index p (v "xs") [bin .add (v "i") (n 1)])),
+    bi (.typeOf (.select p (bi (.field (.field p (v "x") (nm "f")) (.str p "a"))) p 0)),
+    bi (.typeOf (.index p (v "UInt") [n 8])), bi (.field (.call p (v "f") []) (n 0)),
+    .field p (bi (.field (v "x") (n 0))) (nm "a"), bin .add (bi (.typeOf (v "x"))) (n 1),
+    .call p (bi (.field (v "x") (n 0))) [n 1], .method p (bi (.field (v "x") (n 0))) (nm "m") [],
+    .unary p .neg (bi (.typeOf (v "x"))),
+    .index p (v "x") [bi (.typeOf (bi (.field (v "y") (bi (.typeOf (v "z"))))))],
+    bi (.typeInfo (v "T")), bi (.typeInfo (.index p (v "UInt") [n 8])),
+    bi (.typeInfo (bi (.typeOf (.index p (v "xs") [n 0])))), bi (.typeInfo (.call p (v "f") [n 1])),
+    .field p (bi (.typeInfo (v "T"))) (nm "fields"),
+    bi (.field (bi (.typeInfo (v "T"))) (.str p "element"))].all constRoundtrip
+#guard fnRoundtrip [.assign p (bi (.field (v "x") (n 0))) (n 1),
+  .connect p (.field p (bi (.field (.field p (v "u") (nm "a")) (n 0))) (nm "b")) (n 1),
+  .expr p (bi (.typeOf (v "x"))), .expr p (bin .eq (bi (.field (v "x") (n 0))) (n 1))]
 
 end Silicon.Source.Test.Parse

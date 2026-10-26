@@ -91,7 +91,9 @@ of the number literal, for `S013`. A `method` is the receiver call `recv.name(ar
 is the position of the receiver, the start of the call. A `path` is a variant path `E::V` of
 two names (slice 3). A constructor `E::V(args)` is a `call` of a `path`. A `match` holds its
 scrutinee and its arms, and an `Arm` holds a pattern and its expression (slice 3). A `builtin`
-is `@name(args)` at the position of its `@`, with the operands in source order (slice 4).
+is `@name(args)` at the position of its `@` (slice 4). Its `BuiltinArgs` names the builtin and
+holds its operands in source order: one for `@TypeOf`, `@typeInfo`, and `@Struct`, and two for
+`@field`. Thus each builtin node has the number of operands of its name.
 
 A type expression is a type name, a type family with its static arguments, or the unit type
 `()`. It can also be a tuple type, an array type `[T; N]`, or a function type
@@ -121,7 +123,13 @@ mutual
     | fnType (pos : Pos) (params : List FnParam) (ret : TypeExpr)
     | path (pos : Pos) (ty variant : Ident)
     | «match» (pos : Pos) (scrut : Expr) (arms : List Arm)
-    | builtin (pos : Pos) (b : Builtin) (args : List Expr)
+    | builtin (pos : Pos) (args : BuiltinArgs)
+
+  inductive BuiltinArgs where
+    | typeOf (place : Expr)
+    | typeInfo (arg : Expr)
+    | struct (arg : Expr)
+    | field (base key : Expr)
 
   inductive TypeExpr where
     | name (pos : Pos) (name : String)
@@ -130,7 +138,7 @@ mutual
     | tuple (pos : Pos) (elems : List TypeExpr)
     | array (pos : Pos) (elem : TypeExpr) (len : Expr)
     | fn (pos : Pos) (params : List FnParam) (ret : TypeExpr)
-    | builtin (pos : Pos) (b : Builtin) (args : List Expr)
+    | builtin (pos : Pos) (args : BuiltinArgs)
 
   inductive FnParam where
     | mk (mutable : Bool) (ty : TypeExpr)
@@ -139,7 +147,7 @@ mutual
     | mk (pat : Pattern) (value : Expr)
 end
 
-deriving instance Repr, BEq, Inhabited for Expr, TypeExpr, FnParam, Arm
+deriving instance Repr, BEq, Inhabited for Expr, BuiltinArgs, TypeExpr, FnParam, Arm
 
 /-!
 A place: a name, or a field, an index, a selector, or an `@field` selection of a place (section
@@ -148,17 +156,36 @@ A place: a name, or a field, an index, a selector, or an `@field` selection of a
 def Expr.place : Expr → Bool
   | .name .. => true
   | .field _ b _ | .index _ b _ | .select _ b .. => b.place
-  | .builtin _ .field [b, _] => b.place
+  | .builtin _ (.field b _) => b.place
   | _ => false
 
+/-! The builtin of the operands `a`. -/
+def BuiltinArgs.builtin : BuiltinArgs → Builtin
+  | .typeOf _ => .typeOf
+  | .typeInfo _ => .typeInfo
+  | .struct _ => .struct
+  | .field .. => .field
+
+/-! The operands `a` in source order. -/
+def BuiltinArgs.list : BuiltinArgs → List Expr
+  | .typeOf x | .typeInfo x | .struct x => [x]
+  | .field b k => [b, k]
+
+/-! The operands of the builtin `b` from the list `xs`, if their number is the arity of `b`. -/
+def BuiltinArgs.ofList? : Builtin → List Expr → Option BuiltinArgs
+  | .typeOf, [x] => some (.typeOf x)
+  | .typeInfo, [x] => some (.typeInfo x)
+  | .struct, [x] => some (.struct x)
+  | .field, [b, k] => some (.field b k)
+  | _, _ => none
+
 /-!
-The operands `xs` fit the builtin `b` (section 9.3): their number is the arity of `b`, and the
-operand of `@TypeOf` is a place. The operand of `@typeInfo` and of `@Struct` is any expression.
+The operands `a` fit their builtin (section 9.3): the operand of `@TypeOf` is a place. The
+operand of `@typeInfo` and of `@Struct` is any expression.
 -/
-def Builtin.operandsOk (b : Builtin) (xs : List Expr) : Bool :=
-  xs.length == b.arity && match b with
-    | .typeOf => xs.all Expr.place
-    | .typeInfo | .struct | .field => true
+def BuiltinArgs.ok : BuiltinArgs → Bool
+  | .typeOf x => x.place
+  | .typeInfo _ | .struct _ | .field .. => true
 
 /-!
 The name form of a port (section 5.6). A `scalar` port has a name only. An `indexed` port has its

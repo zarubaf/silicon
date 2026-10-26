@@ -408,21 +408,20 @@ def keyed : List Item :=
 A builtin (slice 4) dumps its name after `@` and its operands. It prints as a primary, so it
 takes each suffix without parentheses.
 -/
-def bi (b : Builtin) (xs : List Expr) : Expr := .builtin p b xs
-#guard exprDump (bi .typeOf [v "x"]) == "(builtin TypeOf ((name \"x\")))"
-#guard exprDump (bi .field [v "x", .str p "a"]) == "(builtin field ((name \"x\") (str \"a\")))"
-#guard exprDump (bi .typeOf []) == "(builtin TypeOf ())"
-#guard exprText (bi .typeOf [.field p (v "x") (nm "f")]) == "@TypeOf(x.f)"
-#guard exprText (bi .field [v "x", .str p "a"]) == "@field(x, \"a\")"
-#guard exprText (.field p (bi .field [v "x", n 0]) (nm "b")) == "@field(x, 0).b"
-#guard exprText (.call p (bi .field [v "x", n 0]) [n 1]) == "@field(x, 0)(1)"
-#guard exprText (bin .mul (bi .typeOf [v "x"]) (bin .add (v "a") (n 1))) == "@TypeOf(x) * (a + 1)"
-#guard stmtDump (.assign p (bi .field [v "x", n 0]) (n 1)) ==
+def bi (a : BuiltinArgs) : Expr := .builtin p a
+#guard exprDump (bi (.typeOf (v "x"))) == "(builtin TypeOf ((name \"x\")))"
+#guard exprDump (bi (.field (v "x") (.str p "a"))) == "(builtin field ((name \"x\") (str \"a\")))"
+#guard exprText (bi (.typeOf (.field p (v "x") (nm "f")))) == "@TypeOf(x.f)"
+#guard exprText (bi (.field (v "x") (.str p "a"))) == "@field(x, \"a\")"
+#guard exprText (.field p (bi (.field (v "x") (n 0))) (nm "b")) == "@field(x, 0).b"
+#guard exprText (.call p (bi (.field (v "x") (n 0))) [n 1]) == "@field(x, 0)(1)"
+#guard exprText (bin .mul (bi (.typeOf (v "x"))) (bin .add (v "a") (n 1))) == "@TypeOf(x) * (a + 1)"
+#guard stmtDump (.assign p (bi (.field (v "x") (n 0))) (n 1)) ==
   "(assign (builtin field ((name \"x\") (num 0))) (num 1))"
 
 /-! `@typeInfo` dumps and prints as the other builtins. -/
-#guard exprDump (bi .typeInfo [v "T"]) == "(builtin typeInfo ((name \"T\")))"
-#guard exprText (bi .typeInfo [.index p (v "UInt") [n 8]]) == "@typeInfo(UInt[8])"
-#guard exprText (.field p (bi .typeInfo [v "T"]) (nm "fields")) == "@typeInfo(T).fields"
+#guard exprDump (bi (.typeInfo (v "T"))) == "(builtin typeInfo ((name \"T\")))"
+#guard exprText (bi (.typeInfo (.index p (v "UInt") [n 8]))) == "@typeInfo(UInt[8])"
+#guard exprText (.field p (bi (.typeInfo (v "T"))) (nm "fields")) == "@typeInfo(T).fields"
 
 end Silicon.Source.Test.Print
