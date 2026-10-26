@@ -524,6 +524,25 @@ theorem Runs.builtinHead {b : Builtin} {ctx : Ctx} {i : Nat} {t : Token} {R : Li
   exact Runs.bump_bind (Runs.bump_bind (Runs.sym_bind hw.tail.tail.head (Runs.pure rfl)))
 
 /-!
+A builtin at its `@`: the parser reads its head, then the operands of `ops`, then it checks them.
+-/
+theorem Runs.builtinOf {b : Builtin} {ctx : Ctx} {i j : Nat} {R : List Kind}
+    {ops : P (List Node)} {Q : List Node → Prop}
+    (hw : Win ctx.input i (.symbol "@" :: .ident b.name :: .symbol "(" :: R))
+    (hops : Runs ops ctx (i + 1 + 1 + 1) j Q)
+    (hok : ∀ ns, Q ns → b.operandsOk (ns.map (·.expr)) = true) :
+    Runs (Parse.builtinOf (tokenAt ctx.input i) ops) ctx i j
+      (fun r => r.1 = b ∧ r.2.1 = r.2.2.map (·.expr) ∧ Q r.2.2) := by
+  unfold Parse.builtinOf
+  refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_
+  obtain ⟨u, b'⟩ := ub
+  simp only at hub
+  subst b'
+  refine Runs.peek_bind ?_
+  refine Runs.bind hops fun ns hns => ?_
+  exact Runs.bind (Runs.builtinCheck (hok ns hns)) fun _ _ => Runs.pure ⟨rfl, rfl, hns⟩
+
+/-!
 A builtin `@name(args)`: the parser reads `@`, the name, and the operands up to `)`, then it
 checks them.
 -/
@@ -540,21 +559,21 @@ theorem Runs.primary_builtin {p : Pos} {b : Builtin} {xs : List Expr}
   rw [Parse.primary]
   refine Runs.peek_bind ?_
   simp only [hw.head]
-  refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_
-  obtain ⟨u, b'⟩ := ub
-  simp only at hub
-  subst b'
-  refine Runs.peek_bind ?_
-  refine Runs.bind (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE (fun _ => rfl)
-    ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp)) fun ns hns => ?_
+  refine Runs.bind (Runs.builtinOf hw (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false)
+    hE (fun _ => rfl) ctx (i + 1 + 1 + 1) f R hw.tail.tail.tail hf (by simp)) fun ns hns => by
+      have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
+        rw [List.map_map]; exact hns.1
+      rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok)
+    fun r hr => ?_
+  obtain ⟨b', ys, ns⟩ := r
+  simp only at hr
+  obtain ⟨rfl, rfl, hns⟩ := hr
   have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
     rw [List.map_map]; exact hns.1
-  have hok' : b.operandsOk (ns.map (·.expr)) = true := by
-    rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok
-  have he : (Expr.builtin (tokenAt ctx.input i).pos b (ns.map (·.expr))).erase =
-      (Expr.builtin p b xs).erase := by
+  have he : ∀ c, (Expr.builtin (tokenAt ctx.input i).pos c (ns.map (·.expr))).erase =
+      (Expr.builtin p c xs).erase := fun c => by
     simp only [Expr.erase, hys]
-  refine Runs.bind (Runs.builtinCheck hok') fun _ _ => Runs.idx (by omega) (Runs.pure ⟨he, ?_, ?_⟩)
+  refine Runs.idx (by omega) (Runs.pure ⟨he _, ?_, ?_⟩)
   · refine height_le fun x hx => ?_
     simp only [List.mem_map] at hx
     obtain ⟨m, hm, rfl⟩ := hx
@@ -1267,19 +1286,18 @@ theorem Runs.type_of (B : Nat) (hE : ∀ x, (x.toks 0).length < B → EGoal x) (
     rw [Parse.typeExpr]
     refine Runs.peek_bind ?_
     simp only [hw.head]
-    refine Runs.bind (Runs.builtinHead hw) fun ub hub => ?_
-    obtain ⟨v, b'⟩ := ub
-    simp only at hub
-    subst b'
-    refine Runs.peek_bind ?_
-    refine Runs.bind (Runs.args (Or.inl rfl) (allowEmpty := true) (top := false) hE
-      (fun _ => rfl) ctx (i + 1 + 1 + 1) f (u :: R) hw.tail.tail.tail (by omega) (by simp))
-      fun ns hns => ?_
+    refine Runs.bind (Runs.builtinOf hw (Runs.args (Or.inl rfl) (allowEmpty := true)
+      (top := false) hE (fun _ => rfl) ctx (i + 1 + 1 + 1) f (u :: R) hw.tail.tail.tail
+      (by omega) (by simp)) fun ns hns => by
+        have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
+          rw [List.map_map]; exact hns.1
+        rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok)
+      fun r hr => ?_
+    obtain ⟨b', ys, ns⟩ := r
+    simp only at hr
+    obtain ⟨rfl, rfl, hns⟩ := hr
     have hys : (ns.map (·.expr)).map Expr.erase = xs.map Expr.erase := by
       rw [List.map_map]; exact hns.1
-    have hok' : b.operandsOk (ns.map (·.expr)) = true := by
-      rw [← Builtin.operandsOk_erase, hys, Builtin.operandsOk_erase]; exact hok
-    refine Runs.bind (Runs.builtinCheck hok') fun _ _ => ?_
     refine Runs.start (by omega) (hk _ _ f ?_ ?_ (by omega))
     · simp only [TypeExpr.erase, hys]
     · refine Nat.le_trans (height_le (B := (argToks (xs.map (Expr.toks 0))).length) ?_)
