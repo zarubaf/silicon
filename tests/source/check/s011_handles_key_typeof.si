@@ -1,0 +1,15 @@
+// S011: a key of `@TypeOf` is a tuple that holds a register.
+// TOP M()
+fn k(a: (Reg[UInt[4]], Int)) -> Type {
+    let xs = [1, 2];
+    // expected-error S011 @+2
+    // expected-message: a key of `@TypeOf` takes only static values, but a value of `(Reg[UInt[4]], Int)` can hold handles; pass the data through a port, or use the handles in the module that declares them
+    return @TypeOf(xs[a]);
+}
+module M() {
+    output o: UInt[4];
+    reg r: UInt[4] = 0;
+    r := 0;
+    o := 0;
+    let t = k((r, 1));
+}

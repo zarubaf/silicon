@@ -1,0 +1,12 @@
+// S011: a tuple that holds a register is a module argument. The value is no handle, but its type can hold one.
+// TOP M()
+module C(comptime p: UInt[8]) {
+}
+module M() {
+    reg r: UInt[8] = 0;
+    r := 0;
+    let a = (r, 1);
+    // expected-error S011 @+2
+    // expected-message: a module argument takes only static values, but a value of `(Reg[UInt[8]], Int)` can hold handles; pass the data through a port, or use the handles in the module that declares them
+    instance u = C(a);
+}
