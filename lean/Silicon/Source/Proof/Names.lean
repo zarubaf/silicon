@@ -1,4 +1,5 @@
 -- SPDX-License-Identifier: Apache-2.0
+import Silicon.Source.Lex
 import Silicon.Source.Names
 
 /-!
@@ -475,5 +476,19 @@ theorem encode_validName (p : Name) (hp : p.valid = true) : validName (encode p)
         rw [← ht]; rfl
       rw [join, hp', String.toList_intercalate]
       simp [List.intercalate_cons_cons]
+
+/-! The name rule of a computed name (section 5.6) gives a user field (section 7.1). Thus a
+field name of `@Struct` and a public port name need no new case of `names_injective`. -/
+private theorem identChar_fieldChar (c : Char) : Lex.identChar c = fieldChar c := by
+  simp only [Lex.identChar, fieldChar, nameStart, Char.isAlphanum]
+  cases c.isAlpha <;> cases c.isDigit <;> cases (c == '_') <;> rfl
+
+theorem identifier_userField (s : String) (h : Lex.identifier s = true) :
+    userField s = true := by
+  have e : Lex.identChar = fieldChar := funext identChar_fieldChar
+  unfold Lex.identifier at h
+  unfold userField
+  rw [e] at h
+  exact h
 
 end Silicon.Source.Names
