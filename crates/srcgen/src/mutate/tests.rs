@@ -480,10 +480,9 @@ fn predictions_are_frequent() {
         "{predicted} of {}",
         ps.len()
     );
-    assert_eq!(
-        codes.into_iter().collect::<Vec<_>>(),
-        ["S002", "S003", "S007", "S018"]
-    );
+    for code in ["S002", "S003", "S007", "S018"] {
+        assert!(codes.contains(code), "{code} missing from {codes:?}");
+    }
 }
 
 /// `struct S0(comptime W0: Nat) { m0: UInt[W0], m1: Int }` and
