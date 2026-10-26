@@ -1,0 +1,17 @@
+// S010: An own output of the module is no instance handle.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    // expected-error S010 @+2
+    // expected-message: `@ports` takes an instance handle, not the output `o`; pass the name of an instance, for example `u` of `instance u = M(...);`
+    let t = @ports(o);
+    o := u.q;
+}
