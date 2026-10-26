@@ -89,11 +89,11 @@ declaration. A family is no mutable root, so a `mut` actual with a family root i
   a `type` item, `()`, a tuple type, or an array type takes no index.
 - A function type takes no index, in a type and in an expression: `(fn () -> UInt)[8]` is
   `S007` at the index.
-- A builtin in a type position gives a complete type, so it takes no index. Thus
-  `@TypeOf(x)[8]` in a type is `S007` "Index of a builtin type" at the `@`. In a chain of indices
-  such as `@TypeOf(x)[1][2]`, only the first index reports. `@ports` gives a list and not a
-  type, so its index has the text "Index of `@ports` in a type". An index of a builtin in an
-  expression keeps the rules of an index of a value.
+- A builtin in a type position gives a complete type, or a value that is not a type, so it
+  takes no index. Thus `@TypeOf(x)[8]` in a type is `S007` "Index of a builtin type" at the
+  `@`. In a chain of indices such as `@TypeOf(x)[1][2]`, only the first index reports.
+  `@ports` gives a list and not a type, so its index has the text "Index of `@ports` in a type".
+  An index of a builtin in an expression keeps the rules of an index of a value.
 - A variant constructor `E::V(args)` has one argument for each payload type of `V`. A path
   `E::V` without a call has none. The error is at the start of the path (section 5.6). An enum
   has no parameters, so its name takes no index. Only `Elab` checks a call `E(args)` of the
@@ -372,15 +372,21 @@ def name (static : Bool) (pos : Pos) (n : String) : Ref → M Unit
 
 /-!
 The `S007` text of `m` index arguments after the builtin `b` in a type (section 6.2). It is
-"Index of `@ports` in a type" for `@ports`, else "Index of a builtin type".
+"Index of `@ports` in a type" for `@ports`. Each other builtin has "Index of a builtin type",
+with its own fix. `@TypeOf` and `@Struct` give a complete type, and `@typeInfo` gives a record.
 -/
 def builtinIndexText (b : Builtin) (m : Nat) : String :=
   let q := s!"@{b.name}"
+  let text (h : String) :=
+    s!"`{q}(...)` in a type position takes 0 argument(s), but it has {m}; {h}"
   match b with
   | .ports => "`@ports` gives a `List[PortInfo]`; select a port type with " ++
       "`@field(@ports(u)[0], \"ty\")`"
-  | .typeOf | .typeInfo | .struct | .field =>
-    s!"a type from `{q}` takes 0 argument(s), but it has {m}; remove the index after `{q}(...)`"
+  | .typeOf | .struct => text "the type is complete, so remove the index"
+  | .typeInfo => text ("`@typeInfo` gives a record, so remove the index, and select a `Type` " ++
+      "from the record, for example `@field(@typeInfo(T), \"element\")`")
+  | .field =>
+    text "remove the index, or select inside `@field`, for example `@field(@field(x, k), i)`"
 
 /-! The fix of the `S007` text of the prelude `read` (section 6.2). Another callee has none. -/
 def readFix : Ref → String

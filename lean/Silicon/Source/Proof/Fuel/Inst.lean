@@ -273,7 +273,7 @@ theorem follows_all : ∀ n,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
           familySel_f (he k), queryPart_f (he k) (ht k), queryTy_f, staticValue_f, fieldOut_f,
           argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f,
-          structArg_f, generated_f, atUse_f, conformVal_f]
+          structArg_f, generated_f, atUse_f, conformVal_f, portsArg_f, portsOf_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
         apply Follows.charge_one
         intro _
@@ -287,7 +287,7 @@ theorem follows_all : ∀ n,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
           familySel_f (he m), queryPart_f (he m) (ht m), queryTy_f, staticValue_f, fieldOut_f,
           argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f,
-          structArg_f, generated_f, atUse_f, conformVal_f]
+          structArg_f, generated_f, atUse_f, conformVal_f, portsArg_f, portsOf_f]
     · rcases n' with _ | m
       · rw [typeExpr.eq_def (k + 1), typeExpr.eq_def 0]
         apply Follows.exhaust (cap := k)
