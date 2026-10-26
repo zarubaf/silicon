@@ -8,7 +8,7 @@ This module also expands each part of a hardware data type into its leaves. `Fla
 
 The domain ports come first, then the inputs, then the outputs. In each group of inputs and
 outputs, the ports sort by the byte order of their public names, then by their family keys as
-numbers (`portBefore`). A public name is the binder or the name of an `as` key (section 5.6). A
+numbers (`Eval.portBefore`). A public name is the binder or the name of an `as` key (section 5.6). A
 scalar port has no key, and no key sorts before each key, so `req[2]` comes before `req[10]`.
 The sort compares two names only when their symbols differ. The leaves of one port follow in
 packing order. Thus the layout order is not the byte order of the core names. One public name
@@ -97,24 +97,13 @@ structure Ports (α : Type) where
   outputs : List α
 
 /-!
-The order of two ports in the layout: by the public name, then by the key as a number, with no
-key first. One symbol is one name, so the names compare only when the symbols differ.
--/
-def portBefore (x y : Elab.PortDecl) : Bool :=
-  if x.sym == y.sym then
-    match x.key, y.key with
-    | none, some _ => true
-    | some a, some b => a < b
-    | _, _ => false
-  else x.name < y.name
-
-/-!
 The layout of the domain ports `domain` and the declared ports `ps`. Each declared port comes
 with the values of its leaves in packing order. The domain ports stay in their order, `d$0clk`
 before `d$0rst`.
 -/
 def arrange (domain : List α) (ps : Array (Elab.PortDecl × Array α)) : Ports α :=
-  let sorted := (ps.qsort fun x y => portBefore x.1 y.1).toList
+  let ident (q : Elab.PortDecl) : String × PortId := (q.name, q.sym, q.key)
+  let sorted := (ps.qsort fun x y => portBefore (ident x.1) (ident y.1)).toList
   let leaves (input : Bool) := (sorted.filter (·.1.input == input)).flatMap (·.2.toList)
   ⟨domain ++ leaves true, leaves false⟩
 
