@@ -599,6 +599,8 @@ struct Stats {
     rec_wires: u32,
     rec_regs: u32,
     rec_chains: u32,
+    bound_ports: u32,
+    bound_types: u32,
     double_calls: u32,
     rec_mut_calls: u32,
     field_tuples: u32,
@@ -715,6 +717,8 @@ struct Builder {
     /// The names that a query can read in the frames that are open, and the
     /// groups of queries made so far.
     ops: Vec<query::Op>,
+    /// The names of `ops` that `root_group` probes.
+    roots: Vec<String>,
     /// The children that a query can read through `@ports`.
     kids: Vec<portinfo::Kid>,
     queries: u32,
@@ -850,6 +854,7 @@ impl Builder {
             rec_defs: Vec::new(),
             recs: 0,
             ops: Vec::new(),
+            roots: Vec::new(),
             kids: Vec::new(),
             queries: 0,
             emitted: 0,

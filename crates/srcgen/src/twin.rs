@@ -1079,8 +1079,9 @@ impl Writer<'_> {
                 }
             }
             Stmt::Error(_) => out.push(s.clone()),
-            // The twin compares outputs only; a record is no output.
-            Stmt::Diagnostic(..) => {}
+            // The twin compares outputs only; a record is no output. A `let`
+            // of a type is read by queries only, and the twin has no query.
+            Stmt::Diagnostic(..) | Stmt::TypeLet(..) => {}
             Stmt::Block(body) => out.push(self.block(body, fr, fr.env.clone(), fr.suffix.clone())),
             Stmt::Call(f, args) => {
                 self.inline(f, args, fr, out);

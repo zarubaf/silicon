@@ -536,6 +536,10 @@ pub(crate) enum Stmt {
         value: HExpr,
     },
     StaticLet(String, STy, SExpr),
+    /// `let name = <query>;` of a value that holds a type, or a list of
+    /// `PortInfo`. The evaluator and the twin never read the value: each
+    /// query that reads the name carries its own result (ADR 0032).
+    TypeLet(String, QExpr),
     /// `name = value;` of a `let mut`.
     Assign(String, HExpr),
     Connect(Place, HExpr),
@@ -1052,6 +1056,17 @@ fn stmts(out: &mut String, depth: usize, body: &[Stmt]) {
     }
 }
 
+/// The text of the target of a `:=`.
+fn place_text(place: &Place) -> String {
+    match place {
+        Place::Name(n) => n.clone(),
+        Place::Field(inst, port) => format!("{inst}.{port}"),
+        Place::Path(e) => hexpr(e),
+        Place::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
+        Place::ChildEntry(u, fam, k) => format!("{u}.{fam}[{}]", sexpr(k)),
+    }
+}
+
 fn stmt(out: &mut String, depth: usize, s: &Stmt) {
     let text = match s {
         Stmt::Input(n, t) => format!("input {n}: {};", ty(t)),
@@ -1070,6 +1085,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             format!("let {m}{name}{t} = {};", hexpr(value))
         }
         Stmt::StaticLet(n, t, v) => format!("let {n}: {} = {};", t.text(), sexpr(v)),
+        Stmt::TypeLet(n, q) => format!("let {n} = {};", qexpr(q)),
         Stmt::MutLet(n, t, v) => format!("let mut {n}: {} = {};", t.text(), sexpr(v)),
         Stmt::Push(n, v) => format!("{n}.push({});", sexpr(v)),
         Stmt::PopLet(n, list) => format!("let {n}: Int = {list}.pop();"),
@@ -1099,16 +1115,7 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
             arg,
         } => format!("let {name}: Int = {f}({}, {});", sexpr(place), sexpr(arg)),
         Stmt::Assign(n, v) => format!("{n} = {};", hexpr(v)),
-        Stmt::Connect(place, v) => {
-            let place = match place {
-                Place::Name(n) => n.clone(),
-                Place::Field(inst, port) => format!("{inst}.{port}"),
-                Place::Path(e) => hexpr(e),
-                Place::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
-                Place::ChildEntry(u, fam, k) => format!("{u}.{fam}[{}]", sexpr(k)),
-            };
-            format!("{place} := {};", hexpr(v))
-        }
+        Stmt::Connect(place, v) => format!("{} := {};", place_text(place), hexpr(v)),
         Stmt::Instance(n, m, args) => format!("instance {n} = {m}({});", list(args, sexpr)),
         Stmt::If(c, then, els) => {
             line(out, depth, &format!("comptime if ({}) {{", sexpr(c)));

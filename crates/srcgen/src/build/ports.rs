@@ -38,6 +38,7 @@
 
 use super::hw::{Want, adapt};
 use super::inst::Child;
+use super::reflect::RTy;
 use super::stat::{bin, int};
 use super::{Builder, Built, Ctx, Hw, Lane, Module, Names};
 use crate::eval::Fault;
@@ -380,6 +381,15 @@ fn port(output: bool, name: &str, key: Option<SExpr>, public: Option<SExpr>, ty:
         public,
         ty,
     })
+}
+
+/// The type of the entry of a family that `@TypeOf` reflects: its data type,
+/// or `Unit` for an empty entry.
+fn entry_ty(ty: &PTy) -> Option<RTy> {
+    match ty {
+        PTy::Data(t) => RTy::of(t),
+        PTy::Unit => Some(RTy::Unit),
+    }
 }
 
 impl Builder {
@@ -737,8 +747,12 @@ impl Builder {
     }
 
     /// Makes `expr` of type `ty` a readable name of the port pool.
-    fn pool(&self, ctx: &mut Ctx, expr: HExpr, ty: &Ty) -> Built {
+    fn pool(&mut self, ctx: &mut Ctx, expr: HExpr, ty: &Ty) -> Built {
         let types = self.types(ty, &ctx.envs)?;
+        // `@TypeOf(req[k])` of a family entry gives its data type.
+        if matches!(expr, HExpr::Entry(..)) {
+            self.add_root(&crate::program::hexpr(&expr), RTy::of(ty));
+        }
         ctx.port.push(Hw {
             expr,
             ty: Some(ty.clone()),
@@ -923,6 +937,8 @@ impl Builder {
     ) -> Built {
         if dir == Dir::Out {
             let value = self.port_value(ctx, ty)?;
+            let entry = crate::program::hexpr(&HExpr::Entry(fam.to_owned(), key.clone()));
+            self.add_root(&entry, entry_ty(ty));
             out.push(Stmt::Connect(Place::Entry(fam.to_owned(), key), value));
             note!(self, own_targets);
         } else if let PTy::Data(t) = ty {

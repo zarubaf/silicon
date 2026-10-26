@@ -41,7 +41,7 @@ pub(super) struct Gen {
     /// The struct that the list came from, with its arguments: one list for
     /// each spelling.
     from: Option<String>,
-    form: QExpr,
+    pub(super) form: QExpr,
     helper: Option<String>,
 }
 

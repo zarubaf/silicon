@@ -21,15 +21,26 @@
 
 use super::held::EFFECT;
 use super::hw::{DEPTH, Want, literal_ty};
+use super::reflect::RTy;
 use super::stat::Reach;
 use super::stat::{bin, int};
 use super::{Builder, Built, Ctx, Helper, Hw, Lane, Module};
-use crate::program::{FieldTy, HExpr, Item, Place, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty};
+use crate::program::{
+    FieldTy, HExpr, Item, Place, RecTy, SBin, SExpr, STy, Scalar, Stmt, StructDef, Ty,
+};
 
 /// One statement of the top frame in this many is followed by a group, and
 /// the most groups of one program.
 const REC_ODDS: u32 = 48;
 const MAX_RECS: u32 = 1;
+
+/// What a record name is: a register, a wire, or a `let mut` value.
+#[derive(Clone, Copy)]
+enum Held {
+    Reg,
+    Wire,
+    Value,
+}
 
 /// The leaves of a record `R<k>`: the fields `d0.d0`, `d0.d1`, and `d1`.
 const LEAVES: usize = 3;
@@ -119,6 +130,8 @@ impl Builder {
                 ty: Some(Ty::Rec(outer.clone())),
                 value,
             });
+            self.record_ops(&name, Held::Value, (&inner, &outer), &leaves);
+            self.probe_field(ctx, &name, out);
             self.record_mut_call(ctx, m, (h, &name, at), out);
             for _ in 0..self.tape.between(1, 2) {
                 self.record_read(ctx, m, &name, (&leaves, envs), out);
@@ -133,9 +146,13 @@ impl Builder {
             let inner_reset = SExpr::Record(inner.clone(), Vec::new(), vec![x, y]);
             let reset = SExpr::Record(outer.clone(), Vec::new(), vec![inner_reset, z]);
             out.push(Stmt::Reg(name.clone(), Ty::Rec(outer.clone()), reset));
+            self.record_ops(&name, Held::Reg, (&inner, &outer), &leaves);
+            self.probe_field(ctx, &name, out);
             note!(self, rec_regs);
         } else {
             out.push(Stmt::Wire(name.clone(), Ty::Rec(outer.clone())));
+            self.record_ops(&name, Held::Wire, (&inner, &outer), &leaves);
+            self.probe_field(ctx, &name, out);
             note!(self, rec_wires);
         }
         let [x, y, z] = [0, 1, 2].map(|i| self.driver_at(ctx, &Want::uniform(at(i), envs), 2));
@@ -243,6 +260,7 @@ impl Builder {
         let r = self.reach(ctx);
         let read = self.record_place(name, i, r);
         let local = m.names.fresh("l");
+        self.add_root(&local, RTy::of(&literal_ty(t)));
         out.push(Stmt::Let {
             name: local.clone(),
             mutable: false,
@@ -285,6 +303,55 @@ impl Builder {
             })
             .collect();
         found.get(self.tape.index(found.len())).cloned()
+    }
+
+    /// The names of a record that `@TypeOf` reflects, with no read: the
+    /// record as a register, a wire, or a value, its inner record, and each
+    /// leaf (front-end spec 9.3).
+    fn record_ops(
+        &mut self,
+        name: &str,
+        held: Held,
+        (inner, outer): (&str, &str),
+        leaves: &[Scalar],
+    ) {
+        let leaf = |i: usize| match at_leaf(leaves, i) {
+            Scalar::UInt(w) => STy::UInt(w),
+            Scalar::SInt(w) => STy::SInt(w),
+            Scalar::Bool => STy::Bool,
+        };
+        let record = |name: &str, fields: Vec<(&str, STy)>| {
+            STy::Record(Box::new(RecTy {
+                name: name.to_owned(),
+                args: Vec::new(),
+                fields: fields.into_iter().map(|(f, t)| (f.to_owned(), t)).collect(),
+            }))
+        };
+        let inner_ty = record(inner, vec![("d0", leaf(0)), ("d1", leaf(1))]);
+        let whole = RTy::from_static(&record(
+            outer,
+            vec![("d0", inner_ty.clone()), ("d1", leaf(2))],
+        ));
+        let top = match held {
+            Held::Reg => RTy::Reg(Box::new(whole)),
+            Held::Wire => RTy::Wire(Box::new(whole)),
+            Held::Value => whole,
+        };
+        self.add_root(name, Some(top));
+        self.add_root(&format!("{name}.d1"), Some(RTy::from_static(&leaf(2))));
+        self.add_root(&format!("{name}.d0"), Some(RTy::from_static(&inner_ty)));
+        self.add_root(&format!("{name}.d0.d0"), Some(RTy::from_static(&leaf(0))));
+        self.add_root(&format!("{name}.d0.d1"), Some(RTy::from_static(&leaf(1))));
+    }
+
+    /// A record with a read of the type of a field of the record `name`,
+    /// which no read of the value comes before: the whole record, the inner
+    /// record, or a leaf.
+    fn probe_field(&mut self, ctx: &Ctx, name: &str, out: &mut Vec<Stmt>) {
+        let paths = ["", ".d1", ".d0", ".d0.d0", ".d0.d1"];
+        let at = self.tape.index(paths.len());
+        let path = paths.get(at).copied().unwrap_or_default();
+        self.probe_root(ctx, &format!("{name}{path}"), out);
     }
 
     /// The key of the leaf of a chain: half of them call a function, so that

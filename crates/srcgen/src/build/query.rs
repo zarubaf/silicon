@@ -49,6 +49,16 @@ pub(super) struct Op {
     paired: bool,
 }
 
+/// The most reads of a root at the end of a module.
+const ROOT_PROBES: u32 = 2;
+
+/// What a static `let` of a query holds: the `PortInfo` list of a child, or
+/// a type.
+enum Bound {
+    Ports(Kid),
+    Type(RTy),
+}
+
 /// One statement of a frame in this many is followed by a group, and the
 /// most groups of a program.
 const GROUP_ODDS: u32 = 2;
@@ -63,6 +73,9 @@ const WIDTH_ODDS: u32 = 1;
 const STEPS: u32 = 3;
 /// The most results that one `diagnostic` shows.
 const PER_RECORD: u32 = 3;
+/// A group binds a type or a list of ports to a static `let` in this many
+/// groups.
+const BIND_ODDS: u32 = 6;
 /// A group reads a child through `@ports` in this many groups, if the frame
 /// has a child.
 const PORTS_ODDS: u32 = 2;
@@ -176,6 +189,71 @@ impl Builder {
         }
     }
 
+    /// Makes the name `text` a root of the queries that the record tape
+    /// reads: an own output, a family entry, a memory, a `let`, a handle in
+    /// a container, or a part of a record. `root_group` probes it.
+    pub(super) fn add_root(&mut self, text: &str, ty: Option<RTy>) {
+        if ty.is_some() {
+            self.roots.push(text.to_owned());
+        }
+        self.add_op(text, ty);
+    }
+
+    /// A record with a read of the type of one of the roots of `add_root`,
+    /// at the end of a module, if the record tape says so. The query tape
+    /// keeps its numbers.
+    pub(super) fn root_group(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) {
+        if !self.query_on
+            || ctx.envs.is_empty()
+            || self.queries >= MAX_GROUPS
+            || self.query_bytes > QUERY_BYTES
+        {
+            return;
+        }
+        self.isolated(Lane::Rec, |b| {
+            for _ in 0..b.tape.below(ROOT_PROBES + 1) {
+                let live: Vec<Op> = b
+                    .roots
+                    .iter()
+                    .filter_map(|r| b.ops.iter().find(|op| op.text == *r))
+                    .cloned()
+                    .collect();
+                let Some(op) = live.get(b.tape.index(live.len())).cloned() else {
+                    return;
+                };
+                let (tq, t) = b.type_value(&op, false);
+                let read = if b.tape.flag() {
+                    b.test(tq, &t)
+                } else {
+                    b.size(&tq, &t, false)
+                };
+                b.show_read(ctx, read, &t, out);
+            }
+        });
+    }
+
+    /// A record with a read of the type of the root `text`, if it is a
+    /// root. The caller is on the record tape.
+    pub(super) fn probe_root(&mut self, ctx: &Ctx, text: &str, out: &mut Vec<Stmt>) {
+        if !self.query_on
+            || ctx.envs.is_empty()
+            || self.queries >= MAX_GROUPS
+            || self.query_bytes > QUERY_BYTES
+        {
+            return;
+        }
+        let Some(op) = self.ops.iter().find(|op| op.text == text).cloned() else {
+            return;
+        };
+        let (tq, t) = self.type_value(&op, false);
+        let read = if self.tape.flag() {
+            self.test(tq, &t)
+        } else {
+            self.size(&tq, &t, false)
+        };
+        self.show_read(ctx, read, &t, out);
+    }
+
     /// A write to the root `root` changes what a width over it means: the
     /// names whose type reads it leave the pool.
     pub(super) fn forget_ops(&mut self, root: &str) {
@@ -208,6 +286,7 @@ impl Builder {
                 name: place,
                 rows,
                 domain,
+                bound: None,
             });
         }
     }
@@ -582,11 +661,23 @@ impl Builder {
             return;
         };
         let (tq, t) = self.type_value(&op, false);
-        let (form, value) = if self.tape.flag() {
+        let read = if self.tape.flag() {
             self.test(tq, &t)
         } else {
             self.size(&tq, &t, false)
         };
+        self.show_read(ctx, read, &t, out);
+    }
+
+    /// A record of the query `form` with the result `value` of a read of
+    /// the type `t`, if the result holds in each env.
+    fn show_read(
+        &mut self,
+        ctx: &Ctx,
+        (form, value): (QExpr, SExpr),
+        t: &RTy,
+        out: &mut Vec<Stmt>,
+    ) {
         if self.values(&value, &ctx.envs).is_none() {
             return;
         }
@@ -594,7 +685,9 @@ impl Builder {
         self.emitted += 1;
         note!(self, query_groups);
         #[cfg(test)]
-        self.stats.query_kinds.insert(reflect::info(&t).kind);
+        self.stats.query_kinds.insert(reflect::info(t).kind);
+        #[cfg(not(test))]
+        let _ = t;
         let query = SExpr::Query(Box::new(Query { form, value }));
         self.query_bytes += sexpr(&query).len() + 28;
         let message = self.next_message();
@@ -635,7 +728,7 @@ impl Builder {
             }
             (_, Some(kid)) => {
                 let kid = kids.get(self.tape.index(kids.len())).unwrap_or(kid);
-                let list = builtin("ports", QExpr::Text(kid.name.clone()));
+                let list = kid.list();
                 (QExpr::Call("len", Box::new(list)), int(kid.rows.len()))
             }
             _ => return,
@@ -729,6 +822,78 @@ impl Builder {
             }
             Ok(out)
         })
+    }
+
+    /// A `let` that binds a type or a list, after a statement of a frame, if
+    /// the record tape says so. It draws from the record tape, and the query
+    /// tape keeps its numbers.
+    pub(super) fn bind_group(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) {
+        if !self.query_on
+            || ctx.envs.is_empty()
+            || self.queries >= MAX_GROUPS
+            || self.query_bytes > QUERY_BYTES
+        {
+            return;
+        }
+        self.isolated(Lane::Rec, |b| {
+            if b.tape.below(BIND_ODDS) == 0 && b.bind_let(ctx, out) {
+                b.queries += 1;
+                b.emitted += 1;
+            }
+        });
+    }
+
+    /// `let N0 = @ports(u);`, `let N1 = @Struct(...);`, or
+    /// `let N2 = @TypeOf(x);`: a static `let` that holds a list of `PortInfo`
+    /// or a type, which the later queries of the frame read by its name. The
+    /// evaluator never reads the value: each query that reads the name has
+    /// its own result, which the builder drew (ADR 0032). Gives whether it
+    /// made the `let`.
+    fn bind_let(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) -> bool {
+        let name = format!("N{}", self.query_decls);
+        let (form, bound) = match self.tape.below(3) {
+            0 => {
+                let Some(kid) = self.kids.get(self.tape.index(self.kids.len())).cloned() else {
+                    return false;
+                };
+                let form = builtin("ports", QExpr::Text(kid.name.clone()));
+                let kid = Kid {
+                    bound: Some(name.clone()),
+                    ..kid
+                };
+                note!(self, bound_ports);
+                (form, Bound::Ports(kid))
+            }
+            1 => {
+                let Some(g) = self.gens.get(self.tape.index(self.gens.len())).cloned() else {
+                    return false;
+                };
+                let ty = RTy::from_static(&STy::Record(Box::new(g.rec.clone())));
+                note!(self, bound_types);
+                (g.form.clone(), Bound::Type(ty))
+            }
+            _ => {
+                let Some(op) = self.source(ctx) else {
+                    return false;
+                };
+                let (tq, t) = self.type_value(&op, false);
+                note!(self, bound_types);
+                (tq, Bound::Type(t))
+            }
+        };
+        self.query_decls += 1;
+        self.query_bytes += crate::program::qexpr(&form).len() + 24;
+        out.push(Stmt::TypeLet(name.clone(), form));
+        match bound {
+            Bound::Ports(kid) => self.kids.push(kid),
+            Bound::Type(ty) => self.ops.push(Op {
+                text: name,
+                ty,
+                place: false,
+                paired: false,
+            }),
+        }
+        true
     }
 
     /// A static `let` of one query, and its record, if the frame can
