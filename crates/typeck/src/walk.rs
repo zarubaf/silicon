@@ -128,6 +128,15 @@ fn builtin_operand_is_static(builtin: Builtin, k: usize, is_static: bool) -> boo
     }
 }
 
+/// Whether the chain of indices `ty` starts at a builtin in a type position.
+fn builtin_root(ty: &TypeExpr) -> bool {
+    let mut cur = ty;
+    while let TypeExpr::Index { base, .. } = cur {
+        cur = base;
+    }
+    matches!(cur, TypeExpr::Builtin { .. })
+}
+
 pub(crate) fn run(resolved: &Resolved) -> Vec<Error> {
     let sigs = sigs(resolved);
     let mut walker = Walker {
@@ -827,12 +836,26 @@ impl<'a> Walker<'a> {
                         self.index_arity(*pos, &h, args);
                     }
                 } else {
-                    let what = if matches!(**base, TypeExpr::Fn { .. }) {
-                        "a function type"
-                    } else {
-                        "a complete type"
-                    };
-                    self.arity(*pos, what, 0, args.len(), "");
+                    match &**base {
+                        TypeExpr::Builtin { args: b, .. } => {
+                            let q = format!("@{}", b.builtin().name());
+                            self.report(
+                                Code::S007,
+                                *pos,
+                                format!(
+                                    "a type from `{q}` takes 0 argument(s), but it has {}; \
+                                     remove the index after `{q}(...)`",
+                                    args.len()
+                                ),
+                            );
+                        }
+                        // In a chain of indices after a builtin, only the first reports.
+                        chain if builtin_root(chain) => {}
+                        TypeExpr::Fn { .. } => {
+                            self.arity(*pos, "a function type", 0, args.len(), "");
+                        }
+                        _ => self.arity(*pos, "a complete type", 0, args.len(), ""),
+                    }
                     self.type_expr(base);
                 }
                 for arg in args {
