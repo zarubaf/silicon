@@ -380,6 +380,7 @@ pub(super) fn reads_name(e: &HExpr) -> bool {
         | HExpr::Index(..)
         | HExpr::Select(..)
         | HExpr::Member(..)
+        | HExpr::FieldOf(..)
         | HExpr::Read(_)
         | HExpr::Entry(..)
         | HExpr::ChildEntry(..) => true,

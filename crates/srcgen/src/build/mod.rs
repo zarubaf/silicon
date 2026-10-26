@@ -563,6 +563,8 @@ struct Stats {
     field_joined_keys: u32,
     field_name_keys: u32,
     field_call_keys: u32,
+    field_scalar_keys: u32,
+    field_entry_keys: u32,
     /// The most arms of one match.
     max_arms: usize,
     /// The most matches open at once.
@@ -796,7 +798,8 @@ impl Builder {
             self.body(k)?;
         }
         let probe = self.probe();
-        let items = self.items();
+        let mut items = self.items();
+        self.spell_hardware(&mut items);
         let ports = ports(&items, "M0", &args)?;
         let named: Vec<(String, Vec<Vec<Value>>)> = self
             .sigs
