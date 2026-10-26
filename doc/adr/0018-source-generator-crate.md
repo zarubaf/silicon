@@ -1,6 +1,6 @@
 # 18. The source generator is a dev-only crate with a bounded evaluator
 
-- Status: accepted, partly superseded by ADR 0023
+- Status: accepted, partly superseded by ADR 0023 and ADR 0032
 - Date: 2026-10-11
 
 ## Context
