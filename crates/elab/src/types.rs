@@ -1325,7 +1325,10 @@ impl Types {
         depth: u64,
     ) -> TyId {
         #[cfg(test)]
-        self.tick(1 + types.len() as u64);
+        {
+            self.tick(1 + types.len() as u64);
+            crate::counters::add(crate::counters::Count::Generated, 1);
+        }
         // A name is an identifier after the name rule, so its length in bytes is its length in
         // characters.
         let size = fields
