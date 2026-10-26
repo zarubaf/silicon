@@ -1543,6 +1543,71 @@ fn the_argument_of_typeinfo_is_no_static_position_but_its_indices_are() {
     );
 }
 
+#[test]
+fn a_builtin_in_a_type_position_is_no_static_position_but_its_indices_are() {
+    ok(&mod_body("reg r: Bool = false;\nlet t: @TypeOf(r) = r;"));
+    ok(&mod_body("reg r: Bool = false;\nlet t: @Struct(r) = 0;"));
+    fails(
+        &mod_body(
+            "reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t: @TypeOf(rs[w]) = 0;",
+        ),
+        S005,
+        4,
+        19,
+    );
+    // The key of `@field` is a static position.
+    fails(
+        &mod_body("reg r: Bool = false;\nwire w: Bool;\nlet t: @field(r, w) = 0;"),
+        S005,
+        4,
+        18,
+    );
+}
+
+#[test]
+fn an_index_after_a_builtin_type_is_s007_at_the_at() {
+    let text = |q: &str| {
+        format!(
+            "a type from `{q}` takes 0 argument(s), but it has 1; remove the index after `{q}(...)`"
+        )
+    };
+    for (ty, line, col, q) in [
+        ("@TypeOf(x)[8]", 3, 8, "@TypeOf"),
+        ("@Struct(x)[8]", 3, 8, "@Struct"),
+        ("@TypeOf(x)[x]", 3, 8, "@TypeOf"),
+        ("[@TypeOf(x)[8]; 2]", 3, 9, "@TypeOf"),
+        ("(@TypeOf(x), @TypeOf(x)[1])", 3, 21, "@TypeOf"),
+        // Only the first index of a chain reports, and it reports its own arguments.
+        ("@TypeOf(x)[1][2][3]", 3, 8, "@TypeOf"),
+    ] {
+        let src = mod_body(&format!("input x: UInt[8];\nlet y: {ty} = x;"));
+        fails(&src, S007, line, col);
+        assert_eq!(message(&src), text(q), "{ty}");
+    }
+    // The chain reports once. The last index has two arguments and reports nothing.
+    let src = mod_body("input x: UInt[8];\nlet y: @TypeOf(x)[1][2, 3] = x;");
+    assert_eq!(
+        message(&src),
+        "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after \
+         `@TypeOf(...)`"
+    );
+}
+
+#[test]
+fn an_index_after_another_complete_type_keeps_its_text() {
+    let src = mod_body("input x: UInt[8];\nlet y: (UInt[8], Bool)[1] = x;");
+    fails(&src, S007, 3, 8);
+    assert_eq!(
+        message(&src),
+        "a complete type takes 0 argument(s), but it has 1"
+    );
+    let src = mod_body("input x: UInt[8];\nlet y: (fn () -> Bool)[1] = x;");
+    assert_eq!(
+        message(&src),
+        "a function type takes 0 argument(s), but it has 1"
+    );
+}
+
 fn mut_fns(s: &str) -> String {
     format!(
         "fn g(mut a: Nat) -> Nat {{ return 1; }}\n\
