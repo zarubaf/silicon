@@ -19,12 +19,17 @@ use crate::program::{FTy, FieldTy, HExpr, Item, Place, Radix, SBin, SExpr, STy, 
 use num_bigint::BigInt;
 use std::collections::BTreeSet;
 
-/// One eligible step in this many reads as `@field`: a record or a list is
-/// rare, so it gets better odds than a tuple or an array.
-const RECORD_ODDS: u32 = 2;
-pub(super) const LIST_ODDS: u32 = 1;
-pub(super) const ARRAY_ODDS: u32 = 8;
-const TUPLE_ODDS: u32 = 12;
+/// `Odds(n, d)`: `n` eligible steps in `d` read as `@field`. A record or a
+/// list is rare, so it gets better odds than a tuple or an array. A list
+/// keeps a plain `l[i]` in 7 steps of 15, so each spelling occurs in 10%
+/// of the programs.
+#[derive(Clone, Copy)]
+pub(super) struct Odds(u32, u32);
+
+const RECORD_ODDS: Odds = Odds(1, 2);
+pub(super) const LIST_ODDS: Odds = Odds(8, 15);
+pub(super) const ARRAY_ODDS: Odds = Odds(1, 8);
+const TUPLE_ODDS: Odds = Odds(1, 12);
 /// The most steps of one program that read as `@field`.
 pub(super) const MAX_FIELDS: u32 = 16;
 /// One eligible read or target of hardware in this many takes the spelling,
@@ -75,7 +80,7 @@ impl Builder {
         &mut self,
         base: &SExpr,
         index: &SExpr,
-        odds: u32,
+        odds: Odds,
         r: Reach<'_>,
     ) -> Option<SExpr> {
         self.on_field(|b| {
@@ -91,8 +96,8 @@ impl Builder {
     }
 
     /// Whether the eligible step takes the spelling, and counts it.
-    fn field_site(&mut self, odds: u32) -> bool {
-        if self.fields >= self.max_fields || self.tape.below(odds) != odds - 1 {
+    fn field_site(&mut self, Odds(n, d): Odds) -> bool {
+        if self.fields >= self.max_fields || self.tape.below(d) < d - n {
             return false;
         }
         self.fields += 1;
@@ -473,7 +478,7 @@ mod tests {
     #[test]
     fn the_cap_stops_the_spellings() {
         let mut b = Builder::new(vec![]);
-        b.field.numbers = vec![TUPLE_ODDS - 1; 16].into_iter();
+        b.field.numbers = vec![TUPLE_ODDS.1 - 1; 16].into_iter();
         b.max_fields = 2;
         let r = Reach {
             names: &[],
