@@ -188,8 +188,11 @@ impl<'a> Text<'a> {
             Value::Int(n) => self.out.push_str(&int_text(n)),
             Value::Bool(b) => write!(self.out, "{b}").unwrap_or_default(),
             Value::Str(s) => {
-                let head: String = s.chars().take(TEXT_LIMIT + 1).collect();
-                parse::quote(&head, &mut self.out);
+                // A string has the limit of a string in a message (design section 5.5).
+                let text = str_text(s);
+                #[cfg(test)]
+                crate::counters::add(crate::counters::Count::TextBytes, text.len() as u64);
+                parse::quote(&text, &mut self.out);
             }
             Value::UInt(x) => self.out.push_str(&int_text(&Int::from_unsigned(x))),
             Value::SInt(x) => self
