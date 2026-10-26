@@ -1,0 +1,43 @@
+// The wrapper forwards each port of a child bus by `@ports` and `@field`. The child has a scalar input with an `as` key, a
+// family of inputs and a family of outputs, and an output of a generated record type. Its registers hold the state, so
+// each output shows the inputs of the step before.
+// TOP Wrap(2)
+type Rsp = @Struct([FieldInfo("ok", Bool), FieldInfo("tag", UInt[4])]);
+module Bus(comptime N: Nat) {
+    input a: UInt[4] as "beat_in";
+    output q: UInt[4];
+    output rsp: Rsp;
+    reg last: UInt[4] = 0;
+    reg ok: Bool = false;
+    let mut acc = a;
+    comptime for i in 0..N {
+        input req[i]: UInt[4];
+        output gnt[i]: UInt[4];
+        reg g: UInt[4] = 0;
+        g := req[i] +% a;
+        gnt[i] := g;
+        acc = acc +% req[i];
+    }
+    last := acc;
+    ok := a != 0;
+    q := last;
+    rsp := Rsp(ok, last);
+}
+module Wrap(comptime N: Nat) {
+    instance u = Bus(N);
+    let ps = @ports(u);
+    static_assert(len(ps) == 3 + 2 * N, "one port for each entry");
+    comptime for i in 0..len(ps) {
+        comptime if (ps[i].is_input) {
+            input x: @field(ps[i], "ty") as ps[i].key;
+            @field(u, ps[i].key) := x;
+        } else {
+            output y: @field(ps[i], "ty") as ps[i].key;
+            y := @field(u, ps[i].key);
+        }
+    }
+}
+// STEP in=(clock$0rst false beat_in 3 req[0] 1 req[1] 2) out=(gnt[0] 0 gnt[1] 0 q 0 rsp.ok false rsp.tag 0)
+// STEP in=(clock$0rst false beat_in 0 req[0] 15 req[1] 1) out=(gnt[0] 4 gnt[1] 5 q 6 rsp.ok true rsp.tag 6)
+// STEP in=(clock$0rst false beat_in 9 req[0] 7 req[1] 8) out=(gnt[0] 15 gnt[1] 1 q 0 rsp.ok false rsp.tag 0)
+// STEP in=(clock$0rst false beat_in 0 req[0] 0 req[1] 0) out=(gnt[0] 0 gnt[1] 1 q 8 rsp.ok true rsp.tag 8)

@@ -1,0 +1,39 @@
+// A wrapper forwards each port of a child bus. It reads `@ports(u)` and declares one port for each `PortInfo`, with
+// the key of the info and the type `@field(info, "ty")`. The child has a scalar input with an `as` key, a family of
+// inputs and a family of outputs, and an output of a generated record type. The child holds all registers.
+// TOP Wrap(2)
+type Rsp = @Struct([FieldInfo("ok", Bool), FieldInfo("tag", UInt[4])]);
+module Bus(comptime N: Nat) {
+    input a: UInt[4] as "beat_in";
+    output q: UInt[4];
+    output rsp: Rsp;
+    reg last: UInt[4] = 0;
+    reg ok: Bool = false;
+    let mut acc = a;
+    comptime for i in 0..N {
+        input req[i]: UInt[4];
+        output gnt[i]: UInt[4];
+        reg g: UInt[4] = 0;
+        g := req[i] +% a;
+        gnt[i] := g;
+        acc = acc +% req[i];
+    }
+    last := acc;
+    ok := a != 0;
+    q := last;
+    rsp := Rsp(ok, last);
+}
+module Wrap(comptime N: Nat) {
+    instance u = Bus(N);
+    let ps = @ports(u);
+    static_assert(len(ps) == 3 + 2 * N, "one port for each entry");
+    comptime for i in 0..len(ps) {
+        comptime if (ps[i].is_input) {
+            input x: @field(ps[i], "ty") as ps[i].key;
+            @field(u, ps[i].key) := x;
+        } else {
+            output y: @field(ps[i], "ty") as ps[i].key;
+            y := @field(u, ps[i].key);
+        }
+    }
+}

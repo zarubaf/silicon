@@ -1,0 +1,65 @@
+// A register file of a record type that `@Struct` builds. A `comptime fn` copies the fields of `Base` with `@typeInfo`
+// and adds one `FieldInfo`. The generic `RegFile` holds the entries in one register of an array type, with one write
+// port, and shows the array. The top selects a leaf of the entry for each of two read ports with `@field`, one leaf at a
+// time, and builds the read value. A read mux of a whole record would stop `circt-lec` (#197), and so would a table of
+// more than two entries. A memory with the same entry as its word shares the write port.
+// TOP Top()
+struct Base {
+    valid: Bool,
+    tag: UInt[4],
+}
+comptime fn entry_fields() -> List[FieldInfo] {
+    let mut fs = @typeInfo(Base).fields;
+    push(fs, FieldInfo("data", UInt[8]));
+    return fs;
+}
+type Entry = @Struct(entry_fields());
+module RegFile(comptime T: Type, comptime N: Nat) {
+    input wa: UInt[1];
+    input we: Bool;
+    input wd: T;
+    output state: [T; N];
+    static_assert(N == 2, "two entries");
+    reg rf: [T; N] = [T(), T()];
+    let mut next = [rf[0], rf[1]];
+    comptime for k in 0..N {
+        next[k] = if (we && wa == k) { wd } else { rf[k] };
+    }
+    rf := next;
+    state := [rf[0], rf[1]];
+}
+module Top() {
+    input wa: UInt[1];
+    input we: Bool;
+    input wd: Entry;
+    input ra: UInt[1];
+    input rb: UInt[1];
+    output rda: Entry;
+    output hit: Bool;
+    input re: Bool;
+    output mrd: Entry;
+    output mvalid: Bool;
+    instance f = RegFile(Entry, 2);
+    static_assert(data_bits(Entry) == 13, "entry width");
+    static_assert(len(@typeInfo(Entry).fields) == 3, "three fields");
+    f.wa := wa;
+    f.we := we;
+    f.wd := wd;
+    let mut av = false;
+    let mut at = UInt[4](0);
+    let mut ad = UInt[8](0);
+    let mut bv = false;
+    comptime for k in 0..2 {
+        av = if (ra == k) { @field(f.state[k], "valid") } else { av };
+        at = if (ra == k) { @field(f.state[k], "tag") } else { at };
+        ad = if (ra == k) { @field(f.state[k], "data") } else { ad };
+        bv = if (rb == k) { @field(f.state[k], "valid") } else { bv };
+    }
+    rda := Entry(av, at, ad);
+    hit := av && bv;
+    mem m: [Entry; 2];
+    let r = m.read_port(ra, re);
+    m.write_port(wa, wd, we);
+    mrd := r.data;
+    mvalid := r.valid;
+}
