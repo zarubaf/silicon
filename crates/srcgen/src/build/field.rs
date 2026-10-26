@@ -21,13 +21,13 @@ use std::collections::BTreeSet;
 
 /// `Odds(n, d)`: `n` eligible steps in `d` read as `@field`. A record or a
 /// list is rare, so it gets better odds than a tuple or an array. A list
-/// keeps a plain `l[i]` in 7 steps of 15, so each spelling occurs in 10%
+/// keeps a plain `l[i]` in 8 steps of 15, so each spelling occurs in 10%
 /// of the programs.
 #[derive(Clone, Copy)]
 pub(super) struct Odds(u32, u32);
 
 const RECORD_ODDS: Odds = Odds(1, 2);
-pub(super) const LIST_ODDS: Odds = Odds(8, 15);
+pub(super) const LIST_ODDS: Odds = Odds(7, 15);
 pub(super) const ARRAY_ODDS: Odds = Odds(1, 8);
 const TUPLE_ODDS: Odds = Odds(1, 12);
 /// The most steps of one program that read as `@field`.
