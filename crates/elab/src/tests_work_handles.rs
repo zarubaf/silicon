@@ -569,3 +569,73 @@ fn c11_a_deep_target_through_nested_containers_is_linear_in_its_depth() {
         );
     }
 }
+
+/// The source of a read or a place along a chain of depth `d`, or of the same run without it. A
+/// chain of `.f[0]` steps goes through a record that nests `d` structs over arrays of one
+/// register. A chain of list steps `[0][z()]` goes through a nest of `2d` lists of an integer.
+fn chain_source(d: usize, (lists, place, with): (bool, bool, bool)) -> String {
+    let mut src = "fn z() -> Nat {\n    return 0;\n}\n".to_owned();
+    if !lists {
+        src.push_str("struct S0 {\n    f: [Reg[UInt[8]]; 1],\n}\n");
+        for i in 1..d {
+            writeln!(src, "struct S{i} {{\n    f: [S{}; 1],\n}}", i - 1).unwrap();
+        }
+    }
+    src.push_str(
+        "module M() {\n    input x: UInt[8];\n    output o: UInt[8];\n    reg r: UInt[8] = 0;\n    \
+         reg s: UInt[8] = 0;\n    r := x;\n    s := x;\n",
+    );
+    let chain = if lists {
+        writeln!(src, "    let mut a0 = list(Nat);\n    a0.push(7);").unwrap();
+        for k in 1..2 * d {
+            let elem = format!("{}Nat{}", "List[".repeat(k), "]".repeat(k));
+            writeln!(
+                src,
+                "    let mut a{k} = list({elem});\n    a{k}.push(a{});",
+                k - 1
+            )
+            .unwrap();
+        }
+        writeln!(src, "    let mut h = a{};", 2 * d - 1).unwrap();
+        format!("h{}", "[0][z()]".repeat(d))
+    } else {
+        let value = (0..d).fold("r".to_owned(), |inner, i| format!("S{i}([{inner}])"));
+        writeln!(src, "    let mut h = {value};").unwrap();
+        format!("h{}", ".f[0]".repeat(d))
+    };
+    match (with, place, lists) {
+        (false, ..) => src.push_str("    o := read(r);\n"),
+        (true, false, false) => writeln!(src, "    o := read({chain});").unwrap(),
+        (true, true, false) => writeln!(src, "    {chain} = s;\n    o := read(r);").unwrap(),
+        (true, false, true) => writeln!(src, "    let y = {chain};\n    o := read(r);").unwrap(),
+        (true, true, true) => writeln!(src, "    {chain} = 8;\n    o := read(r);").unwrap(),
+    }
+    src.push_str("}\n");
+    src
+}
+
+/// Issue #376. A read or a place along a chain of `d` steps `.f[0]` through a container of
+/// handles, or of `d` pairs `[0][z()]` through a nest of lists. A part of a container of handles
+/// has no hardware leaf but normalizes nothing, and a key with a call after a list index
+/// evaluates before the walk checks that index. So the chain takes one walk, and its work at
+/// `2d` is at most about twice the work at `d`. A walk from the root before each index or each
+/// key with a call grows with `d` times `d`.
+#[test]
+fn c12_a_chain_of_segments_walks_its_path_once() {
+    let mut key = 250;
+    for lists in [false, true] {
+        for place in [false, true] {
+            let mut at = |d: usize| {
+                let with = passing(key, 100_000, &chain_source(d, (lists, place, true)));
+                let without = passing(key + 1, 100_000, &chain_source(d, (lists, place, false)));
+                key += 2;
+                with.counts.total() - without.counts.total()
+            };
+            let (n, twice) = (at(32), at(64));
+            assert!(
+                n < twice && twice <= 2 * n + 64,
+                "the work {n} at depth 32 and {twice} at depth 64 (lists: {lists}, place: {place})"
+            );
+        }
+    }
+}
