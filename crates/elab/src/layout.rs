@@ -18,6 +18,7 @@
 
 use crate::names::{Field, Name, Sym};
 use crate::types::{ENUM_PART_NAMES, PartNames, Ty, TyId, Types};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -262,24 +263,33 @@ pub(crate) struct Declared<T> {
     pub leaves: Vec<T>,
 }
 
+/// The order of two ports by their symbol and family key (Lean `Eval.portBefore`): the byte order
+/// of the public names, then the key as a number, with no key first. One symbol is one name, so
+/// the texts of `texts` compare only when the symbols differ. The layout sorts with this order,
+/// and so does the schema of an interface.
+pub(crate) fn port_order(
+    first: (Sym, Option<u32>),
+    second: (Sym, Option<u32>),
+    texts: &[String],
+) -> Ordering {
+    if first.0 == second.0 {
+        return first.1.cmp(&second.1);
+    }
+    let text = |sym: Sym| texts.get(sym).map_or("", String::as_str);
+    let (left, right) = (text(first.0), text(second.0));
+    #[cfg(test)]
+    crate::counters::add(
+        crate::counters::Count::TextBytes,
+        left.len().min(right.len()) as u64,
+    );
+    left.cmp(right)
+}
+
 /// The layout of the domain ports `domain` and the declared ports `ports`, with the text of each
 /// symbol from `texts`. The domain ports stay in their order, `d$0clk` before `d$0rst`.
 pub(crate) fn arrange<T>(domain: Vec<T>, ports: Vec<Declared<T>>, texts: &[String]) -> Ports<T> {
     let mut sorted = ports;
-    let text = |s: Sym| texts.get(s).map_or("", String::as_str);
-    sorted.sort_by(|x, y| {
-        if x.sym == y.sym {
-            x.key.cmp(&y.key)
-        } else {
-            let (a, b) = (text(x.sym), text(y.sym));
-            #[cfg(test)]
-            crate::counters::add(
-                crate::counters::Count::TextBytes,
-                a.len().min(b.len()) as u64,
-            );
-            a.cmp(b)
-        }
-    });
+    sorted.sort_by(|x, y| port_order((x.sym, x.key), (y.sym, y.key), texts));
     let mut inputs = domain;
     let mut outputs = Vec::new();
     for port in sorted {
