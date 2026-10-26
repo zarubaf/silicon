@@ -32,6 +32,11 @@ rust | S012 Memory depth out of range | 314
 lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
+lean | S010 String index in a query | 346
+rust | S010 String index in a query | 346
+lean | S007 Index of `@ports` in a type | 346
+rust | S007 Index of `@ports` in a type | 346
+pin | S007 Index of `@ports` in a type | 346
 unlisted | S001 a comparison does not chain | 354
 unlisted | S001 a comparison does not chain; use parentheses | 354
 unlisted | S001 a parameter of a function type has no `comptime` | 354
