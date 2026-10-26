@@ -1237,6 +1237,11 @@ impl<'a> Walk<'a> {
                     self.sexpr(x);
                 }
             }
+            SExpr::KeyCall(f, root, a) => {
+                self.rename(f);
+                self.rename(root);
+                self.sexpr(a);
+            }
             SExpr::Select(a, ..)
             | SExpr::Field(a, _)
             | SExpr::Len(a)

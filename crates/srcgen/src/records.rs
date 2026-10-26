@@ -32,9 +32,10 @@ struct Sites {
     /// The `diagnostic` statements, by message.
     diagnostics: BTreeMap<String, At>,
     /// The calls `let s: Int = ...;`, by the module or the function that
-    /// holds them and by result name. The position is that of the call
-    /// expression.
-    calls: BTreeMap<(String, String), At>,
+    /// holds them and by result name. The position is that of the
+    /// initializer, which is the call expression of a statement call, and
+    /// the text of the initializer, where a call in a key stands.
+    calls: BTreeMap<(String, String), (At, String)>,
 }
 
 impl Sites {
@@ -59,9 +60,11 @@ impl Sites {
                 let name = rest.split(':').next().unwrap_or_default();
                 let lead = "let ".len() + name.len() + ": Int = ".len();
                 if rest[name.len()..].starts_with(": Int = ") {
-                    sites
-                        .calls
-                        .insert((scope.clone(), name.to_owned()), (n + 1, col + lead));
+                    let init = rest[name.len() + ": Int = ".len()..].trim_end_matches(';');
+                    sites.calls.insert(
+                        (scope.clone(), name.to_owned()),
+                        ((n + 1, col + lead), init.to_owned()),
+                    );
                 }
             }
         }
@@ -110,6 +113,18 @@ pub(crate) fn records(
         }
     }
     Ok(walk.lines)
+}
+
+/// The offset of the call of `callee` in the initializer `init`: the first
+/// `callee(` that no identifier character precedes.
+fn key_call_at(init: &str, callee: &str) -> Option<usize> {
+    let call = format!("{callee}(");
+    init.match_indices(&call).map(|(at, _)| at).find(|&at| {
+        !init[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
 }
 
 impl Walk<'_> {
@@ -254,7 +269,12 @@ impl Walk<'_> {
         for f in &logged.frames {
             let scope = f.within.as_deref().unwrap_or(frame.module);
             let key = (scope.to_owned(), f.result.clone());
-            let (l, c) = *self.sites.calls.get(&key).ok_or(Fault::Type)?;
+            let ((l, c), init) = self.sites.calls.get(&key).ok_or(Fault::Type)?;
+            let c = if f.key {
+                c + key_call_at(init, &f.callee).ok_or(Fault::Type)?
+            } else {
+                *c
+            };
             frames.push(format!("(call {} {l} {c})", f.callee));
         }
         let frames = frames.join(" ");
