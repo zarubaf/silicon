@@ -1999,6 +1999,36 @@ fn a_program_without_queries_keeps_its_text() {
     assert!(kept >= 256 * 4 / 10, "{kept}");
 }
 
+/// Whether `e` or an operand of `e` is a `Query` or a `PortKey`. A string
+/// can occur inside an argument, as an operand of a comparison or as the key
+/// of an `@field`, so only the argument itself is checked for a `String`.
+fn holds_type_or_key(e: &SExpr) -> bool {
+    let any = |es: &[SExpr]| es.iter().any(holds_type_or_key);
+    let one = holds_type_or_key;
+    match e {
+        SExpr::Query(_) | SExpr::PortKey(..) => true,
+        SExpr::Call(_, es)
+        | SExpr::Tuple(es)
+        | SExpr::Array(es)
+        | SExpr::Zero(_, es)
+        | SExpr::DataBits(_, es)
+        | SExpr::Ctor(_, _, es) => any(es),
+        SExpr::Record(_, a, b) => any(a) || any(b),
+        SExpr::At(a, b) | SExpr::Index(a, b) | SExpr::Binary(_, a, b) => one(a) || one(b),
+        SExpr::If(a, b, c) => one(a) || one(b) || one(c),
+        SExpr::Select(a, ..)
+        | SExpr::Len(a)
+        | SExpr::Field(a, _)
+        | SExpr::KeyCall(_, _, a)
+        | SExpr::Convert(_, a)
+        | SExpr::Unpack(_, a)
+        | SExpr::Pack(_, a)
+        | SExpr::BitsConv(_, a)
+        | SExpr::Unary(_, a) => one(a),
+        _ => false,
+    }
+}
+
 /// No value in a `diagnostic`, in the `eval` probe, or in the argument of a
 /// module holds a type: not a `TypeInfo`, not a `FieldInfo`, not a
 /// `PortInfo`, not a generated record type, and the argument of a module is
@@ -2016,7 +2046,10 @@ fn no_type_reaches_a_record_a_probe_or_an_argument() {
         for record in p.records() {
             assert!(!record.contains("struct root D"), "{record}");
             assert!(
-                !record.contains("(type") && !record.contains("typeinfo"),
+                !record.contains("(type")
+                    && !["TypeInfo", "FieldInfo", "PortInfo", "PortKey"]
+                        .iter()
+                        .any(|n| record.contains(n)),
                 "{record}"
             );
         }
@@ -2031,10 +2064,8 @@ fn no_type_reaches_a_record_a_probe_or_an_argument() {
                 continue;
             };
             for a in args {
-                assert!(
-                    !matches!(a, SExpr::Query(_) | SExpr::PortKey(..) | SExpr::Str(_)),
-                    "{a:?}"
-                );
+                assert!(!matches!(a, SExpr::Str(_) | SExpr::StrOf(_)), "{a:?}");
+                assert!(!holds_type_or_key(a), "{a:?}");
             }
         }
     }
