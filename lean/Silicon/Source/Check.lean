@@ -90,8 +90,9 @@ declaration. A family is no mutable root, so a `mut` actual with a family root i
 - A function type takes no index, in a type and in an expression: `(fn () -> UInt)[8]` is
   `S007` at the index.
 - A builtin in a type position gives a complete type, so it takes no index. Thus
-  `@TypeOf(x)[8]` in a type is `S007` "Index of a builtin type" at the `@`. An index of a builtin
-  in an expression keeps the rules of an index of a value.
+  `@TypeOf(x)[8]` in a type is `S007` "Index of a builtin type" at the `@`. In a chain of indices
+  such as `@TypeOf(x)[1][2]`, only the first index reports. An index of a builtin in an
+  expression keeps the rules of an index of a value.
 - A variant constructor `E::V(args)` has one argument for each payload type of `V`. A path
   `E::V` without a call has none. The error is at the start of the path (section 5.6). An enum
   has no parameters, so its name takes no index. Only `Elab` checks a call `E(args)` of the
@@ -465,6 +466,12 @@ def pre (c : Option Callee) (k : Nat) (x : Resolve.Expr) : M (List Nat) :=
 def staticAt (static : Bool) (c : Option Callee) (k : Nat) : Bool :=
   static || (c.map (·.static k)).getD false
 
+/-! The root of the chain of indices `t` is a builtin, for "Index of a builtin type". -/
+def builtinRoot : Resolve.TypeExpr → Bool
+  | .builtin _ => true
+  | .index _ b _ => builtinRoot b
+  | _ => false
+
 /-!
 An expression and a type expression. `static` is true in a static position. `base` is true for
 the base of an index, whose index holds the arguments of a type name. The result of an
@@ -573,12 +580,10 @@ mutual
           s!"remove the index after `{q}(...)`")
       builtinForm false f
       for x in xs do let _ ← visit true false x
-    | .index _ b@(.index _ (.builtin _) _) xs => do
-      -- The index right after the builtin reports at the same position, so its text wins.
-      typeExpr b
-      for x in xs do let _ ← visit true false x
     | .index p b xs => do
-      arity p (if b matches .fn .. then "a function type" else "a complete type") 0 xs.length
+      -- In a chain of indices after a builtin, only the index right after the builtin reports.
+      unless builtinRoot b do
+        arity p (if b matches .fn .. then "a function type" else "a complete type") 0 xs.length
       typeExpr b
       for x in xs do let _ ← visit true false x
     | .unit _ => pure ()
