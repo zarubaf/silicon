@@ -1,0 +1,11 @@
+// A second call with an equal list finds the entry in the table of generated record types, and it charges the same as a miss. The cost model keeps no table of query results (ADR 0028). Three equal calls charge three times the same amount.
+// FUEL 317
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let t = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]);
+    let u = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]);
+    let v = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]);
+    o := x;
+}

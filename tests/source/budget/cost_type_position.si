@@ -1,0 +1,9 @@
+// A builtin in a type position charges the type node, 1 more than the builtin as an expression. The typed `let` charges 2 more than the untyped one: 1 for the type node and 1 for the node of `@TypeOf`.
+// FUEL 65
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let y: @TypeOf(x) = x;
+    o := x;
+}
