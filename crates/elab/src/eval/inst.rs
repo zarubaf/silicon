@@ -95,12 +95,6 @@ impl Elab {
         self.done.get(inst).map(|i| &i.iface)
     }
 
-    /// The ports of the done instantiation `inst` in the order of the port layout. A handle
-    /// holds a done instantiation, so the empty answer for another number is never seen.
-    pub(crate) fn schema(&self, inst: usize) -> &[Port] {
-        self.interface(inst).map_or(&[], |i| &i.schema)
-    }
-
     /// The port `sym` of the done instantiation `inst`.
     pub(crate) fn port(&self, inst: usize, id: PortId) -> Option<Port> {
         self.done

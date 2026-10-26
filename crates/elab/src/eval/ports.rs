@@ -106,15 +106,17 @@ impl Evaluator<'_> {
     /// follow from the stored numbers, before any record exists.
     fn ports_value(&mut self, pos: Pos, info: TyId, inst: usize) -> Res<Value> {
         let key = self.port_key_ty(info);
-        let schema = self.elab.schema(inst);
+        let Some(iface) = self.elab.interface(inst) else {
+            panic!("a handle holds a done instantiation");
+        };
+        let schema = &iface.schema;
         let texts = &self.syms.texts;
-        let name = |q: &Port| texts.get(q.sym).map_or("", String::as_str);
-        let domain = self
-            .elab
-            .interface(inst)
-            .and_then(|i| i.domain)
-            .and_then(|d| texts.get(d))
-            .map_or("", String::as_str);
+        let text = |sym: crate::names::Sym| match texts.get(sym) {
+            Some(t) => t.as_str(),
+            None => panic!("a port symbol is interned"),
+        };
+        let name = |q: &Port| text(q.sym);
+        let domain = iface.domain.map_or("", text);
         self.fuel.pay(schema.len() as u128).map_err(at(pos))?;
         let (mut size, mut types) = (1u128, 0);
         for q in schema {
