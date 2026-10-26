@@ -147,12 +147,15 @@ struct Walked {
 /// `waiting` holds the numbers of the steps whose `@field` key refers to a `let mut` local, or to
 /// a part of one (`push_key`): a later key with a call can change the local before the walk.
 /// `within` holds the type of the container of each step, if it is known, and the first `checked`
-/// steps passed their checks by that type (`Evaluator::checked`).
+/// steps passed their checks by that type (`Evaluator::checked`). `early` holds a mark for each key
+/// with a call that evaluated before the steps before it passed their checks: the number of the
+/// steps before the key, and the number of the records of `diagnostic` then (`Evaluator::unrecord`).
 struct Keyed<'a> {
     keys: Vec<Key<'a>>,
     waiting: Vec<usize>,
     within: Vec<Option<TyId>>,
     checked: usize,
+    early: Vec<(usize, usize)>,
 }
 
 impl<'a> Keyed<'a> {
@@ -162,6 +165,7 @@ impl<'a> Keyed<'a> {
             waiting: Vec::new(),
             within: Vec::with_capacity(capacity),
             checked: 0,
+            early: Vec::new(),
         }
     }
 
@@ -175,6 +179,7 @@ impl<'a> Keyed<'a> {
         self.waiting.clear();
         self.within.clear();
         self.checked = 0;
+        self.early.clear();
     }
 }
 
@@ -471,8 +476,8 @@ impl Evaluator<'_> {
     /// Here the checks of each segment (`segment`) run in one walk along the path after its
     /// indices, so no step walks again from the root. A failed check comes before an error of a
     /// later index, so the first error is that of Lean. A key with a call can make a record, so
-    /// the steps before it pass their checks by their types first (`checked`), or the segment
-    /// ends before it. Only a static container has elements, so each base after
+    /// the steps before it pass their checks by their types first (`checked`), or the key
+    /// evaluates early (`mark_early`). Only a static container has elements, so each base after
     /// the first is static data. A field of a root that is not static, for example a port of
     /// an instance, applies at once by the rule of `field`, before the walk.
     pub(super) fn read(&mut self, e: &Expr, place: bool) -> Res<Option<Out>> {
@@ -680,11 +685,9 @@ impl Evaluator<'_> {
                 break;
             }
             // Lean checks each step before the next key evaluates, and a key with a call can make
-            // a record. So the steps before it pass their checks first, by their types, or the
-            // segment ends before it and its walk checks them.
-            if self.has_call(step) && !self.checked(&mut keyed) {
-                break;
-            }
+            // a record. So the steps before it pass their checks first, by their types, or the key
+            // evaluates early: a failed check of the walk then takes back its records.
+            self.mark_early(step, &mut keyed);
             // A key with a call can change a `let mut` local that a waiting key reads, so the
             // waiting keys take their values first.
             self.own_waiting(step, &mut keyed);
@@ -736,11 +739,13 @@ impl Evaluator<'_> {
             }
             known = after;
         }
+        let mut passed = 0;
+        let followed = self.followed(at, keyed.keys(), &mut passed);
         let Followed {
             out,
             at_type,
             string_last,
-        } = self.followed(at, keyed.keys())?;
+        } = self.unrecord(&keyed, passed, followed)?;
         let out = match moved {
             Some(q) if !string_last => self.renewed(q, out)?,
             _ => out,
@@ -806,6 +811,28 @@ impl Evaluator<'_> {
         true
     }
 
+    /// Marks the key of `step` as early if it has a call and a step before it does not pass its
+    /// checks by its type (`checked`). The key then evaluates before the walk checks those steps.
+    /// Its only effect that Lean would not have is its records of `diagnostic`: an error in it
+    /// loses to a failed check, because the walk runs first, and a check charges nothing.
+    fn mark_early(&self, step: &Sel<'_>, keyed: &mut Keyed<'_>) {
+        if self.has_call(step) && !self.checked(keyed) {
+            keyed.early.push((keyed.keys.len(), self.records.len()));
+        }
+    }
+
+    /// The result of the walk of the steps `keyed`, where the first `passed` steps passed. A step
+    /// that failed comes before each later key, so the records of the early keys after it go, as
+    /// Lean never made them.
+    fn unrecord<T>(&mut self, keyed: &Keyed<'_>, passed: usize, walked: Res<T>) -> Res<T> {
+        if walked.is_err()
+            && let Some(&(_, records)) = keyed.early.iter().find(|(steps, _)| *steps > passed)
+        {
+            self.records.truncate(records);
+        }
+        walked
+    }
+
     /// Whether the type `t` of its container shows that the evaluated step `key` passes its
     /// checks, and that its walk charges nothing: a number in the range of an array or a tuple, a
     /// selector of a tuple, or a field or a paid `@field` name that a struct declares. Only the
@@ -833,9 +860,9 @@ impl Evaluator<'_> {
     }
 
     /// Before the key of `step` evaluates, gives each waiting key of `keyed` its own value if the
-    /// key of `step` has a call, as Lean reads each key at its step. The caller has checked every
-    /// step by its type (`checked`), so each waiting key is a paid name, and its copy takes work
-    /// within the charge of the key. A step with a call leaves no key waiting.
+    /// key of `step` has a call, as Lean reads each key at its step. A name that waits for its
+    /// charge ends the segment or the steps of a place, so each waiting key is a paid name, and its
+    /// copy takes work within the charge of the key. A step with a call leaves no key waiting.
     fn own_waiting(&mut self, step: &Sel<'_>, keyed: &mut Keyed<'_>) {
         if keyed.waiting.is_empty() || !self.has_call(step) {
             return;
@@ -901,15 +928,16 @@ impl Evaluator<'_> {
 
     /// The walk of the segment that waited at `at` along its evaluated steps `keyed`. A step that
     /// goes into a list a change reached splits the walk: the first steps walk the live local, and
-    /// only the part where they end gets a copy of its old value.
-    pub(super) fn followed(&mut self, at: usize, keyed: &[Key<'_>]) -> Res<Followed> {
+    /// only the part where they end gets a copy of its old value. `passed` counts the steps that
+    /// passed, so an error names its step.
+    fn followed(&mut self, at: usize, keyed: &[Key<'_>], passed: &mut usize) -> Res<Followed> {
         let (parked, mark, split) = self.store.unpark(at);
         let followed = match split {
             Some(n) => {
                 let (first, rest) = keyed.split_at(n.min(keyed.len()));
-                self.follow_crossed(parked, first, rest, mark.as_ref())
+                self.follow_crossed(parked, (first, rest), mark.as_ref(), passed)
             }
-            None => self.follow(Opnd::of_out(parked), keyed, mark.as_ref()),
+            None => self.follow(Opnd::of_out(parked), keyed, mark.as_ref(), passed),
         };
         if let Some(mark) = &mark {
             self.store.finish(mark);
@@ -1008,8 +1036,32 @@ impl Evaluator<'_> {
 
     /// The walk of a read along the evaluated indices `keyed`, in one pass: the result, and
     /// whether the container after the last step is a type. A string container ends a segment:
-    /// its index makes a new string, which is the base of the next segment.
-    fn follow(&mut self, base: Opnd, keyed: &[Key<'_>], mark: Option<&Mark>) -> Res<Followed> {
+    /// its index makes a new string, which is the base of the next segment. `passed` gains the
+    /// steps that passed.
+    fn follow(
+        &mut self,
+        base: Opnd,
+        keyed: &[Key<'_>],
+        mark: Option<&Mark>,
+        passed: &mut usize,
+    ) -> Res<Followed> {
+        let start = *passed;
+        let followed = self.follow_steps(base, keyed, mark, passed);
+        if followed.is_ok() {
+            *passed = start + keyed.len();
+        }
+        followed
+    }
+
+    /// `follow`, which sets `passed` to the step that it takes before each step can fail.
+    fn follow_steps(
+        &mut self,
+        base: Opnd,
+        keyed: &[Key<'_>],
+        mark: Option<&Mark>,
+        passed: &mut usize,
+    ) -> Res<Followed> {
+        let start = *passed;
         let mut base = base;
         let mut string_last = false;
         let mut rest = keyed;
@@ -1020,6 +1072,7 @@ impl Evaluator<'_> {
             while let Some(Key::Named(n)) = rest.first()
                 && self.named_whole(n, &base)
             {
+                *passed = start + keyed.len() - rest.len();
                 let out = self.named_step(base.into_out(), n)?;
                 rest = rest.get(1..).unwrap_or_default();
                 if rest.is_empty() {
@@ -1044,6 +1097,7 @@ impl Evaluator<'_> {
             while let Some(key) = rest.first()
                 && matches!(self.opnd_seen(&base), Seen::Agg(_))
             {
+                *passed = start + keyed.len() - rest.len();
                 let out = match key {
                     Key::Named(n) => self.named_step(base.into_out(), n)?,
                     key => self.agg_key(base.into_out(), key)?,
@@ -1058,7 +1112,9 @@ impl Evaluator<'_> {
             let mut numbers = Vec::with_capacity(rest.len());
             let mut string_step = None;
             let mut name_step = None;
+            let from = start + keyed.len() - rest.len();
             for (at, key) in rest.iter().enumerate() {
+                *passed = from + at;
                 let number = match key {
                     Key::Index(q, ..) if matches!(cur, Seen::Static(Value::Type(_))) => {
                         return fail_type_index(*q);
@@ -1104,6 +1160,7 @@ impl Evaluator<'_> {
             let Some(Key::Index(q, xp, i)) = rest.get(at) else {
                 return Ok(Followed::new(out, at_type, string_last));
             };
+            *passed = from + at;
             base = Opnd::Static(self.str_at(*q, *xp, &out, i)?);
             rest = rest.get(at + 1..).unwrap_or_default();
             string_last = rest.is_empty();
@@ -1126,11 +1183,11 @@ impl Evaluator<'_> {
     fn follow_crossed(
         &mut self,
         parked: Out,
-        first: &[Key<'_>],
-        rest: &[Key<'_>],
+        (first, rest): (&[Key<'_>], &[Key<'_>]),
         mark: Option<&Mark>,
+        passed: &mut usize,
     ) -> Res<Followed> {
-        let list = self.follow(Opnd::of_out(parked), first, None)?.out;
+        let list = self.follow(Opnd::of_out(parked), first, None, passed)?.out;
         let step = rest.first().and_then(|key| match key {
             Key::Index(_, _, Index::Number(j)) => Some(*j),
             Key::Named(n) => n.at,
@@ -1144,10 +1201,16 @@ impl Evaluator<'_> {
         {
             let element = elem(Opnd::Static(list), j);
             let out = self.resolve_ref(Some(mark), element);
-            return self.follow(Opnd::of_out(out), rest.get(1..).unwrap_or_default(), None);
+            *passed += 1;
+            return self.follow(
+                Opnd::of_out(out),
+                rest.get(1..).unwrap_or_default(),
+                None,
+                passed,
+            );
         }
         let list = self.resolve_ref(mark, list);
-        self.follow(Opnd::of_out(list), rest, None)
+        self.follow(Opnd::of_out(list), rest, None, passed)
     }
 
     /// The longest run of steps of `keys` that stay inside the nodes of an aggregate root, taken
@@ -1362,7 +1425,7 @@ impl Evaluator<'_> {
     /// again from the root. `S008` keeps the root unchanged while the indices evaluate, and
     /// a failed check comes before an error of a later step. Thus the first error is that of
     /// Lean. A key with a call can make a record, so the steps before it pass their checks by
-    /// their types first (`checked`), or the walk catches up before it.
+    /// their types first (`checked`), or the key evaluates early (`mark_early`).
     pub(super) fn place_at(&mut self, pos: Pos, code: Code, target: &Expr) -> Res<Place> {
         let bad = || {
             fail(
@@ -1407,12 +1470,9 @@ impl Evaluator<'_> {
         let mut stop = None;
         for (n, step) in steps.iter().enumerate() {
             // Lean checks each step before the next step charges, and a key with a call can make
-            // a record. So the steps before it pass their checks first, by their types, or the
-            // walk catches up.
-            if self.has_call(step) && !self.checked(&mut keyed) {
-                state = self.walk(root, state, keyed.keys(), false)?;
-                keyed.clear();
-            }
+            // a record. So the steps before it pass their checks first, by their types, or the key
+            // evaluates early: a failed check of the walk then takes back its records.
+            self.mark_early(step, &mut keyed);
             // A key with a call can change a `let mut` local that a waiting key reads, so the
             // waiting keys take their values first.
             self.own_waiting(step, &mut keyed);
@@ -1423,8 +1483,7 @@ impl Evaluator<'_> {
                 && !keyed.keys().is_empty()
                 && part_ty.is_some_and(|t| self.may_normalize(t))
             {
-                state = self.walk(root, state, keyed.keys(), false)?;
-                keyed.clear();
+                state = self.walk_keyed(root, state, &mut keyed, false)?;
             }
             // A field of an `Instance` handle is a port, which a place cannot select. The step
             // charges after the index that follows it (Lean `placePort`), so the walk catches up
@@ -1432,8 +1491,7 @@ impl Evaluator<'_> {
             if let Sel::Field(fp, f) = step
                 && self.may_be_instance(shape, aggregate)
             {
-                state = self.walk(root, state, keyed.keys(), false)?;
-                keyed.clear();
+                state = self.walk_keyed(root, state, &mut keyed, false)?;
                 if let Some(info) = self.instance_at(root, &state) {
                     return self.place_port(info, (*fp, f), steps.get(n + 1..).unwrap_or_default());
                 }
@@ -1459,7 +1517,7 @@ impl Evaluator<'_> {
                 }
             }
         }
-        let walked = self.walk(root, state, keyed.keys(), true)?;
+        let walked = self.walk_keyed(root, state, &mut keyed, true)?;
         if let Some(e) = stop {
             return Err(e);
         }
@@ -1573,15 +1631,39 @@ impl Evaluator<'_> {
         }
     }
 
+    /// The walk of the steps of `keyed` (`walk`), which then wait no more. A step that fails takes
+    /// back the records of the early keys after it (`unrecord`).
+    fn walk_keyed(
+        &mut self,
+        root: Root,
+        st: Walked,
+        keyed: &mut Keyed<'_>,
+        last: bool,
+    ) -> Res<Walked> {
+        let mut passed = 0;
+        let walked = self.walk(root, st, keyed.keys(), last, &mut passed);
+        let walked = self.unrecord(keyed, passed, walked);
+        keyed.clear();
+        walked
+    }
+
     /// The numbers of the steps `keyed` of the local at `root`, and the type of the part, in
-    /// one walk from the root outward. `ty` is the type of the local, if it has one.
+    /// one walk from the root outward. `ty` is the type of the local, if it has one. `passed`
+    /// counts the steps that passed, so an error names its step.
     ///
     /// Lean takes the part of the type at each step, and the type of the element when it has
     /// no type. The type of a tuple is the tuple of the types of its elements, so below a
     /// step without a type the type stays that of the element until an array gives its
     /// element type. Thus the walk finds the type of a tuple element only once, at the end,
     /// and not at each step.
-    fn walk(&mut self, root: Root, mut st: Walked, keyed: &[Key<'_>], last: bool) -> Res<Walked> {
+    fn walk(
+        &mut self,
+        root: Root,
+        mut st: Walked,
+        keyed: &[Key<'_>],
+        last: bool,
+        passed: &mut usize,
+    ) -> Res<Walked> {
         let aggregate = matches!(self.store.root(&root), Val::Agg(_));
         let mut cur = match st.own.take() {
             Some(v) => Cur::Own(v),
@@ -1590,7 +1672,8 @@ impl Evaluator<'_> {
         let mut known = st.known;
         let mut in_list = st.in_list;
         let mut keys = std::mem::take(&mut st.keys);
-        for key in keyed {
+        for (n, key) in keyed.iter().enumerate() {
+            *passed = n;
             let seen = cur.seen();
             // A name that the fuel could not pay at its step fails here, after its checks.
             if let Key::Named(n) = key
