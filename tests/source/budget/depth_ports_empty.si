@@ -1,0 +1,9 @@
+// The depth of the list of an empty child is 4. With the nesting depth 4 the file elaborates, and with 3 it gives `S015`.
+// DEPTH 4
+// TOP M()
+module K() domains() {
+}
+module M() domains() {
+    instance k = K();
+    let t = @ports(k);
+}

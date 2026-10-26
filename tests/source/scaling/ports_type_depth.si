@@ -1,0 +1,17 @@
+// T4 of the work-counter tests of `@ports` (issue #346). A child has an output whose type is an array nested N levels deep.
+// The parent calls `@ports(u)` 8 times. Each call reads the stored depth and the stored size of the port type, so the
+// work follows the fuel. A recursive walk of the type for the depth or the size makes N more work for each call, and the
+// work escapes the bound.
+// SCALE ports_type_depth 16 32 64 128 256
+// TOP M()
+type T = NEST{[|Bool|; 1]};
+module C() domains() {
+    output q: T;
+    q := T();
+}
+module M() domains() {
+    instance u = C();
+// REPEAT i 8
+    let ps{i} = @ports(u);
+// END
+}

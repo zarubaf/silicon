@@ -1,0 +1,22 @@
+// T2 of the work-counter tests of `@ports` (issue #346). A child has 16 scalar ports with distinct names. The parent calls
+// `@ports(u)` N times. The interface sorts its ports once, when the instantiation is done, so a call compares no name. A sort
+// for each call makes N times 16 log 16 compares more, and the work escapes the bound.
+// SCALE ports_repeat 16 32 64 128 256
+// TOP M()
+module C() {
+    comptime for i in 0..16 {
+        input g: UInt[8] as "p" + str(i);
+    }
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    comptime for i in 0..16 {
+        @field(u, "p" + str(i)) := x;
+    }
+// REPEAT i {N}
+    let ps{i} = @ports(u);
+// END
+    o := x;
+}

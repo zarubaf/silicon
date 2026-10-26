@@ -1,0 +1,16 @@
+// `@ports(u)` of a child with one input and one output charges its node, the use of `PortInfo` (which completes `PortKey`), 1 unit for each port, and then the recursive size of the result. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 281
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: Bool;
+    q := a == 3;
+}
+module M() {
+    input x: UInt[4];
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    let ps = @ports(u);
+    o := u.q;
+}

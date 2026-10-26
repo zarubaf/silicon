@@ -1,0 +1,11 @@
+// A list with one `Bool` port has the depth 5. With the nesting depth 5 the file elaborates, and with 4 it gives `S015`.
+// DEPTH 5
+// TOP M()
+module K() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    instance k = K();
+    let t = @ports(k);
+}

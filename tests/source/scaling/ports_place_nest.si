@@ -1,0 +1,16 @@
+// T6 of the work-counter tests of `@ports` (issue #346). A handle in an array nested N levels deep. The parent calls `@ports` on
+// the path to the handle 8 times. A walk along the path gives work in `O(N)` for a call, and a walk from the root at each
+// step gives `O(N^2)` for a call. The build of the nest pays its fuel in N^2 once.
+// SCALE ports_place_nest 16 32 64 128 256
+// TOP M()
+module C() domains() {
+    output q: Bool;
+    q := true;
+}
+module M() domains() {
+    instance u = C();
+    let a = NEST{[|u|]};
+// REPEAT i 8
+    let ps{i} = @ports(NEST{|a|[0]});
+// END
+}

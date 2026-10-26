@@ -1,0 +1,22 @@
+// T5 of the work-counter tests of `@ports` (issue #346). A child has 8 ports whose names have N bytes. The parent calls
+// `@ports(u)` 8 times. The size of a name and of a domain is its length, and the build shares the text of each name. A copy
+// of the names for each call makes N more work for each name, and the work escapes the bound.
+// SCALE ports_long_names 16 32 64 128 256
+// TOP M()
+module C() {
+    comptime for i in 0..8 {
+        input g: UInt[8] as "NEST{a||}" + str(i);
+    }
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    comptime for i in 0..8 {
+        @field(u, "NEST{a||}" + str(i)) := x;
+    }
+// REPEAT i 8
+    let ps{i} = @ports(u);
+// END
+    o := x;
+}

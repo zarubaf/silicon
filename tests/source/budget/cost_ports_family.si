@@ -1,0 +1,20 @@
+// The call charges 1 unit for each entry of a family, and the size of the result grows with the entries and the names. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 419
+// TOP M()
+module C() {
+    input req[3]: UInt[4];
+    input req[1]: UInt[4];
+    input req[2]: UInt[4];
+    output q: UInt[4];
+    q := req[1] +% req[2] +% req[3];
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.req[1] := x;
+    u.req[2] := x;
+    u.req[3] := x;
+    let ps = @ports(u);
+    o := u.q;
+}
