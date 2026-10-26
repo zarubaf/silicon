@@ -278,9 +278,9 @@ impl Builder {
                 if !has_leaf(elem, kind) {
                     return None;
                 }
-                note!(self, list_indexes);
                 let at = self.index(len, depth, r);
                 let spelled = self.field_index(&base, &at, LIST_ODDS, r);
+                note!(self, list_indexes, spelled.is_none());
                 note!(self, field_lists, spelled.is_some());
                 Some(spelled.unwrap_or_else(|| SExpr::Index(Box::new(base), Box::new(at))))
             }
