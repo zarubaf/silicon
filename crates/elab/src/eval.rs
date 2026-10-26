@@ -1356,11 +1356,7 @@ impl Evaluator<'_> {
         match self.store.const_status(i) {
             ConstStatus::Done => return Ok(const_ref(i)),
             ConstStatus::InProgress => {
-                return fail(
-                    Code::S019,
-                    pos,
-                    format!("the constant `{x}` depends on itself"),
-                );
+                return fail(Code::S019, pos, format!("`{x}` depends on itself"));
             }
             ConstStatus::Fresh => {}
         }
