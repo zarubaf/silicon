@@ -473,8 +473,28 @@ impl Evaluator<'_> {
     /// the first is static data. A field of a root that is not static, for example a port of
     /// an instance, applies at once by the rule of `field`, before the walk.
     pub(super) fn read(&mut self, e: &Expr, place: bool) -> Res<Option<Out>> {
+        self.read_from(e, self.read_step(e), place)
+    }
+
+    /// The read of an `@field` at its node, which charged. The type node of a builtin in a type
+    /// position has no `Expr`, so the first step comes from its parts.
+    pub(super) fn read_key(
+        &mut self,
+        (pos, base, key): (Pos, &Expr, &Expr),
+        place: bool,
+    ) -> Res<Option<Out>> {
+        self.read_from(base, Some((Sel::Key(pos, base, key), base)), place)
+    }
+
+    /// The read from its first step `next` and the expression `e` that the step comes from. A
+    /// read with a step takes its root from the bases of its steps.
+    fn read_from<'e>(
+        &mut self,
+        e: &'e Expr,
+        mut next: Option<(Sel<'e>, &'e Expr)>,
+        place: bool,
+    ) -> Res<Option<Out>> {
         let mut steps = Vec::new();
-        let mut next = self.read_step(e);
         let mut root = e;
         while let Some((step, base)) = next {
             if let Sel::Index(q, args) = step

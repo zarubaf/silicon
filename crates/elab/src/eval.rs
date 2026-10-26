@@ -949,17 +949,44 @@ impl Evaluator<'_> {
 
     fn eval(&mut self, e: &Expr) -> Res<Option<Out>> {
         self.charge(e.pos(), 1)?;
+        self.under_arg(e.pos(), |ev, place| ev.eval_node(e, place))
+    }
+
+    /// The work of a node at `pos` after its charge, under the record of an open builtin
+    /// argument. `node` gets `place`, which tells that the node is the base of a step of a place
+    /// that is the whole argument.
+    fn under_arg(
+        &mut self,
+        pos: Pos,
+        node: impl FnOnce(&mut Self, bool) -> Res<Option<Out>>,
+    ) -> Res<Option<Out>> {
         if self.arg == Some(ArgRec::Place) {
             // The root and the steps of a place that is the whole argument read no value. The
             // record is `Place` only for the base of such a step, and each other part of the node
             // has the record `Node` (Lean `argNode`).
-            return self.with_arg(ArgRec::Node, |ev| ev.eval_node(e, true));
+            return self.with_arg(ArgRec::Node, |ev| node(ev, true));
         }
-        let o = self.eval_node(e, false)?;
+        let o = node(self, false)?;
         if let Some(out) = &o {
-            self.arg_hw(e.pos(), out)?;
+            self.arg_hw(pos, out)?;
         }
         Ok(o)
+    }
+
+    /// A builtin at `pos`, after its node charged. It is the work of the node of an expression
+    /// and of a type position.
+    pub(super) fn builtin_node(
+        &mut self,
+        pos: Pos,
+        args: &BuiltinArgs,
+        place: bool,
+    ) -> Res<Option<Out>> {
+        match args {
+            BuiltinArgs::TypeOf(operand) => Ok(Some(self.type_of_builtin(pos, operand)?)),
+            BuiltinArgs::TypeInfo(arg) => Ok(Some(self.type_info(pos, arg)?)),
+            BuiltinArgs::Struct(arg) => Ok(Some(self.struct_builtin(pos, arg)?)),
+            BuiltinArgs::Field(base, key) => self.read_key((pos, base, key), place),
+        }
     }
 
     /// The work of the node `e`, after its charge. `place` tells that the node is the base of a
@@ -971,18 +998,7 @@ impl Evaluator<'_> {
             Expr::Str { pos, value } => self.string_lit(*pos, value),
             Expr::Name { pos, id, name } => Ok(Some(self.name(*pos, *id, name)?)),
             Expr::Match { pos, scrut, arms } => self.match_expr(*pos, scrut, arms),
-            Expr::Builtin {
-                pos,
-                args: BuiltinArgs::TypeOf(operand),
-            } => Ok(Some(self.type_of_builtin(*pos, operand)?)),
-            Expr::Builtin {
-                pos,
-                args: BuiltinArgs::TypeInfo(arg),
-            } => Ok(Some(self.type_info(*pos, arg)?)),
-            Expr::Builtin {
-                pos,
-                args: BuiltinArgs::Struct(arg),
-            } => Ok(Some(self.struct_builtin(*pos, arg)?)),
+            Expr::Builtin { pos, args } => self.builtin_node(*pos, args, place),
             Expr::Unary { pos, op, arg } => self.unary_expr(*pos, *op, arg),
             Expr::Binary {
                 pos,
@@ -1007,12 +1023,7 @@ impl Evaluator<'_> {
             } => self.method(*pos, *id, recv, name, args),
             Expr::Index { pos, base, args } => self.index_expr(e, *pos, base, args, place),
             Expr::Unit { .. } | Expr::Tuple { .. } | Expr::Array { .. } => self.container(e),
-            Expr::Select { .. }
-            | Expr::Field { .. }
-            | Expr::Builtin {
-                args: BuiltinArgs::Field(..),
-                ..
-            } => self.read(e, place),
+            Expr::Select { .. } | Expr::Field { .. } => self.read(e, place),
             Expr::ArrayType { pos, elem, len } => {
                 let t = self.array_type(*pos, elem, len)?;
                 Ok(Some(Out::Made(Val::Static(Value::Type(t)))))
