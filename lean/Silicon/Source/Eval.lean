@@ -3027,8 +3027,21 @@ mutual
           let t ← typeInfoArg x.pos o.value
           let ti ← spec n p (Resolve.typeInfoIndex (← read).items.size) []
           return some ⟨.static (← typeInfo p ti t), false, none⟩
-        -- TODO(#381): evaluate `@Struct` (section 9.3).
-        | .builtin (.atStruct p _) => fail .S004 p "a builtin is not supported yet"
+        | .builtin (.atStruct p x) => do
+          -- Steps 2 to 4 of the `@Struct` order (section 6.2): the argument under the guard
+          -- `arg` and its record, the copy, then the kind. A `[]` takes its typed use at
+          -- `[FieldInfo; 0]`, a use of `FieldInfo` whose errors are at the `@`.
+          let r : ArgRec := if (chain x).isSome then .place else .node
+          let o ← guardedBy (.arg .struct) <|
+            withReader (fun c => { c with arg := some r }) do need x (← eval n x)
+          charge p o.value.size
+          let xs ← match o.value with
+            | v@(.pending _ (.empty _)) => atUse p do
+              let fi ← spec n p (Resolve.fieldInfoIndex (← read).items.size) []
+              let _ ← conformVal p (.array fi 0) v
+              pure []
+            | v => structArg x.pos v
+          return some ⟨.static (.type (← generated p xs)), false, none⟩
         | .builtin (.atField p b k) => do
           let o ← need b (← onPlace place (eval n b))
           let c ← changesOf o
@@ -3100,8 +3113,13 @@ mutual
       | .fn p ps r => do
         let qs ← params n ps
         fnTy p qs (← typeExpr n r)
-      -- TODO(#381): evaluate a builtin in a type position (section 6.2, type position order).
-      | .builtin f => fail .S004 f.pos "a builtin is not supported yet"
+      | .builtin f => do
+        -- Steps 2 and 3 of the type position order (section 6.2): the builtin as an expression
+        -- under the record of a builtin argument, then the kind of its value.
+        let e := Resolve.Expr.builtin f
+        let r : ArgRec := if (chain e).isSome then .place else .node
+        let o ← withReader (fun c => { c with arg := some r }) do need e (← eval n e)
+        builtinTy f.pos f.builtin o.value
   termination_by (b, 3)
 
   /-- The parameter types of a function type in their order, each with its `mut` mark. -/

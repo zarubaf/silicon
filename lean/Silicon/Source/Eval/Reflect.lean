@@ -22,6 +22,9 @@ Only then the result exists.
 `TypeInfo` (section 6.2, **`@typeInfo` order**). It reads the stored parts of the type: the
 fields of a struct entry and the variants of an enum entry. It charges them and the size of the
 result before the record exists.
+`@Struct(fs)` checks the kind of its argument here (`structArg`), and it makes its generated
+record type here (`generated`), after the copy of its argument (section 6.2, **`@Struct`
+order**). A builtin in a type position checks its value here (`builtinTy`).
 -/
 namespace Silicon.Source.Eval
 
@@ -361,5 +364,103 @@ def typeInfo (p : Pos) (ti t : Ty) : M Value := do
   bounded p v.depth
   charge p v.size
   return v
+
+/-! The prelude struct `FieldInfo` (section 5.6). A user struct with this name is another type. -/
+def preludeFieldInfo : Ty → Bool
+  | .struct _ "FieldInfo" _ _ .prelude => true
+  | _ => false
+
+/-! A user struct with the name `FieldInfo`. It hides the prelude struct (section 6.2). -/
+def userFieldInfo : Ty → Bool
+  | .struct _ "FieldInfo" _ _ .user => true
+  | _ => false
+
+/-!
+The records of the argument `v` of `@Struct` at the argument `pos` (section 6.2, **`@Struct`
+order**, step 4). A `List[FieldInfo]` or a `[FieldInfo; N]` of the prelude `FieldInfo` gives its
+records. A value of a user `FieldInfo`, also as the element type, is "User `FieldInfo` in
+`@Struct`". Each other value is "Argument of `@Struct`". The check reads only the type of `v`.
+-/
+def structArg (pos : Pos) (v : Val) : M (List Value) := do
+  match v with
+  | .static (.array t xs) | .static (.list t xs) => if preludeFieldInfo t then return xs.toList
+  | _ => pure ()
+  let user := match v.ty? with
+    | some (.array e _) | some (.list e) => userFieldInfo e
+    | some t => userFieldInfo t
+    | none => false
+  if user then
+    fail .S010 pos (s!"`@Struct` takes the prelude `FieldInfo`, not {v.about}; a user struct " ++
+      "`FieldInfo` hides the prelude one, so rename it, or take the fields from " ++
+      "`@typeInfo(T).fields`")
+  fail .S010 pos (s!"`@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not {v.about}; " ++
+    "build each field with the prelude `FieldInfo(name, ty)`")
+
+/-! The name and the type of a `FieldInfo` record. -/
+def fieldOf : Value → Option (String × Ty)
+  | .record _ ⟨[.str x, .type t]⟩ => some (x, t)
+  | _ => none
+
+/-!
+The fields of the records `xs` of the argument of `@Struct` at its `@` `p`, after the fields
+`fs` with the member map `ms` (section 6.2, **`@Struct` order**, step 5). Each name charges its
+size as a string, which counts characters. Then it gets the name rule (`S022`) and its symbol
+(`symbolOf`). The symbol goes into the member map, and a symbol that the map holds is `S022`
+"Second field name", with the two indices from 0. The typed use of the argument gave each record
+the type `FieldInfo`, so each record holds a name and a type.
+-/
+def genFields (p : Pos) :
+    List Value → Std.TreeMap Nat Nat compare → Array (String × Ty) →
+      M (Std.TreeMap Nat Nat compare × Array (String × Ty))
+  | [], ms, fs => pure (ms, fs)
+  | x :: xs, ms, fs => do
+    let some (name, t) := fieldOf x | fail .S010 p s!"{x.literal} has no entry"
+    charge p (Value.str name).size
+    nameRule p name "field"
+    let y ← symbolOf name
+    if let some i := ms[y]? then
+      fail .S022 p (s!"the field `{strText name}` occurs at the indices {i} and {fs.size} of " ++
+        "`@Struct`; give each field its own name")
+    genFields p xs (ms.insert y fs.size) (fs.push (name, t))
+
+/-!
+The generated record type of the records `xs` at the `@` `p` (section 6.2, **`@Struct` order**,
+steps 5 to 9). After the fields (`genFields`), the metadata gets its size limit and its depth
+check (`S015`), as for a tuple type. Then the size of the new type term charges, then the
+metadata sums. The look-up in the table of generated record types comes last
+(`Specs.generate`), so a hit charges the same as a miss. The walk reads the stored metadata of
+each field type, and it never goes into a field type.
+-/
+def generated (p : Pos) (xs : List Value) : M Ty := do
+  let (ms, fs) ← genFields p xs {} #[]
+  let fs := fs.toList
+  let parts := fs.map (·.2.info)
+  if over (sumBits parts) then fail .S015 p metaLimitText
+  let m := Meta.struct parts []
+  bounded p m.depth
+  charge p (Ty.struct 0 "" #[] m (.gen fs)).size
+  sums p parts m
+  let (specs, t) := (← get).specs.generate fs ms
+  modify fun s => { s with specs }
+  return t
+
+/-!
+The fix `{h}` of "Builtin as a type" for the builtin `q` (section 6.2). `@TypeOf` and `@Struct`
+always give a `Type`, so only `@typeInfo` and `@field` reach the text.
+-/
+def builtinTyHint : Builtin → String
+  | .typeInfo => "select a `Type` from it, for example `@field(@typeInfo(T), \"element\")`"
+  | .typeOf | .struct | .field =>
+    "select a part of type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
+
+/-!
+The type of the value `v` of the builtin `q` in a type position, at its `@` `p` (section 6.2,
+**Type position order**, step 3). A value that is not a `Type` is `S010` "Builtin as a type".
+-/
+def builtinTy (p : Pos) (q : Builtin) : Val → M Ty
+  | .static (.type t) => pure t
+  | v => do
+    let h := builtinTyHint q
+    fail .S010 p s!"a type position needs a `Type`, but `@{q.name}` gives {v.about}; {h}"
 
 end Silicon.Source.Eval

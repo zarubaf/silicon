@@ -4159,11 +4159,12 @@ progress as the argument is `S019` at the argument, before the use of `TypeInfo`
   "the specialization S is in progress"
 
 /-!
-`@Struct` and a builtin in a type position are `S004` at their `@` in pass 5 until #381 evaluates
-them. Pass 4 accepts both.
+`@Struct` and a builtin in a type position evaluate in pass 5. A value that is not a list of
+`FieldInfo` is `S010` at the argument.
 -/
-#guard out "const X: Nat = 1;" "@Struct(X)" == "S004 1:1"
-#guard out "const X: Nat = 1;" "[@TypeOf(X); 2]" == "S004 1:2"
-#guard out "const T: (Bool, @TypeOf(X)) = (true, 1);\nconst X: Nat = 1;" "T" == "S004 1:17"
+#guard out "const X: Nat = 1;" "@Struct(X)" == "S010 1:9"
+#guard out "const X: Nat = 1;" "[@TypeOf(X); 2]" == "(type (array nat 2))"
+#guard out "const T: (Bool, @TypeOf(X)) = (true, 1);\nconst X: Nat = 1;" "T" ==
+  "(tuple ((bool true) (int 1)))"
 
 end Silicon.Source.Test.Eval
