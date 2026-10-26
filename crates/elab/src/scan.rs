@@ -17,7 +17,8 @@ use crate::int::Int;
 use crate::names::Sym;
 use parse::NestedStack;
 use parse::ast::{
-    Builtin, Expr, FnParam, Ident, Item, NodeId, Pattern, PortForm, Pos, Stmt, TypeExpr,
+    Builtin, BuiltinArgs, Expr, FnParam, Ident, Item, NodeId, Pattern, PortForm, Pos, Stmt,
+    TypeExpr,
 };
 use resolve::{DeclId, Kind, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
@@ -432,11 +433,11 @@ impl Walk<'_> {
 
     /// Walks the operands of a builtin, and tells whether one holds a call. The key of an `@field`
     /// evaluates like an index: a call in it can change a local of the base while the base waits.
-    fn builtin(&mut self, builtin: Builtin, args: &[Expr], depth: usize) -> bool {
+    fn builtin(&mut self, args: &BuiltinArgs, depth: usize) -> bool {
         let mut calls = false;
-        for (i, e) in args.iter().enumerate() {
+        for (i, e) in args.operands().enumerate() {
             let in_arg = self.expr(e, depth);
-            if in_arg && i == 1 && builtin == Builtin::Field {
+            if in_arg && i == 1 && args.builtin() == Builtin::Field {
                 self.call_args
                     .0
                     .insert(CallArgs::key(std::slice::from_ref(e)));
@@ -543,7 +544,7 @@ impl Walk<'_> {
                 }
                 calls
             }
-            Expr::Builtin { builtin, args, .. } => self.builtin(*builtin, args, d),
+            Expr::Builtin { args, .. } => self.builtin(args, d),
         }
     }
 }

@@ -4,8 +4,8 @@
 
 use crate::{Code, Error};
 use parse::ast::{
-    Arm, Builtin, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern, PortForm, Pos,
-    Stmt, TypeExpr,
+    Arm, Builtin, BuiltinArgs, Expr, FnParam, Ident, Item, NodeId, Param, ParamMode, Pattern,
+    PortForm, Pos, Stmt, TypeExpr,
 };
 use resolve::{DeclId, Kind, Prelude, Resolved, ResolvedExpr, Target};
 use std::collections::{BTreeMap, BTreeSet};
@@ -499,10 +499,9 @@ impl<'a> Walker<'a> {
                     cur = base;
                 }
                 Expr::Builtin {
-                    builtin: Builtin::Field,
-                    args,
+                    args: BuiltinArgs::Field(base, _),
                     ..
-                } => cur = args.first()?,
+                } => cur = base,
                 _ => return None,
             }
         }
@@ -735,9 +734,9 @@ impl<'a> Walker<'a> {
                 Some(Head::complete(Ctor::Convert))
             }
             Expr::Match { scrut, arms, .. } => self.matched(is_static, scrut, arms),
-            Expr::Builtin { builtin, args, .. } => {
-                for (k, arg) in args.iter().enumerate() {
-                    self.expr(builtin_operand_is_static(*builtin, k, is_static), arg);
+            Expr::Builtin { args, .. } => {
+                for (k, arg) in args.operands().enumerate() {
+                    self.expr(builtin_operand_is_static(args.builtin(), k, is_static), arg);
                 }
                 None
             }

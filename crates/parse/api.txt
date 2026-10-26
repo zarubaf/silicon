@@ -4,6 +4,7 @@ enum parse::Code
 enum parse::DepthError
 enum parse::ast::BinOp
 enum parse::ast::Builtin
+enum parse::ast::BuiltinArgs
 enum parse::ast::Expr
 enum parse::ast::Item
 enum parse::ast::ParamMode
@@ -29,6 +30,8 @@ method parse::ParsedExpr::depth
 method parse::ParsedExpr::expr
 method parse::ParsedExpr::into_parts
 method parse::ast::Builtin::name
+method parse::ast::BuiltinArgs::builtin
+method parse::ast::BuiltinArgs::operands
 method parse::ast::Expr::builtin_operands
 method parse::ast::Expr::pos
 method parse::ast::Item::name
