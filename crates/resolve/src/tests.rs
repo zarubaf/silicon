@@ -175,6 +175,7 @@ impl Ids {
         }
     }
 
+    #[allow(unreachable_patterns, clippy::match_wildcard_for_single_variants)]
     fn ty(&mut self, ty: &TypeExpr) {
         match ty {
             TypeExpr::Name { pos, id, .. } => self.add(*pos, *id),
@@ -182,7 +183,6 @@ impl Ids {
                 self.ty(base);
                 self.exprs(args);
             }
-            TypeExpr::Unit { .. } => {}
             TypeExpr::Tuple { elems, .. } => {
                 for elem in elems {
                     self.ty(elem);
@@ -193,6 +193,8 @@ impl Ids {
                 self.expr(len);
             }
             TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
+            // The unit type holds no name. A builtin type is walked once its AST exists.
+            _ => {}
         }
     }
 
@@ -253,7 +255,11 @@ impl Ids {
             }
             Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
-            Expr::Builtin { args, .. } => self.exprs(args),
+            Expr::Builtin { .. } => {
+                for operand in expr.builtin_operands().into_iter().flat_map(|(_, o)| o) {
+                    self.expr(operand);
+                }
+            }
             Expr::Match { scrut, arms, .. } => {
                 self.expr(scrut);
                 for arm in arms {
@@ -1307,8 +1313,8 @@ fn call_sites(r: &Resolved) -> Vec<(Pos, usize)> {
                     expr(r, a, out);
                 }
             }
-            Expr::Builtin { args, .. } => {
-                for a in args {
+            Expr::Builtin { .. } => {
+                for a in e.builtin_operands().into_iter().flat_map(|(_, o)| o) {
                     expr(r, a, out);
                 }
             }
