@@ -1,0 +1,14 @@
+// A `type` alias can name a builtin. The alias is transparent: it equals the type of the builtin.
+// TOP M()
+type R = @Struct([FieldInfo("a", UInt[8])]);
+type S = @TypeOf(Bool);
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(R == @Struct([FieldInfo("a", UInt[8])]), "struct");
+    static_assert(S == Type, "typeof");
+    let r: R = R(x);
+    o := r.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

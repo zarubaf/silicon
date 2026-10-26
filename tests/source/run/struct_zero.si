@@ -1,0 +1,12 @@
+// `T()` of a generated record type is the zero value: each field is zero.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: Bool;
+    let z = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)])();
+    o := x +% z.a;
+    p := z.b;
+}
+// STEP in=(x 3) out=(o 3 p false)
+// STEP in=(x 250) out=(o 250 p false)

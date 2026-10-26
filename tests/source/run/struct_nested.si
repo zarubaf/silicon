@@ -1,0 +1,14 @@
+// A generated record type can be a field type of another one. The inner type is the same type as a direct call.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let inner = @Struct([FieldInfo("a", UInt[8])]);
+    let outer = @Struct([FieldInfo("i", inner), FieldInfo("b", Bool)]);
+    static_assert(@field(@typeInfo(outer), "fields")[0].ty == @Struct([FieldInfo("a", UInt[8])]), "inner");
+    static_assert(data_bits(outer) == 9, "bits");
+    let g = outer(inner(x), true);
+    o := g.i.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

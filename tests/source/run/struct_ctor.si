@@ -1,0 +1,12 @@
+// The constructor of a generated record type takes one value for each field, in order. The fields read back.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    output p: Bool;
+    let g = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)])(x +% 1, x == 3);
+    o := g.a;
+    p := g.b;
+}
+// STEP in=(x 3) out=(o 4 p true)
+// STEP in=(x 250) out=(o 251 p false)

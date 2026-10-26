@@ -1,0 +1,13 @@
+// A register of a generated record type, with a reset value.
+// TOP M()
+type G = @Struct([FieldInfo("a", Bool)]);
+module M() {
+    input x: Bool;
+    output y: Bool;
+    reg r: G = G(false);
+    r := G(x);
+    y := r.a;
+}
+// STEP in=(clock$0rst false x true) out=(y false)
+// STEP in=(clock$0rst false x false) out=(y true)
+// STEP in=(clock$0rst false x true) out=(y false)

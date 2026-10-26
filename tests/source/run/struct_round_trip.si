@@ -1,0 +1,11 @@
+// For a generated record type `G`, `@Struct(@typeInfo(G).fields) == G`: the fields of `@typeInfo` give the same entry back.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let g = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]);
+    static_assert(@Struct(@typeInfo(g).fields) == g, "round trip");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

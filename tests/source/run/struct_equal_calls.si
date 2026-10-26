@@ -1,0 +1,13 @@
+// Two calls with equal field lists give one type. A different name, a different type, and a different order give another type.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    static_assert(@Struct([FieldInfo("a", UInt[8])]) == @Struct([FieldInfo("a", UInt[8])]), "equal");
+    static_assert(@Struct([FieldInfo("a", UInt[8])]) != @Struct([FieldInfo("b", UInt[8])]), "name");
+    static_assert(@Struct([FieldInfo("a", UInt[8])]) != @Struct([FieldInfo("a", UInt[9])]), "type");
+    static_assert(@Struct([FieldInfo("a", Bool), FieldInfo("b", Bool)]) != @Struct([FieldInfo("b", Bool), FieldInfo("a", Bool)]), "order");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

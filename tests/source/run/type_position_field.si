@@ -1,0 +1,12 @@
+// `@field` in a type position selects a `Type` from a record or a list of types.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let ts = [UInt[8], Bool];
+    let y: @field(ts, 0) = x;
+    let z: @field(@typeInfo(UInt[8]), "element") = ();
+    o := y;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)

@@ -1,0 +1,13 @@
+// A field of an enum type is valid. The record port adds the two leaves of the enum at its place.
+// TOP M()
+enum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }
+module M() domains() {
+    input x: UInt[8];
+    output y: UInt[8];
+    output q: @Struct([FieldInfo("op", Op), FieldInfo("n", UInt[8])]);
+    let G = @Struct([FieldInfo("op", Op), FieldInfo("n", UInt[8])]);
+    q := G(Op::Load(x), x);
+    y := x;
+}
+// STEP in=(x 3) out=(q.op.tag 1 q.op.payload 3 q.n 3 y 3)
+// STEP in=(x 250) out=(q.op.tag 1 q.op.payload 250 q.n 250 y 250)

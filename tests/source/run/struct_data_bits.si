@@ -1,0 +1,11 @@
+// `data_bits` of a generated record type sums the bits of its fields, and gives the width of a port.
+// TOP M()
+type BU = (Bool, UInt[4]);
+module M() domains() {
+    input x: UInt[data_bits(@Struct([FieldInfo("a", UInt[8]), FieldInfo("b", BU)]))];
+    output o: UInt[13];
+    static_assert(data_bits(@Struct([FieldInfo("a", UInt[8]), FieldInfo("b", BU)])) == 13, "bits");
+    o := x;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 8191) out=(o 8191)

@@ -1,0 +1,15 @@
+// A generated record type as an enum payload type. The payload has hardware data.
+// TOP M()
+type G = @Struct([FieldInfo("a", UInt[4]), FieldInfo("b", Bool)]);
+enum E: UInt[1] { None = 0, Some(G) = 1 }
+module M() domains() {
+    input x: UInt[4];
+    output o: UInt[4];
+    let e = E::Some(G(x, true));
+    o := match (e) {
+        E::None => 0,
+        E::Some(g) => g.a,
+    };
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 15) out=(o 15)

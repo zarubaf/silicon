@@ -1,0 +1,17 @@
+// A generated record type as a module argument. The child sees the same type: `T == @Struct(same fields)` is true.
+// TOP Top()
+module C(comptime T: Type) domains() {
+    input x: UInt[data_bits(T)];
+    output y: UInt[data_bits(T)];
+    static_assert(T == @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]), "same type");
+    y := x;
+}
+module Top() domains() {
+    input x: UInt[9];
+    output y: UInt[9];
+    instance c = C(@Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]));
+    c.x := x;
+    y := c.y;
+}
+// STEP in=(x 3) out=(y 3)
+// STEP in=(x 511) out=(y 511)

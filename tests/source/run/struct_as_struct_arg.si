@@ -1,0 +1,15 @@
+// A generated record type as the argument of a struct specialization.
+// TOP M()
+struct W(comptime T: Type) {
+    v: T,
+}
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let g = @Struct([FieldInfo("a", UInt[8])]);
+    static_assert(W[g] == W[@Struct([FieldInfo("a", UInt[8])])], "same specialization");
+    static_assert(W[g] != W[@Struct([FieldInfo("b", UInt[8])])], "other specialization");
+    o := W[g](g(x)).v.a;
+}
+// STEP in=(x 3) out=(o 3)
+// STEP in=(x 250) out=(o 250)
