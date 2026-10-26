@@ -38,7 +38,6 @@ pin | S022 Second field name | 345
 lean | S010 Builtin as a type | 381
 rust | S010 Builtin as a type | 381
 pin | S010 Builtin as a type | 381
-lean | S007 Index of a builtin type | 381
 rust | S007 Index of a builtin type | 381
 pin | S007 Index of a builtin type | 381
 lean | S010 Argument of `@Struct` | 381
