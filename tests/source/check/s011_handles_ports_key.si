@@ -1,0 +1,21 @@
+// S011: a key of `@ports` is a tuple that holds a register.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    reg r: UInt[4] = 0;
+    r := 0;
+    let k = (r, 1);
+    let xs = [u];
+    // expected-error S011 @+2
+    // expected-message: a key of `@ports` takes only static values, but a value of `(Reg[UInt[4]], Int)` can hold handles; pass the data through a port, or use the handles in the module that declares them
+    let t = @ports(xs[k]);
+    o := u.q;
+}

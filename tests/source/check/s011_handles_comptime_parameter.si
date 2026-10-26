@@ -1,0 +1,11 @@
+// S011: a tuple that holds a register is the argument of a comptime parameter of a function.
+// TOP M()
+fn g(comptime x: (Reg[UInt[8]], Int)) -> Int { return 0; }
+module M() {
+    reg r: UInt[8] = 0;
+    r := 0;
+    let a = (r, 1);
+    // expected-error S011 @+2
+    // expected-message: a comptime parameter takes only static values, but a value of `(Reg[UInt[8]], Int)` can hold handles; pass the data through a port, or use the handles in the module that declares them
+    let z = g(a);
+}

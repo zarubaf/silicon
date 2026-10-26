@@ -1,0 +1,11 @@
+// S011: a handle is the argument of a comptime parameter of a function.
+// TOP M()
+fn g(comptime x: Int) -> Int { return 0; }
+module M() {
+    reg r: UInt[8] = 0;
+    r := 0;
+    let h = r;
+    // expected-error S011 @+2
+    // expected-message: a comptime parameter holds the register `r`, but it takes only static values; pass the data through a port, or use it in the module that declares it
+    let z = g(h);
+}

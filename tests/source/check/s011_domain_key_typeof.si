@@ -1,0 +1,11 @@
+// S011: a domain is never a key of `@TypeOf`.
+// TOP M()
+module M() domains(clk) {
+    output o: UInt[4];
+    let d = clk;
+    let xs = [1, 2];
+    // expected-error S011 @+2
+    // expected-message: a key of `@TypeOf` holds the domain `clk`, but a domain is never static; remove it from this static position
+    let t = @TypeOf(xs[d]);
+    o := 0;
+}
