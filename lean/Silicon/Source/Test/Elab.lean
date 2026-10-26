@@ -4324,6 +4324,14 @@ def ptNot (a h : String) : String := s!"`@ports` takes an instance handle, not {
   failure (ptMod s!"  let t = @ports({x});\n") 100000000 == s!"S010 28:18 {ptNot a ptInst}"
 #guard failure (ptMod "  let us = [u];\n  let t = @ports(us);\n") 100000000 ==
   s!"S010 29:18 {ptNot "a value of `[Instance[C]; 1]`" "select one instance, for example `xs[0]`"}"
+-- Only an array or a list of an `Instance` element type selects one instance. A container of
+-- registers has the handle flag too, and a tuple of instances has no element type.
+#guard failure (ptMod "  let ls = list(Instance[C]);\n  let t = @ports(ls);\n") 100000000 ==
+  s!"S010 29:18 {ptNot "a value of `List[Instance[C]]`" "select one instance, for example `xs[0]`"}"
+#guard failure (ptMod "  let rs = [rg, rg];\n  let t = @ports(rs);\n") 100000000 ==
+  s!"S010 29:18 {ptNot "a value of `[Reg[P]; 2]`" ptInst}"
+#guard failure (ptMod "  let ws = (u, u);\n  let t = @ports(ws);\n") 100000000 ==
+  s!"S010 29:18 {ptNot "a value of `(Instance[C], Instance[C])`" ptInst}"
 #guard failure (ptMod "  let ty = @TypeOf(u);\n  let t = @ports(ty);\n") 100000000 ==
   "S010 29:18 " ++
     ptNot "a value of `Type`" "a type has no ports; pass the handle of `instance u = M(...);`"
@@ -4336,6 +4344,18 @@ def ptNot (a h : String) : String := s!"`@ports` takes an instance handle, not {
 #guard failure (ptMod "  let st = \"ab\";\n  let t = @ports(st[0]);\n") 100000000 ==
   "S010 29:18 a query cannot index a string; `@ports` takes an instance handle, so pass the " ++
     "name of an instance"
+-- A key of the operand is static (`{s}` names `@ports`), and it has the guard kind `query`.
+#guard failure (ptMod "  let xs = [u];\n  let ys = [u];\n  let t = @ports(xs[ys[0]]);\n")
+    100000000 == "S011 30:21 a key of `@ports` holds the instance `u`, but it takes only static " ++
+  "values; pass the data through a port, or use it in the module that declares it"
+#guard failure (ptMod "  let xs = [u];\n  let mut j = 0;\n  let t = @ports(xs[bump(j)]);\n"
+    "fn bump(mut x: Int) -> Int {\n  x = x + 1;\n  return 0;\n}\n") 100000000 ==
+  "S016 34:21 a key of `@ports` cannot change `j`; change `j` before `@ports`, keep the result " ++
+    "in a `let`, and use that name in the key"
+#guard failure (ptMod "  let xs = [u];\n  let t = @ports(xs[mk()]);\n"
+    "fn mk() -> Int {\n  input zz: Bool;\n  return 0;\n}\n") 100000000 ==
+  "S016 24:3 a key of `@ports` has no graph effect such as `mk`; call `mk` before `@ports`, " ++
+    "keep the result in a `let`, and use that name in the key"
 -- The operand is a place (`S001`), a module name is no value, and an instance is not visible in
 -- its own arguments (`S003`).
 #guard ptRecords "  let t = @ports(@ports(u));\n" == ["S001 28:18"]
@@ -4392,6 +4412,12 @@ def ptCalls (inner outer : String) : Nat :=
   elabUnits (ptMod s!"  let ps = @ports(u);\n{outer}{loop}") "M"
 #guard ptCalls "    let qs = @ports(u);\n" "" - ptCalls "" "" ==
   10 * (ptCalls "" "  let qs = @ports(u);\n" - ptCalls "" "")
+-- The kind check comes before the use of `PortInfo`: the fuel of the `@` node and the operand
+-- reaches `S010`, and it pays for no struct use.
+#guard failure (ptMod "  let n = 3;\n  let t = @ports(n);\n") 336 ==
+  "S015 29:11 " ++ Eval.payText 1 0
+#guard failure (ptMod "  let n = 3;\n  let t = @ports(n);\n") 337 ==
+  s!"S010 29:18 {ptNot "a value of `Int`" ptInst}"
 
 /-!
 The depth of the result is 2 plus the depth of the port type. A port type of the depth N - 1 is
@@ -4403,6 +4429,32 @@ def ptDeep : String :=
   "module M() domains() {\n  instance k = K();\n  let t = @ports(k);\n}\n"
 #guard elabAt ptDeep "M" 100000000 7 == "S015 7:11"
 #guard (elabAt ptDeep "M" 100000000 8).startsWith "ok"
+/-! The message of the first error of `src` with the fuel `fuel` and the nesting depth `depth`. -/
+def ptAt (src : String) (fuel depth : Nat) : String :=
+  match Cli.elabText { budget := { fuel, depth } } src "M()" with
+  | .error e => s!"{e.code} {e.pos.line}:{e.pos.col} {e.msg}"
+  | _ => "ok"
+-- Steps 5 to 7 run in order: the count charge, then the depth check, then the size charge.
+#guard ptAt ptDeep 243 7 == "S015 7:11 " ++ Eval.payText 1 0
+#guard ptAt ptDeep 244 7 ==
+  "S015 7:11 the depth 8 goes above the nesting depth 7; raise --depth to at least 8"
+/-!
+A shallow port type keeps the depth of the records. An empty list has the depth 4, and a list
+with a `Bool` port the depth 5.
+-/
+def ptShallow (ports : String) : String :=
+  s!"module K() domains() \{\n{ports}}\nmodule M() domains() \{\n  instance k = K();\n" ++
+    "  let t = @ports(k);\n}\n"
+#guard elabAt (ptShallow "") "M" 100000000 3 == "S015 5:11"
+#guard (elabAt (ptShallow "") "M" 100000000 4).startsWith "ok"
+#guard elabAt (ptShallow "  output q: Bool;\n  q := true;\n") "M" 100000000 4 == "S015 7:11"
+#guard (elabAt (ptShallow "  output q: Bool;\n  q := true;\n") "M" 100000000 5).startsWith "ok"
+
+/-! `@ports` makes no core node: the core design is the same without the call. -/
+#guard match Cli.elabText {} (ptMod "") "M()", Cli.elabText {} (ptMod "  let ps = @ports(u);\n")
+    "M()" with
+  | .ok a, .ok b => a == b
+  | _, _ => false
 
 /-!
 A `List[PortInfo]` as a module argument serializes as a list of prelude records in the digest
