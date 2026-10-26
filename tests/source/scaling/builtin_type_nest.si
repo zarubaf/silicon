@@ -1,0 +1,15 @@
+// T6 of the work-counter tests of the type position of a builtin (issue #345). An array nested N levels holds a number,
+// and the module uses `@TypeOf(a[0]...[0])` of depth N as the type of N `let`s. The build pays its fuel in N^2 once.
+// The type position charges as the expression form does, so the walk along the path gives work in `O(N)` for a use. A
+// type position that walks again from the root at each step gives `O(N^2)` for a use.
+// SCALE builtin_type_nest 16 32 64 128 256
+// TOP M()
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let a = NEST{[|0|]};
+// REPEAT i {N}
+    let y{i}: @TypeOf(NEST{|a|[0]}) = 0;
+// END
+    o := x;
+}

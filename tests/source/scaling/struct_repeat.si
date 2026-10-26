@@ -1,0 +1,13 @@
+// T5 of the work-counter tests of `@Struct` (issue #345). The module builds the same generated record type N times. The
+// table holds one entry for all calls. A call that adds an entry for each call, or that skips the look-up, leaves the
+// number of entries or the work for each call outside the bound.
+// SCALE struct_repeat 16 32 64 128 256
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: UInt[8];
+// REPEAT i {N}
+    let t{i} = @Struct([FieldInfo("a", UInt[8]), FieldInfo("b", Bool)]);
+// END
+    o := x;
+}
