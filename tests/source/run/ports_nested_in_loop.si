@@ -1,0 +1,21 @@
+// A loop that counts `@ports(u)` calls `@ports(u)` again in its body. Each call gives the whole list.
+// TOP M()
+module C() {
+    input a: Bool;
+    output q: Bool;
+    q := a;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    comptime for i in 0..len(@ports(u)) {
+        static_assert(len(@ports(u)) == 2, "the inner call");
+        static_assert(@ports(u)[0].key.name == "a", "the inner first");
+        static_assert(@ports(u)[i].ty == Bool, "the loop index");
+    }
+    o := u.q;
+}
+// STEP in=(clock$0rst false x true) out=(o true)
+// STEP in=(clock$0rst false x false) out=(o false)

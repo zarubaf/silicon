@@ -1,0 +1,26 @@
+// The type of a port is an ordinary `Type`, so `@typeInfo` reads it. A `UInt` gives its width, and a record gives its fields.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+module C() {
+    input a: UInt[6];
+    output p: P;
+    output r: UInt[6];
+    r := a;
+    p := P(1, true);
+}
+module M() {
+    input x: UInt[6];
+    output o: UInt[6];
+    instance u = C();
+    u.a := x;
+    let ps = @ports(u);
+    static_assert(@typeInfo(@field(ps[0], "ty")).kind == "uint", "the kind");
+    static_assert(@typeInfo(@field(ps[0], "ty")).width == 6, "the width");
+    static_assert(len(@typeInfo(@field(ps[1], "ty")).fields) == 2, "the fields");
+    o := u.r;
+}
+// STEP in=(clock$0rst false x 21) out=(o 21)
+// STEP in=(clock$0rst false x 63) out=(o 63)

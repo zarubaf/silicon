@@ -1,0 +1,18 @@
+// S010: A family without a key is no value, so `@ports(req)` reports the family.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    input req[2]: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    // expected-error S010 @+2
+    // expected-message: `req` is a port family, not a value; select one port with `req[k]`
+    let t = @ports(req);
+    o := u.q;
+}

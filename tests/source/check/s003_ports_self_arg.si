@@ -1,0 +1,19 @@
+// S003: An instance is not visible in its own arguments, so `@ports(w)` there is unknown.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module D(comptime n: Nat) {
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    // expected-error S003 @+2
+    // expected-message: `w` is not declared
+    instance w = D(@ports(w));
+    o := u.q;
+}

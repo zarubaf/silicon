@@ -1,0 +1,18 @@
+// S001: The operand of `@ports` is a place, and an operator is none.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let us = [u];
+    // expected-error S001 @+2
+    // expected-message: `@ports` takes a name or a selection of a name; bind the value with `let` and pass the name
+    let t = @ports(us + us);
+    o := u.q;
+}

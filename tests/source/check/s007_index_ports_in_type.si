@@ -1,0 +1,17 @@
+// S007: An index after `@ports` in a type position has its own text, because `@ports` gives a list and not a type.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    // expected-error S007 @+2
+    // expected-message: `@ports` gives a `List[PortInfo]`; select a port type with `@field(@ports(u)[0], "ty")`
+    let y: @ports(u)[0] = x;
+    o := u.q;
+}

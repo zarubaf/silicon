@@ -9,7 +9,7 @@ module M() domains() {
     input x: UInt[8];
     output o: Bool;
     // expected-error S007 @+2
-    // expected-message: a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after `@TypeOf(...)`
+    // expected-message: `@TypeOf(...)` in a type position takes 0 argument(s), but it has 1; the type is complete, so remove the index
     let y: @TypeOf(x)[key()] = x;
     o := true;
 }

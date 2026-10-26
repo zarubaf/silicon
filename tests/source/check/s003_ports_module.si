@@ -1,0 +1,17 @@
+// S003: The operand `C` names no binding, so it evaluates as an expression. A module name is no value outside an `instance` statement.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    // expected-error S003 @+2
+    // expected-message: `C` is not a value; a module is used only in an `instance`
+    let t = @ports(C);
+    o := u.q;
+}

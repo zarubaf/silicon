@@ -1,0 +1,18 @@
+// A `List[PortInfo]` serializes as a list of prelude records in a `diagnostic` record. The record shows the key, the type, the direction, and the domain of each port.
+// TOP M()
+// OBSERVE: (record 14 5 M () (string "ports") (list (struct prelude PortInfo ()) ((record (struct prelude PortInfo ()) ((record (struct prelude PortKey ()) ((string "a") (bool false) (int 0))) (type (uint 4)) (bool true) (string "d"))) (record (struct prelude PortInfo ()) ((record (struct prelude PortKey ()) ((string "q") (bool false) (int 0))) (type bool) (bool false) (string "d"))))))
+module C() domains(d) {
+    input a: UInt[4];
+    output q: Bool;
+    q := a == 1;
+}
+module M() domains(d) {
+    input x: UInt[4];
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    diagnostic("ports", @ports(u));
+    o := u.q;
+}
+// STEP in=(d$0rst false x 1) out=(o true)
+// STEP in=(d$0rst false x 2) out=(o false)

@@ -1,0 +1,20 @@
+// A public name that is a keyword of the core IR stays as written. The key has no `0k` suffix of the core name.
+// TOP M()
+module C() {
+    input add: UInt[4];
+    output sub: UInt[4];
+    sub := add;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.add := x;
+    let ps = @ports(u);
+    static_assert(ps[0].key == PortKey("add", false, 0), "add");
+    static_assert(ps[1].key == PortKey("sub", false, 0), "sub");
+    static_assert(ps[0].key.name == "add", "the name has no suffix");
+    o := u.sub;
+}
+// STEP in=(clock$0rst false x 7) out=(o 7)
+// STEP in=(clock$0rst false x 0) out=(o 0)

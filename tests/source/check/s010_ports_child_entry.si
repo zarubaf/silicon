@@ -1,0 +1,17 @@
+// S010: An entry of a child family is a handle of `Input[T]`, not an instance.
+// TOP M()
+module K() {
+    input req[2]: UInt[4];
+    output q: UInt[4];
+    q := req[2];
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = K();
+    u.req[2] := x;
+    // expected-error S010 @+2
+    // expected-message: `@ports` takes an instance handle, not a handle of `Input[UInt[4]]`; pass the name of an instance, for example `u` of `instance u = M(...);`
+    let t = @ports(u.req[2]);
+    o := u.q;
+}

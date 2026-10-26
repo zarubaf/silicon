@@ -1,0 +1,17 @@
+// S010: `@ports` in a type position gives a `List[PortInfo]`, not a `Type`. The third fix selects the type of one port.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    // expected-error S010 @+2
+    // expected-message: a type position needs a `Type`, but `@ports` gives a value of `List[PortInfo]`; select the type of one port, for example `@field(@ports(u)[0], "ty")`
+    let y: @ports(u) = x;
+    o := u.q;
+}

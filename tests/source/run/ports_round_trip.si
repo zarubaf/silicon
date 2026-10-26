@@ -1,0 +1,29 @@
+// For each `p` in `@ports(u)`, `@field(u, p.key)` selects the port of `p`. The loop binds each input and reads each output. An empty input is in the list and needs its binding.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    input e: ();
+    input req[3]: UInt[4];
+    output q: UInt[4];
+    output z: ();
+    q := a +% req[3];
+    z := ();
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    let ps = @ports(u);
+    comptime for i in 0..len(ps) {
+        comptime if (ps[i].is_input) {
+            comptime if (ps[i].ty == Unit) {
+                @field(u, ps[i].key) := ();
+            } else {
+                @field(u, ps[i].key) := x;
+            }
+        }
+    }
+    o := @field(u, PortKey("q", false, 0));
+}
+// STEP in=(clock$0rst false x 3) out=(o 6)
+// STEP in=(clock$0rst false x 9) out=(o 2)

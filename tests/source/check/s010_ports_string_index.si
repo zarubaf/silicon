@@ -1,0 +1,18 @@
+// S010: A query cannot index a string. The fix for `@ports` asks for the name of an instance.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let st = "ab";
+    // expected-error S010 @+2
+    // expected-message: a query cannot index a string; `@ports` takes an instance handle, so pass the name of an instance
+    let t = @ports(st[0]);
+    o := u.q;
+}

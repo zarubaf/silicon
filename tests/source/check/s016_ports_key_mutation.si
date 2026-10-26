@@ -1,0 +1,20 @@
+// S016: A key of the operand cannot change a binding.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let xs = [u];
+    let mut l = list(Nat);
+    push(l, 0);
+    // expected-error S016 @+2
+    // expected-message: a key of `@ports` cannot change `l`; change `l` before `@ports`, keep the result in a `let`, and use that name in the key
+    let t = @ports(xs[pop(l)]);
+    o := u.q;
+}

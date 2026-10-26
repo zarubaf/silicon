@@ -1,0 +1,26 @@
+// A `List[PortInfo]` is a static module argument. The child D reads it, and a second `@ports` of the same child gives the same argument.
+// TOP M()
+module C() {
+    input a: Bool;
+    output q: Bool;
+    q := a;
+}
+module D(comptime ps: List[PortInfo]) {
+    output n: Bool;
+    static_assert(len(ps) == 2, "the list reaches the module");
+    static_assert(ps[0].key.name == "a", "the first key");
+    n := true;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    instance v = C();
+    u.a := x;
+    v.a := x;
+    instance d = D(@ports(u));
+    instance e = D(@ports(v));
+    o := d.n && e.n && u.q;
+}
+// STEP in=(clock$0rst false x true) out=(o true)
+// STEP in=(clock$0rst false x false) out=(o false)

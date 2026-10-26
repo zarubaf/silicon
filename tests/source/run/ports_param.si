@@ -1,0 +1,21 @@
+// A handle parameter of a function gives its ports too.
+// TOP M()
+module C() {
+    input a: Bool;
+    output q: Bool;
+    q := a;
+}
+fn count(h: Instance[C]) -> Nat {
+    return len(@ports(h));
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    let n = count(u);
+    static_assert(n == 2, "the parameter");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x true) out=(o true)
+// STEP in=(clock$0rst false x false) out=(o false)

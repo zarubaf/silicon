@@ -1,0 +1,20 @@
+// The fix of the error "Builtin as a type" is valid in a type position: `@field(@ports(u)[0], "ty")` is a `Type`, and a `type` alias takes it too.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let y: @field(@ports(u)[0], "ty") = x;
+    type T = @field(@ports(u)[1], "ty");
+    let z: T = y;
+    static_assert(T == UInt[4], "the alias");
+    o := z +% u.q;
+}
+// STEP in=(clock$0rst false x 3) out=(o 6)
+// STEP in=(clock$0rst false x 9) out=(o 2)
