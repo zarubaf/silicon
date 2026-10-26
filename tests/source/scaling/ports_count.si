@@ -1,0 +1,20 @@
+// T1 of the work-counter tests of `@ports` (issue #346). A child has N scalar ports with distinct names. One call measures and builds
+// the list of N records. The call reads the count of ports that the interface stores, then walks the ports once. A walk that
+// scans the ports for each port makes N more work for each port, and the work escapes the bound.
+// SCALE ports_count 16 32 64 128 256
+// TOP M()
+module C() {
+    comptime for i in 0..{N} {
+        input g: UInt[8] as "p" + str(i);
+    }
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    instance u = C();
+    comptime for i in 0..{N} {
+        @field(u, "p" + str(i)) := x;
+    }
+    let ps = @ports(u);
+    o := x;
+}

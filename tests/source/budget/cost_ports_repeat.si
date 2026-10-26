@@ -1,0 +1,18 @@
+// Each call charges its own node and its ports again, and it reuses the sorted order of the interface. Three calls charge three times. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 349
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: Bool;
+    q := a == 3;
+}
+module M() {
+    input x: UInt[4];
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    let p0 = @ports(u);
+    let p1 = @ports(u);
+    let p2 = @ports(u);
+    o := u.q;
+}

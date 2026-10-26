@@ -1,0 +1,11 @@
+// The depth of the result is 2 plus the depth of the port type. The port type has the depth 6, so the result has the depth 8. With the nesting depth 8 the file elaborates, and with 7 it gives `S015`.
+// DEPTH 8
+// TOP M()
+module K() domains() {
+    output q: [[[[[Bool; 1]; 1]; 1]; 1]; 1];
+    q := [[[[[Bool; 1]; 1]; 1]; 1]; 1]();
+}
+module M() domains() {
+    instance k = K();
+    let t = @ports(k);
+}

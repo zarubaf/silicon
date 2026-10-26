@@ -1,0 +1,11 @@
+// The first use of `PortInfo` completes `PortKey` and charges its struct use. A child without ports has an empty list, so the total shows the node, the first use, and the size of the empty list. The fuel equal to the total of `cost` succeeds, and one unit less gives `S015`.
+// FUEL 142
+// TOP M()
+module C() domains() {
+}
+module M() {
+    output o: Bool;
+    instance u = C();
+    let ps = @ports(u);
+    o := true;
+}
