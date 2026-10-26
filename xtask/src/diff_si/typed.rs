@@ -9,14 +9,16 @@
 //! lines.
 
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Command;
 
 use anyhow::{Context, Result, bail};
 use proptest::strategy::{Just, Strategy};
 use srcgen::{BuildFault, LineError, Program, Twin, lines, twin, typed};
 use testkit::source::{compare_observe, split_observed};
 
-use super::{Mode, Tools, repeat, reproducer, run_trace, stdin, validated, verdict_of, write};
+use super::{
+    Mode, Tools, observe_pair, repeat, reproducer, run_trace, stdin, validated, verdict_of, write,
+};
 use crate::diff::{CYCLES, Trace, compare, difference, output};
 
 /// A typed program, or the fault of its builder, and its `in=` lines.
@@ -132,15 +134,7 @@ fn program_trace(twin: &Twin, trace: &Trace) -> std::result::Result<Trace, LineE
 /// no error line, and its record lines are the lines that the generator
 /// predicts, byte for byte and in order.
 fn observed(tools: &Tools, file: &Path, top: &str, program: &Program) -> Result<Option<String>> {
-    let run = |binary: &Path| {
-        Command::new(binary)
-            .arg("observe")
-            .arg(file)
-            .args(["--top", top])
-            .output()
-            .with_context(|| format!("cannot run {} observe", binary.display()))
-    };
-    let (rust, lean): (Output, Output) = (run(&tools.silicon)?, run(&tools.lean)?);
+    let (rust, lean) = observe_pair(tools, file, top)?;
     if let Err(message) = compare_observe(&rust, &lean, None) {
         return Ok(Some(message));
     }

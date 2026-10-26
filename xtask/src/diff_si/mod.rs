@@ -236,6 +236,20 @@ fn outcome(
     }))
 }
 
+/// The `observe` runs of `silicon` and `silicon-check` on `file`, in that
+/// order. A spawn error is an `Err`.
+fn observe_pair(tools: &Tools, file: &Path, top: &str) -> Result<(Output, Output)> {
+    let run = |binary: &Path| {
+        Command::new(binary)
+            .arg("observe")
+            .arg(file)
+            .args(["--top", top])
+            .output()
+            .with_context(|| format!("cannot run {} observe", binary.display()))
+    };
+    Ok((run(&tools.silicon)?, run(&tools.lean)?))
+}
+
 /// `Ok` unless both front ends reject with a code of `texts` and print
 /// different reports. They agree on the code, line, and column already.
 fn same_text(texts: &BTreeSet<String>, rust: &Output, lean: &Output) -> Result<(), String> {
