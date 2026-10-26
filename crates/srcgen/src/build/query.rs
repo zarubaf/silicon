@@ -147,9 +147,14 @@ pub(super) fn read(base: QExpr, suffix: &str) -> QExpr {
 
 /// The text of the type of `op` in a type position: `@TypeOf(x)`, or the
 /// element of its handle. A type position takes no `.element` after a
-/// call, so the element is `@field(@typeInfo(T), "element")`.
+/// call, so the element is `@field(@typeInfo(T), "element")`. A name that
+/// is no place is a type value already, and `@TypeOf` takes only a place.
 fn type_text(op: &Op) -> QExpr {
-    let of = builtin("TypeOf", QExpr::Text(op.text.clone()));
+    let of = if op.place {
+        builtin("TypeOf", QExpr::Text(op.text.clone()))
+    } else {
+        QExpr::Text(op.text.clone())
+    };
     if op.ty.handled().is_none() {
         return of;
     }
