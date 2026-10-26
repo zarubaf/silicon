@@ -1,0 +1,67 @@
+// A register file of a record type that `@Struct` builds from the fields of `Base` and one more field. The entries sit in
+// the register of the child, and the memory has the same word. A read shows the entry of the register, and a write shows in the
+// next step. The memory read answers one step later. No step reads the address that it writes.
+// TOP Top()
+struct Base {
+    valid: Bool,
+    tag: UInt[4],
+}
+comptime fn entry_fields() -> List[FieldInfo] {
+    let mut fs = @typeInfo(Base).fields;
+    push(fs, FieldInfo("data", UInt[8]));
+    return fs;
+}
+type Entry = @Struct(entry_fields());
+module RegFile(comptime T: Type, comptime N: Nat) {
+    input wa: UInt[1];
+    input we: Bool;
+    input wd: T;
+    output state: [T; N];
+    static_assert(N == 2, "two entries");
+    reg rf: [T; N] = [T(), T()];
+    let mut next = [rf[0], rf[1]];
+    comptime for k in 0..N {
+        next[k] = if (we && wa == k) { wd } else { rf[k] };
+    }
+    rf := next;
+    state := [rf[0], rf[1]];
+}
+module Top() {
+    input wa: UInt[1];
+    input we: Bool;
+    input wd: Entry;
+    input ra: UInt[1];
+    input rb: UInt[1];
+    output rda: Entry;
+    output hit: Bool;
+    input re: Bool;
+    output mrd: Entry;
+    output mvalid: Bool;
+    instance f = RegFile(Entry, 2);
+    static_assert(data_bits(Entry) == 13, "entry width");
+    static_assert(len(@typeInfo(Entry).fields) == 3, "three fields");
+    f.wa := wa;
+    f.we := we;
+    f.wd := wd;
+    let mut av = false;
+    let mut at = UInt[4](0);
+    let mut ad = UInt[8](0);
+    let mut bv = false;
+    comptime for k in 0..2 {
+        av = if (ra == k) { @field(f.state[k], "valid") } else { av };
+        at = if (ra == k) { @field(f.state[k], "tag") } else { at };
+        ad = if (ra == k) { @field(f.state[k], "data") } else { ad };
+        bv = if (rb == k) { @field(f.state[k], "valid") } else { bv };
+    }
+    rda := Entry(av, at, ad);
+    hit := av && bv;
+    mem m: [Entry; 2];
+    let r = m.read_port(ra, re);
+    m.write_port(wa, wd, we);
+    mrd := r.data;
+    mvalid := r.valid;
+}
+// STEP in=(clock$0rst false ra 0 rb 1 re true wa 1 wd.valid true wd.tag 5 wd.data 200 we true) out=(hit false mrd.valid false mrd.tag 0 mrd.data 0 mvalid false rda.valid false rda.tag 0 rda.data 0)
+// STEP in=(clock$0rst false ra 1 rb 0 re true wa 0 wd.valid true wd.tag 9 wd.data 7 we true) out=(hit false mrd.valid false mrd.tag 0 mrd.data 0 mvalid true rda.valid true rda.tag 5 rda.data 200)
+// STEP in=(clock$0rst false ra 0 rb 1 re true wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit true mrd.valid true mrd.tag 5 mrd.data 200 mvalid true rda.valid true rda.tag 9 rda.data 7)
+// STEP in=(clock$0rst false ra 1 rb 0 re false wa 0 wd.valid false wd.tag 0 wd.data 0 we false) out=(hit true mrd.valid true mrd.tag 9 mrd.data 7 mvalid true rda.valid true rda.tag 5 rda.data 200)

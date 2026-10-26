@@ -18,6 +18,7 @@ tests/core/corpus/wide.sil run PASS
 tests/source/corpus/aggregate_ports.si run PASS
 tests/source/corpus/arbiter_families.si run PASS
 tests/source/corpus/bus_bind_all.si run PASS
+tests/source/corpus/bus_wrapper_ports.si run PASS
 tests/source/corpus/bus_port_keys.si run PASS
 tests/source/corpus/comptime_for_helpers.si run PASS
 tests/source/corpus/const_table.si run PASS
@@ -40,4 +41,5 @@ tests/source/corpus/memory_record.si run PASS
 tests/source/corpus/names_keywords.si run PASS
 tests/source/corpus/parked_reads.si run PASS
 tests/source/corpus/pipeline_map.si run PASS
+tests/source/corpus/regfile_struct.si run PASS
 tests/source/corpus/register_resets.si run PASS
