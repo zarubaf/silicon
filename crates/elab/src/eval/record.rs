@@ -15,7 +15,7 @@ use crate::int::BitBuf;
 use crate::limit;
 use crate::names::Sym;
 use crate::ops::{int_text, str_text};
-use crate::types::{Ty, TyId};
+use crate::types::{PartNames, Ty, TyId};
 use crate::value::{Value, int_size, width_size};
 use parse::ast::{Expr, Ident, Item, Pos};
 
@@ -319,23 +319,30 @@ impl Evaluator<'_> {
         )
     }
 
-    /// The number of the field with the symbol `y` and the name `name` in the struct item `item`.
-    /// No symbol is a name that the scan did not intern, and the top expression has no symbols
-    /// for its fields. It runs once, so a search by name stays within its size.
-    pub(super) fn field_number_by(&self, item: usize, y: Option<Sym>, name: &str) -> Option<usize> {
+    /// The number of the field with the symbol `y` and the name `name` among the parts `names` of
+    /// a struct type. Each look-up of a field by its name reads the member map here and nowhere
+    /// else. No symbol is a name that the scan did not intern, and the top expression has no
+    /// symbols for its fields. It runs once, so a search by name stays within its size.
+    pub(super) fn field_number_by(
+        &self,
+        names: PartNames,
+        y: Option<Sym>,
+        name: &str,
+    ) -> Option<usize> {
         match (y, self.names) {
-            (Some(sym), _) => self.syms.struct_fields.get(item)?.get(&sym).copied(),
+            (Some(sym), _) => names.members(&self.syms.struct_fields)?.get(&sym).copied(),
             (None, Names::File) => None,
-            (None, Names::Top) => match self.file.ast().get(item)? {
+            (None, Names::Top) => match self.file.ast().get(names.item()?)? {
                 Item::Struct { fields, .. } => fields.iter().position(|d| d.name.name == name),
                 _ => None,
             },
         }
     }
 
-    /// The number of the field `f` in the struct item `item`, by the symbol of its name.
-    pub(super) fn field_number(&self, item: usize, f: &Ident) -> Option<usize> {
-        self.field_number_by(item, self.port_sym(f), &f.name)
+    /// The number of the field `f` among the parts `names` of a struct type, by the symbol of its
+    /// name.
+    pub(super) fn field_number(&self, names: PartNames, f: &Ident) -> Option<usize> {
+        self.field_number_by(names, self.port_sym(f), &f.name)
     }
 
     /// The number of the field `f` of the record that `cur` finds, and its type. A field
@@ -360,7 +367,7 @@ impl Evaluator<'_> {
         };
         let found = record.and_then(|t| {
             let parts = self.tys.parts(t)?;
-            let k = self.field_number_by(parts.item()?, f.sym, f.name)?;
+            let k = self.field_number_by(parts.names, f.sym, f.name)?;
             Some((k, parts.types.get(k).copied()?))
         });
         match found {

@@ -283,12 +283,9 @@ fn type_node<'a, S: Sink>(tys: &'a Types, ty: &'a Ty, out: &mut S, work: &mut Ve
         }
         Ty::Struct(s) => {
             let spec = tys.spec(*s);
-            out.write_str(if spec.prelude() {
-                "(struct prelude "
-            } else {
-                "(struct root "
-            })
-            .unwrap_or_default();
+            out.write_str("(struct ").unwrap_or_default();
+            out.write_str(spec.origin().token()).unwrap_or_default();
+            out.write_str(" ").unwrap_or_default();
             work.push(Item::Text("))"));
             push_list(work, spec.args().iter().map(Item::Value));
             work.push(Item::Text(" ("));

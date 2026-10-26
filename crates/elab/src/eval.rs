@@ -33,6 +33,7 @@ mod inst;
 mod list;
 mod matching;
 mod mem;
+mod name;
 mod observe;
 mod pack;
 mod place;

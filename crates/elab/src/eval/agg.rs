@@ -361,7 +361,7 @@ impl Evaluator<'_> {
         name: &str,
     ) -> Option<(usize, TyId)> {
         let parts = self.tys.parts(self.record_ty(a)?)?;
-        let k = self.field_number_by(parts.item()?, y, name)?;
+        let k = self.field_number_by(parts.names, y, name)?;
         Some((k, parts.types.get(k).copied()?))
     }
 
@@ -619,7 +619,7 @@ impl Evaluator<'_> {
     /// its name. An enum has the parts `tag` and `payload`.
     fn field_step(&self, t: TyId, k: usize, pos: Pos) -> Res<Step> {
         let sym = self.tys.parts(t).and_then(|parts| match parts.names {
-            PartNames::Struct(item) => self.syms.field_order.get(item)?.get(k).copied(),
+            PartNames::Struct(_) => parts.names.order(&self.syms.field_order)?.get(k).copied(),
             PartNames::Enum => [self.syms.tag, self.syms.payload].get(k).copied(),
         });
         match sym {

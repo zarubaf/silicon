@@ -983,7 +983,7 @@ impl Evaluator<'_> {
             Key::Select(_, _, index) => index.as_str().parse::<usize>().ok(),
             Key::Field(_, f) => ty
                 .and_then(|t| self.tys.parts(t))
-                .and_then(|parts| self.field_number(parts.item()?, f)),
+                .and_then(|parts| self.field_number(parts.names, f)),
             // A name reads only after its size charge, so only a number names the part here.
             Key::Named(n) => self.named_slot(ty, n),
         }?;
@@ -1018,10 +1018,7 @@ impl Evaluator<'_> {
             Key::Select(_, _, index) => self.part_ty(t, index.as_str().parse().ok()?),
             Key::Field(_, f) => {
                 let parts = self.tys.parts(t)?;
-                parts
-                    .types
-                    .get(self.field_number(parts.item()?, f)?)
-                    .copied()
+                parts.types.get(self.field_number(parts.names, f)?).copied()
             }
             Key::Named(n) => self.part_ty(t, self.named_slot(Some(t), n)?),
         }
