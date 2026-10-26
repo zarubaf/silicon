@@ -163,6 +163,12 @@ impl Evaluator<'_> {
             TypeExpr::Tuple { pos, elems } => self.tuple_type(*pos, elems),
             TypeExpr::Array { pos, elem, len } => self.array_type(*pos, elem, len),
             TypeExpr::Fn { pos, params, ret } => self.fn_type(*pos, params, ret),
+            // TODO(#381): evaluate a builtin in a type position (design section 6.2).
+            TypeExpr::Builtin { pos, .. } => fail(
+                Code::S004,
+                *pos,
+                "a builtin is not supported yet".to_owned(),
+            ),
         }
     }
 

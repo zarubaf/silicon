@@ -407,6 +407,13 @@ impl<'a> Lower<'a> {
         list.children().map(|e| self.expr(&e)).collect()
     }
 
+    fn builtin_args(&self, node: &SyntaxNode) -> Option<BuiltinArgs> {
+        BuiltinArgs::of_list(
+            Builtin::of_name(token(node, SyntaxKind::Ident)?.text())?,
+            self.args(node)?,
+        )
+    }
+
     fn type_expr(&self, node: &SyntaxNode) -> Option<TypeExpr> {
         let pos = self.pos_of(node);
         match node.kind() {
@@ -434,6 +441,10 @@ impl<'a> Lower<'a> {
                 len: Box::new(self.expr(&node.children().find(is_expr)?)?),
             }),
             SyntaxKind::ParenType => self.type_expr(&node.children().find(is_type)?),
+            SyntaxKind::BuiltinType => Some(TypeExpr::Builtin {
+                pos,
+                args: self.builtin_args(node)?,
+            }),
             SyntaxKind::FnType => Some(TypeExpr::Fn {
                 pos,
                 params: self.fn_params(node)?,
@@ -542,10 +553,7 @@ impl<'a> Lower<'a> {
             }),
             BuiltinExpr => Some(Expr::Builtin {
                 pos,
-                args: BuiltinArgs::of_list(
-                    Builtin::of_name(token(node, Ident)?.text())?,
-                    self.args(node)?,
-                )?,
+                args: self.builtin_args(node)?,
             }),
             ArrayTypeExpr => Some(Expr::ArrayType {
                 pos,
@@ -657,6 +665,7 @@ fn is_type(node: &SyntaxNode) -> bool {
             | SyntaxKind::TupleType
             | SyntaxKind::ArrayType
             | SyntaxKind::ParenType
+            | SyntaxKind::BuiltinType
             | SyntaxKind::FnType
     )
 }

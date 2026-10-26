@@ -610,6 +610,13 @@ impl Walker {
                 self.expr(len);
             }
             TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
+            // The operands resolve as in an expression, so a parameter in them makes a `fn`
+            // generic: `fn f(x: UInt[8]) -> @TypeOf(x)`.
+            TypeExpr::Builtin { args, .. } => {
+                for operand in args.operands() {
+                    self.expr(operand);
+                }
+            }
         }
     }
 

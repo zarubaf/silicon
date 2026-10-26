@@ -6,7 +6,8 @@
 //! depth of the parse that made the AST. `Parse::dump` runs it on a stack for that depth.
 
 use crate::ast::{
-    Arm, Expr, FnParam, Ident, Item, Param, Pattern, PortForm, Stmt, StructField, TypeExpr, Variant,
+    Arm, BuiltinArgs, Expr, FnParam, Ident, Item, Param, Pattern, PortForm, Stmt, StructField,
+    TypeExpr, Variant,
 };
 use std::fmt::{Debug, Write};
 
@@ -184,15 +185,20 @@ fn expr(e: &Expr, out: &mut String) {
             ident(variant, out);
         }),
         Expr::Match { scrut, arms, .. } => match_expr(scrut, arms, out),
-        Expr::Builtin { args, .. } => node("builtin", out, |out| {
-            sp(out);
-            out.push_str(args.builtin().name());
-            sp(out);
-            let operands: Vec<&Expr> = args.operands().collect();
-            list(&operands, out, |x, out| expr(x, out));
-        }),
+        Expr::Builtin { args, .. } => builtin(args, out),
         Expr::ArrayType { .. } | Expr::FnType { .. } => type_expr_in_expr(e, out),
     }
+}
+
+/// A builtin in an expression or in a type position: its name, then the list of its operands.
+fn builtin(args: &BuiltinArgs, out: &mut String) {
+    node("builtin", out, |out| {
+        out.push(' ');
+        out.push_str(args.builtin().name());
+        out.push(' ');
+        let operands: Vec<&Expr> = args.operands().collect();
+        list(&operands, out, |x, out| expr(x, out));
+    });
 }
 
 /// An array type or a function type in an expression.
@@ -300,6 +306,7 @@ fn type_expr(t: &TypeExpr, out: &mut String) {
             out.push(' ');
             type_expr(ret, out);
         }),
+        TypeExpr::Builtin { args, .. } => builtin(args, out),
     }
 }
 

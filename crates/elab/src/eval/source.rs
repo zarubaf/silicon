@@ -6,7 +6,7 @@
 //! height only.
 
 use crate::ops::binop_text;
-use parse::ast::{Arm, BinOp, Expr, FnParam, Pattern, TypeExpr, UnOp};
+use parse::ast::{Arm, BinOp, BuiltinArgs, Expr, FnParam, Pattern, TypeExpr, UnOp};
 
 /// The level of a postfix form or a primary: the context of a base.
 pub(super) const POSTFIX: u8 = 11;
@@ -162,13 +162,7 @@ fn expr(e: &Expr, ctx: u8, out: &mut String) {
             }
             out.push_str(" }");
         }
-        Expr::Builtin { args: xs, .. } => {
-            out.push('@');
-            out.push_str(xs.builtin().name());
-            out.push('(');
-            args(xs.operands(), out);
-            out.push(')');
-        }
+        Expr::Builtin { args: xs, .. } => builtin(xs, out),
         Expr::ArrayType { elem, len, .. } => {
             out.push('[');
             type_expr(elem, out);
@@ -267,5 +261,15 @@ fn type_expr(t: &TypeExpr, out: &mut String) {
             out.push(']');
         }
         TypeExpr::Fn { params, ret, .. } => fn_type(params, ret, out),
+        TypeExpr::Builtin { args: xs, .. } => builtin(xs, out),
     }
+}
+
+/// A builtin in an expression or in a type position: `@name(operands)`.
+fn builtin(xs: &BuiltinArgs, out: &mut String) {
+    out.push('@');
+    out.push_str(xs.builtin().name());
+    out.push('(');
+    args(xs.operands(), out);
+    out.push(')');
 }
