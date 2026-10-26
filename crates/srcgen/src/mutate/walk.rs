@@ -5,8 +5,8 @@ use super::super::program::hexpr as hexpr_text;
 use super::super::program::is_resource_helper;
 use super::super::program::sexpr as sexpr_text;
 use super::super::program::{
-    EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Radix, SBin, SExpr,
-    STy, Scalar, Stmt, Ty, Un, Variant,
+    EnumDef, FTy, FieldTy, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, QExpr, Radix, SBin,
+    SExpr, STy, Scalar, Stmt, Ty, Un, Variant,
 };
 use super::uses::{self, Callees};
 use super::{EFFECT_FN, Effect, Hit, KEEP_FN, Kind, beyond};
@@ -78,6 +78,9 @@ pub(super) struct Walk<'a> {
     /// The aliases of `@Struct`, and whether the module under the walk is
     /// clocked.
     aliases: Vec<(String, bool)>,
+    /// The aliases of `@Struct` that the fields of a declared struct make:
+    /// the struct, and the arguments of its specialization.
+    nominal: BTreeMap<String, (String, Vec<u32>)>,
     domain: Domain,
     /// The inputs of the current module, the module of each instance, the
     /// inputs of each module, and the functions that run a `diagnostic`.
@@ -142,6 +145,7 @@ impl<'a> Walk<'a> {
             indexed: BTreeMap::new(),
             strs: Vec::new(),
             aliases: Vec::new(),
+            nominal: BTreeMap::new(),
             domain: Domain::Combinational,
             inputs: Vec::new(),
             children: BTreeMap::new(),
@@ -206,6 +210,7 @@ impl<'a> Walk<'a> {
                 _ => None,
             })
             .collect();
+        self.nominal = nominal_aliases(items);
         if self.user_field_info(items) {
             return;
         }
@@ -1402,7 +1407,7 @@ impl<'a> Walk<'a> {
                 }
             }
             SExpr::Record(name, targs, fields) => {
-                if self.constructor_sites(name, fields) {
+                if self.constructor_sites(name, fields) || self.nominal_site(name, targs) {
                     return;
                 }
                 self.rename(name);
@@ -1645,6 +1650,44 @@ impl<'a> Walk<'a> {
             }
         }
     }
+}
+
+/// The aliases of `@Struct` that read the fields of a declared struct, as
+/// `@Struct(@typeInfo(S0[5]).fields)`, with the struct and its arguments.
+fn nominal_aliases(items: &[Item]) -> BTreeMap<String, (String, Vec<u32>)> {
+    let mut out = BTreeMap::new();
+    for item in items {
+        let Item::Alias { def, form, .. } = item else {
+            continue;
+        };
+        let QExpr::Builtin(_, args) = form else {
+            continue;
+        };
+        let Some(QExpr::Read(info, _)) = args.first() else {
+            continue;
+        };
+        let QExpr::Builtin(_, inner) = &**info else {
+            continue;
+        };
+        let Some(QExpr::Text(text)) = inner.first() else {
+            continue;
+        };
+        // An alias of an alias is no declared struct.
+        if text.starts_with('D') {
+            continue;
+        }
+        let (name, rest) = text.split_once('[').unwrap_or((text, ""));
+        let args: Option<Vec<u32>> = rest
+            .trim_end_matches(']')
+            .split(", ")
+            .filter(|a| !a.is_empty())
+            .map(|a| a.parse().ok())
+            .collect();
+        if let Some(args) = args {
+            out.insert(def.name.clone(), (name.to_owned(), args));
+        }
+    }
+    out
 }
 
 /// The names of the consts and parameters of a function type, and of the
