@@ -1353,8 +1353,8 @@ fn the_fixed_set_of_mutants_reaches_s021_and_the_match_codes() {
             "{code}: {counts:?}"
         );
     }
-    // The four kinds that change an alias of `@Struct` predict nothing.
-    assert_eq!(by_kind.len(), KINDS.len() - 15 - 4, "{by_kind:?}");
+    // The six kinds that change an alias of `@Struct` predict nothing.
+    assert_eq!(by_kind.len(), KINDS.len() - 15 - 6, "{by_kind:?}");
 }
 
 /// `enum E0: UInt[2] { V0(UInt[4], Bool) = 1, V1 = 2 }`.
@@ -2254,12 +2254,14 @@ fn the_kinds_of_queries_get_predictions() {
 
 /// The kinds of the gaps of `@field`, with the code that their mutants
 /// predict.
-const GAP_CODES: [(Kind, &[&str]); 5] = [
+const GAP_CODES: [(Kind, &[&str]); 7] = [
     (Kind::KeyValue, &["S011"]),
     (Kind::TargetMutation, &["S016"]),
     (Kind::TargetBase, &["S017"]),
     (Kind::PortPlace, &["S010"]),
     (Kind::InstanceData, &["S010"]),
+    (Kind::FieldSwap, &[]),
+    (Kind::NominalStruct, &[]),
 ];
 
 /// Each kind of the gaps gets at least 5 mutants and 5 predictions over the
@@ -2282,6 +2284,32 @@ fn the_kinds_of_the_gaps_get_predictions() {
             }
         }
         assert!(mutants >= 5, "{kind:?} has {mutants} mutants");
-        assert!(predicted >= 5, "{kind:?} predicted {predicted} mutants");
+        // A kind of an alias of `@Struct` predicts nothing.
+        assert!(
+            codes.is_empty() || predicted >= 5,
+            "{kind:?} predicted {predicted} mutants"
+        );
     }
+}
+
+/// A `mut` actual whose root is a record that is no longer a `let mut` is
+/// `S008` (pass 4), also when the place is a chain of `@field` steps (spec
+/// 9.1): the prediction follows the steps of the place down to its root.
+#[test]
+fn immutable_follows_a_chain_of_field_steps_to_the_root_of_a_mut_actual() {
+    let mut predicted = 0;
+    for p in programs() {
+        for site in 0..sites(Kind::Immutable, &p.items, &p.top) {
+            let m = mutate(&p, index(Kind::Immutable), u32::try_from(site).unwrap());
+            let frozen = m.text.lines().any(|l| {
+                let l = l.trim_start();
+                l.starts_with("let v") && l.contains(": R") && l.contains(" = R")
+            });
+            let place = m.text.contains("(@field(@field(v") || m.text.contains("(@field(v");
+            if frozen && place && m.expect == Some("S008") {
+                predicted += 1;
+            }
+        }
+    }
+    assert!(predicted >= 1, "{predicted}");
 }
