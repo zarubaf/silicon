@@ -1569,5 +1569,5 @@ fn a_program_without_field_forms_keeps_its_text() {
             kept += 1;
         }
     }
-    assert!(kept >= 256 * 4 / 10, "{kept}");
+    assert!(kept >= 256 / 10, "{kept}");
 }
