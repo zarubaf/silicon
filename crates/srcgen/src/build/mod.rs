@@ -71,6 +71,7 @@ mod lines;
 mod lists;
 mod matches;
 mod mutcalls;
+mod portinfo;
 mod ports;
 mod query;
 mod record;
@@ -694,6 +695,8 @@ struct Builder {
     /// The names that a query can read in the frames that are open, and the
     /// groups of queries made so far.
     ops: Vec<query::Op>,
+    /// The children that a query can read through `@ports`.
+    kids: Vec<portinfo::Kid>,
     queries: u32,
     /// The query nodes made so far, and the declarations that only queries
     /// read.
@@ -823,6 +826,7 @@ impl Builder {
             key_fns: [None, None, None],
             key_groups: 0,
             ops: Vec::new(),
+            kids: Vec::new(),
             queries: 0,
             emitted: 0,
             query_bytes: 0,

@@ -10,7 +10,7 @@ use super::{
     MODULES, Module, NESTED_STMTS, NESTING, Names, OUTPUTS, PARAMS, SAMPLE_INTS, Sig,
 };
 use crate::eval::{Env, Fault, Value, concrete, eval, loop_values};
-use crate::program::{HExpr, Place, SExpr, STy, Scalar, Stmt, Ty};
+use crate::program::{EnumDef, HExpr, Place, SExpr, STy, Scalar, Stmt, Ty};
 use num_bigint::BigInt;
 use std::collections::BTreeSet;
 
@@ -416,6 +416,7 @@ impl Builder {
         };
         let mut body = Vec::new();
         self.ops.clear();
+        self.kids.clear();
         for (n, t) in &sig.inputs {
             body.push(Stmt::Input(n.clone(), t.clone()));
             self.add_op(n, RTy::of(t));
@@ -475,27 +476,39 @@ impl Builder {
             self.instantiate(&mut ctx, &mut m, j, &mut body)?;
         }
         self.query_tail(&ctx, &mut m.names, &mut body);
-        let mut values = Vec::new();
-        for (n, w) in outputs {
-            let value = self.driver(&ctx, &w);
-            let value = self.mix_hand(&ctx, &w, value);
-            values.push((n, w, value));
-        }
-        self.mix_port(&ctx, &mut values);
-        self.mix_query(&ctx, &mut values);
-        for (n, _, value) in values {
-            body.push(Stmt::Connect(Place::Name(n), value));
-        }
-        for (n, def) in &sig.enum_outputs {
-            let value = self.enum_driver(&ctx, def);
-            body.push(Stmt::Connect(Place::Name(n.clone()), value));
-        }
+        self.drive_outputs(&ctx, outputs, &sig.enum_outputs, &mut body);
         // The declarations of the queries stay out of a module with no query.
         if self.emitted > emitted {
             body.splice(decls_at..decls_at, decls);
         }
         *self.bodies.get_mut(k).ok_or(Fault::Type)? = Some(body);
         Ok(())
+    }
+
+    /// The `:=` of each output at the end of a module: a value of its type
+    /// with the names of the other forms mixed in.
+    fn drive_outputs(
+        &mut self,
+        ctx: &Ctx,
+        outputs: Vec<(String, Want)>,
+        enum_outputs: &[(String, EnumDef)],
+        body: &mut Vec<Stmt>,
+    ) {
+        let mut values = Vec::new();
+        for (n, w) in outputs {
+            let value = self.driver(ctx, &w);
+            let value = self.mix_hand(ctx, &w, value);
+            values.push((n, w, value));
+        }
+        self.mix_port(ctx, &mut values);
+        self.mix_query(ctx, &mut values);
+        for (n, _, value) in values {
+            body.push(Stmt::Connect(Place::Name(n), value));
+        }
+        for (n, def) in enum_outputs {
+            let value = self.enum_driver(ctx, def);
+            body.push(Stmt::Connect(Place::Name(n.clone()), value));
+        }
     }
 
     /// The statements of a frame, then the `:=` of its registers. A frame
@@ -510,7 +523,7 @@ impl Builder {
             NESTED_STMTS
         };
         let mut out = Vec::new();
-        let ops = self.ops.len();
+        let (ops, kids) = (self.ops.len(), self.kids.len());
         let mut regs = Vec::new();
         let mut eregs = Vec::new();
         let mut instances = 0;
@@ -570,6 +583,7 @@ impl Builder {
         self.close_pending(ctx, &mut out)?;
         if level > 0 {
             self.ops.truncate(ops);
+            self.kids.truncate(kids);
         }
         Ok(out)
     }
