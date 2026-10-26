@@ -1571,3 +1571,79 @@ fn a_program_without_field_forms_keeps_its_text() {
     }
     assert!(kept >= 256 / 10, "{kept}");
 }
+
+/// The forms of `@field` in a program.
+fn field_forms(text: &str, s: &Stats) -> [(&'static str, bool); 19] {
+    let lines = || text.lines().map(str::trim_start);
+    [
+        ("record key", s.field_records > 0),
+        ("tuple key", s.field_tuples > 0),
+        ("array key", s.field_arrays > 0),
+        ("list key", s.field_lists > 0),
+        ("key with a call", s.field_call_keys > 0),
+        ("key that joins strings", s.field_joined_keys > 0),
+        ("key that is a name", s.field_name_keys > 0),
+        ("scalar PortKey", s.field_scalar_keys > 0),
+        ("entry PortKey", s.field_entry_keys > 0),
+        (
+            "child String key",
+            text.contains("@field(u") && text.contains(", \""),
+        ),
+        ("local container", text.contains("@field(l")),
+        (
+            "temporary container",
+            text.contains("@field((") || text.contains("@field(HT"),
+        ),
+        (
+            "target",
+            lines().any(|l| l.starts_with("@field(") && l.contains(" := ")),
+        ),
+        ("chain of steps", text.contains("@field(@field(")),
+        ("held key", s.held_groups > 0),
+        ("early key", s.early_groups > 0),
+        ("mut actual", s.place_groups > 0),
+        ("held key in a place", s.held_place_groups > 0),
+        ("literal place", s.place_groups > s.held_place_groups),
+    ]
+}
+
+/// Each form of `@field` and each class of held and early keys occurs in
+/// at least 10% of 256 programs, and the draws stay within their caps.
+#[test]
+fn programs_cover_field_forms() {
+    const TAPES: usize = 256;
+    let mut with = BTreeMap::<&str, usize>::new();
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let p = b.program();
+        assert!(p.is_ok(), "a program faults: {p:?}");
+        let Ok(p) = p else { continue };
+        assert!(b.fields <= field::MAX_FIELDS, "{} spelled steps", b.fields);
+        assert!(b.key_groups <= 4, "{} groups", b.key_groups);
+        for (form, seen) in field_forms(&p.text(), &b.stats) {
+            *with.entry(form).or_default() += usize::from(seen);
+        }
+    }
+    assert_eq!(with.len(), 19, "{with:?}");
+    for (form, n) in &with {
+        assert!(
+            n * 10 >= TAPES,
+            "{form} occurs in {n} of {TAPES} programs: {with:?}"
+        );
+    }
+}
+
+/// The twin of a program has no `@field`: it writes each selection as the
+/// ordinary selection of the builder, and folds each key.
+#[test]
+fn a_twin_has_no_field_builtin() {
+    let mut spelled = 0;
+    for tape in tapes(256) {
+        let Ok(p) = build(tape) else { continue };
+        spelled += usize::from(p.text().contains("@field"));
+        let twin = crate::twin(&p);
+        assert!(!twin.text.contains('@'), "{}", twin.text);
+        assert!(twin.static_names().is_empty(), "{}", twin.text);
+    }
+    assert!(spelled >= 100, "{spelled}");
+}
