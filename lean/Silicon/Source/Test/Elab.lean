@@ -4330,6 +4330,12 @@ def ptNot (a h : String) : String := s!"`@ports` takes an instance handle, not {
   s!"S010 29:18 {ptNot "a value of `List[Instance[C]]`" "select one instance, for example `xs[0]`"}"
 #guard failure (ptMod "  let rs = [rg, rg];\n  let t = @ports(rs);\n") 100000000 ==
   s!"S010 29:18 {ptNot "a value of `[Reg[P]; 2]`" ptInst}"
+#guard failure
+    (ptMod "  instance w = C();\n  let xs = [[u], [w]];\n  let t = @ports(xs);\n") 100000000 ==
+  s!"S010 30:18 {ptNot "a value of `[[Instance[C]; 1]; 2]`" ptInst}"
+#guard failure (ptMod "  let us = [u];\n  let vs = us;\n  let t = @ports(vs);\n") 100000000 ==
+  s!"S010 30:18 {ptNot "a value of `[Instance[C]; 1]`"
+    "select one instance, for example `xs[0]`"}"
 #guard failure (ptMod "  let ws = (u, u);\n  let t = @ports(ws);\n") 100000000 ==
   s!"S010 29:18 {ptNot "a value of `(Instance[C], Instance[C])`" ptInst}"
 #guard failure (ptMod "  let ty = @TypeOf(u);\n  let t = @ports(ty);\n") 100000000 ==
