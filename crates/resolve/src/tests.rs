@@ -175,7 +175,6 @@ impl Ids {
         }
     }
 
-    #[allow(unreachable_patterns, clippy::match_wildcard_for_single_variants)]
     fn ty(&mut self, ty: &TypeExpr) {
         match ty {
             TypeExpr::Name { pos, id, .. } => self.add(*pos, *id),
@@ -183,6 +182,7 @@ impl Ids {
                 self.ty(base);
                 self.exprs(args);
             }
+            TypeExpr::Unit { .. } => {}
             TypeExpr::Tuple { elems, .. } => {
                 for elem in elems {
                     self.ty(elem);
@@ -193,8 +193,11 @@ impl Ids {
                 self.expr(len);
             }
             TypeExpr::Fn { params, ret, .. } => self.fn_type(params, ret),
-            // The unit type holds no name. A builtin type is walked once its AST exists.
-            _ => {}
+            TypeExpr::Builtin { args, .. } => {
+                for operand in args.operands() {
+                    self.expr(operand);
+                }
+            }
         }
     }
 
@@ -255,8 +258,8 @@ impl Ids {
             }
             Expr::FnType { params, ret, .. } => self.fn_type(params, ret),
             Expr::Tuple { elems, .. } | Expr::Array { elems, .. } => self.exprs(elems),
-            Expr::Builtin { .. } => {
-                for operand in expr.builtin_operands().into_iter().flat_map(|(_, o)| o) {
+            Expr::Builtin { args, .. } => {
+                for operand in args.operands() {
                     self.expr(operand);
                 }
             }
@@ -1313,8 +1316,8 @@ fn call_sites(r: &Resolved) -> Vec<(Pos, usize)> {
                     expr(r, a, out);
                 }
             }
-            Expr::Builtin { .. } => {
-                for a in e.builtin_operands().into_iter().flat_map(|(_, o)| o) {
+            Expr::Builtin { args, .. } => {
+                for a in args.operands() {
                     expr(r, a, out);
                 }
             }
@@ -1529,6 +1532,13 @@ fn a_function_is_generic_when_its_signature_names_a_parameter() {
         "fn f(n: Nat, m: Nat) -> UInt[g(n)] { return 0; }\nfn g(x: Nat) -> Nat { return x; }",
         // A parameter hides the item of its name.
         "struct S { a: Nat }\nfn f(S: Type, x: S) -> Nat { return 0; }",
+        // A builtin in a type position holds the names of its operands.
+        "fn f(x: UInt[8]) -> @TypeOf(x) { return x; }",
+        "fn f(x: UInt[8], y: @TypeOf(x)) -> Nat { return 0; }",
+        "fn f(fs: Nat) -> @Struct(fs) { return 0; }",
+        "fn f(x: Nat) -> [@TypeOf(x); 2] { return 0; }",
+        "fn f(x: Nat) -> fn (@TypeOf(x)) -> Nat { return 0; }",
+        "fn f(x: Nat) -> @Struct([FieldInfo(\"a\", @TypeOf(x))]) { return 0; }",
     ] {
         assert!(generic(src, "f"), "{src}");
     }
@@ -1546,6 +1556,9 @@ fn a_function_is_not_generic_for_items_and_locals() {
         "const W: Nat = 8;\nfn f(x: UInt[W]) -> UInt[W] { return x; }",
         "type T = Nat;\nfn f(x: T) -> T { return x; }",
         "fn f() -> Nat { type T = Nat; let x: T = 1; return x; }",
+        // A builtin in a type position that names no parameter.
+        "const k: Nat = 0;\nfn f(x: UInt[8]) -> @TypeOf(k) { return x; }",
+        "fn f(x: Nat) -> @Struct([]) { return 0; }",
     ] {
         assert!(!generic(src, "f"), "{src}");
     }
@@ -2316,6 +2329,27 @@ fn the_operands_of_a_builtin_resolve_as_expressions() {
     let src = fn_body("let r = @field(a, b);\nreturn @TypeOf(c);");
     assert_eq!(errors(&src), [(S003, 2, 16), (S003, 2, 19), (S003, 3, 16)]);
     assert_eq!(message(&src), "`a` is not declared");
+}
+
+#[test]
+fn the_operands_of_a_builtin_in_a_type_resolve_as_expressions() {
+    let r = ok(&fn_body(
+        "let q: Bool = p;\nlet x: @TypeOf(q) = p;\nreturn p;",
+    ));
+    assert!(target_at(&r, pos(3, 16)).is_some());
+    // An unknown name in an operand is S003 at the name, also inside array and function types.
+    for (ty, want) in [
+        ("@TypeOf(c)", vec![(S003, 2, 16)]),
+        ("@Struct(c)", vec![(S003, 2, 16)]),
+        ("[@TypeOf(c); 2]", vec![(S003, 2, 17)]),
+        (
+            "fn (@TypeOf(c)) -> @Struct(d)",
+            vec![(S003, 2, 20), (S003, 2, 35)],
+        ),
+    ] {
+        let src = fn_body(&format!("let x: {ty} = p;\nreturn p;"));
+        assert_eq!(errors(&src), want, "{ty}");
+    }
 }
 
 #[test]
