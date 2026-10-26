@@ -425,7 +425,7 @@ impl<'a> Evaluator<'a> {
         }
         #[cfg(test)]
         {
-            crate::counters::start(budget.fuel);
+            crate::counters::begin();
             crate::counters::add(crate::counters::Count::Ast, scan.nodes);
         }
         Evaluator {
