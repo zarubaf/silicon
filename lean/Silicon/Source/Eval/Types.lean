@@ -363,12 +363,13 @@ def constant (p : Pos) (x : String) (i : Nat) (body : M (Value × Ty)) : M (Valu
 A use at `p` of the struct item `i` with the name `x`, the origin `o`, and the
 normalized static arguments `args`. `bindParams` charged their sizes before the lookup. The key
 of the lookup is the item and the arguments, so its work stays in those charges. The first use runs
-`fields`, which evaluates the field types. The caller nests it.
+`fields`, which evaluates the field types. The caller nests it. The use gives the type and its
+fields. Thus a caller of a prelude struct reads its field types with no second look-up.
 -/
 def specialize (p : Pos) (x : String) (i : Nat) (o : Origin) (args : List Value)
-    (fields : M (List (String × Ty))) : M Ty := do
+    (fields : M (List (String × Ty))) : M (Ty × Array (String × Ty)) := do
   match (← get).specs.find? i args with
-  | some (_, ⟨_, .done t _⟩) => return t
+  | some (_, ⟨_, .done t fs⟩) => return (t, fs)
   | some (k, ⟨_, .inProgress⟩) =>
     let t := Ty.struct k x args.toArray Meta.static o
     fail .S019 p s!"the specialization {t.text} is in progress"
@@ -387,7 +388,7 @@ def specialize (p : Pos) (x : String) (i : Nat) (o : Origin) (args : List Value)
     let t := Ty.struct k x args.toArray m o
     modify fun s => { s with specs := { s.specs with
       entries := s.specs.entries.set! k ⟨.item i args, .done t fs.toArray⟩ } }
-    return t
+    return (t, fs.toArray)
 
 /-! Sets the entry of the enum item `i` in the table of enums. -/
 def setEnum (i : Nat) (e : EnumState) : M Unit :=
