@@ -1,0 +1,29 @@
+// S013: The read `n[0][one()][3][spin()]` fails the range check of `[3]`. Lean checks it after `one()` evaluates and before `spin()` evaluates, whose zero value the fuel cannot pay. In Rust `spin()` evaluates early, and the failed check takes back its record. So only the record of `one()` stays, and the `S015` of `spin()` loses to the failed check.
+// TOP M()
+// OBSERVE-COUNT-1: (string "one")
+// OBSERVE-NOT: (string "spin")
+fn one() -> Nat {
+    diagnostic("one", 0);
+    return 0;
+}
+fn two() -> Nat {
+    diagnostic("two", 0);
+    return 0;
+}
+fn spin() -> Nat {
+    diagnostic("spin", 0);
+    let a = [[UInt[8]; 100000]; 10000]();
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut n = list(List[List[List[Int]]]);
+    n.push(list(List[List[Int]]));
+    n[0].push(list(List[Int]));
+    n[0][0].push(list(Int));
+    n[0][0][0].push(5);
+    // expected-error S013 @+1
+    let z = n[0][one()][3][spin()];
+    o := x;
+}
