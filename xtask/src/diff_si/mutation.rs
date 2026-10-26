@@ -4,18 +4,21 @@
 //! same first code, line, and column, or accept it with the same design.
 //! Where the pass order makes the first code certain, the generator
 //! predicts it, and an agreed code that differs is a failure of the
-//! generator.
+//! generator. A mutant that holds a `diagnostic` call also runs `observe`
+//! in both front ends, and the records before the error line must be equal.
 
 use std::collections::BTreeMap;
 use std::path::Path;
+use std::process::Output;
 
 use anyhow::{Context, Result, anyhow};
 use proptest::prelude::any;
 use proptest::strategy::{Just, Strategy};
 use srcgen::{BuildFault, Program, mutate, typed};
+use testkit::source::{compare_observe, makes_records};
 use testkit::{Outcome, Report, parse_report};
 
-use super::{Mode, Tools, outcome, repeat, write};
+use super::{Mode, Tools, observe_pair, outcome, repeat, write};
 
 /// A typed program, or the fault of its builder, and the draws of the
 /// kind and the site of the mutation.
@@ -27,6 +30,10 @@ pub(super) type Tally = BTreeMap<String, u64>;
 
 /// The key of a mutant that both front ends accept.
 const ACCEPTED: &str = "accepted";
+
+/// The key of the mutants that `observe` compared. It counts besides the
+/// code of the mutant, so `summary` leaves it out of the rejections.
+const OBSERVED: &str = "observed";
 
 /// Random typed programs, each with a kind and a site. The program comes
 /// first in the draw, so the seed `n` gives the program of the typed mode.
@@ -61,8 +68,21 @@ pub(super) fn verdict(
     if let Some(message) = check_prediction(mutant.expect, &code, &mutant.what) {
         return Ok(Some(message));
     }
+    if makes_records(&mutant.text) {
+        let (rust, lean) = observe_pair(tools, &file, &program.top())?;
+        if let Some(message) = same_records(&rust, &lean) {
+            return Ok(Some(format!("observe: `{}`: {message}", mutant.what)));
+        }
+        *tally.entry(OBSERVED.to_owned()).or_default() += 1;
+    }
     *tally.entry(code).or_default() += 1;
     Ok(None)
+}
+
+/// `None` if the `observe` runs print the same records, and the same first
+/// error where both fail, else the difference with both outputs.
+fn same_records(rust: &Output, lean: &Output) -> Option<String> {
+    compare_observe(rust, lean, None).err()
 }
 
 /// The tally key of the outcome `agreed`: its code, or `accepted`. A
@@ -156,9 +176,10 @@ fn check_file(
 /// The success line for `count` mutants of the seeds `seed` to `last`.
 pub(super) fn summary(count: u64, seed: u64, last: u64, tally: &Tally) -> String {
     let accepted = tally.get(ACCEPTED).copied().unwrap_or(0);
+    let observed = tally.get(OBSERVED).copied().unwrap_or(0);
     let rejected: Vec<(&String, &u64)> = tally
         .iter()
-        .filter(|(code, _)| code.as_str() != ACCEPTED)
+        .filter(|(code, _)| code.as_str() != ACCEPTED && code.as_str() != OBSERVED)
         .collect();
     let total: u64 = rejected.iter().map(|(_, n)| **n).sum();
     let codes = if rejected.is_empty() {
@@ -171,7 +192,7 @@ pub(super) fn summary(count: u64, seed: u64, last: u64, tally: &Tally) -> String
         format!(" ({})", codes.join(", "))
     };
     format!(
-        "diff-si: {count} mutants agree (seeds {seed} to {last}): {total} rejected{codes}, {accepted} accepted"
+        "diff-si: {count} mutants agree (seeds {seed} to {last}): {total} rejected{codes}, {accepted} accepted, {observed} with records"
     )
 }
 
@@ -202,6 +223,30 @@ mod tests {
         );
     }
 
+    fn observe_run(code: i32, stdout: &str) -> Output {
+        use std::os::unix::process::ExitStatusExt;
+        Output {
+            status: std::process::ExitStatus::from_raw(code << 8),
+            stdout: stdout.as_bytes().to_vec(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_record_difference_fails_the_observe_compare() {
+        let record = |n: u8| format!("(record 3 5 M0 () (string \"d0\") (int {n}))\n");
+        let error = "error[S013]: 7:3: index out of range\n";
+        let same = observe_run(1, &format!("{}{error}", record(1)));
+        assert_eq!(same_records(&same, &same), None);
+        let other = observe_run(1, &format!("{}{error}", record(2)));
+        let message = same_records(&same, &other).expect("a difference");
+        assert!(message.contains("the records differ"), "{message}");
+        assert!(
+            message.contains("(int 1)") && message.contains("(int 2)"),
+            "{message}"
+        );
+    }
+
     #[test]
     fn the_key_is_the_code_or_accepted() {
         let outcome = |code, report: &str| Outcome {
@@ -227,12 +272,12 @@ mod tests {
     fn an_empty_tally_counts_nothing() {
         assert_eq!(
             summary(2, 5, 6, &Tally::new()),
-            "diff-si: 2 mutants agree (seeds 5 to 6): 0 rejected, 0 accepted"
+            "diff-si: 2 mutants agree (seeds 5 to 6): 0 rejected, 0 accepted, 0 with records"
         );
         let accepted: Tally = [("accepted".to_owned(), 2)].into_iter().collect();
         assert_eq!(
             summary(2, 5, 6, &accepted),
-            "diff-si: 2 mutants agree (seeds 5 to 6): 0 rejected, 2 accepted"
+            "diff-si: 2 mutants agree (seeds 5 to 6): 0 rejected, 2 accepted, 0 with records"
         );
     }
 
@@ -244,7 +289,7 @@ mod tests {
             .collect();
         assert_eq!(
             summary(4, 1, 4, &tally),
-            "diff-si: 4 mutants agree (seeds 1 to 4): 3 rejected (S003 2, S007 1), 1 accepted"
+            "diff-si: 4 mutants agree (seeds 1 to 4): 3 rejected (S003 2, S007 1), 1 accepted, 0 with records"
         );
     }
 }
