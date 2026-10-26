@@ -174,7 +174,16 @@ impl Builder {
     /// `@ports`: one read of the list or of a port, or a read of the type
     /// of a port.
     pub(super) fn ports_group(&mut self) -> Option<(QExpr, SExpr, Option<RTy>)> {
-        let kid = self.kids.get(self.tape.index(self.kids.len()))?.clone();
+        // Three draws in four take a child with 3 ports or more, if there is
+        // one: the cost of its list shows in the budget.
+        let wide: Vec<&Kid> = self.kids.iter().filter(|k| k.rows.len() >= 3).collect();
+        let pick = self.tape.index(wide.len());
+        let all = self.tape.index(self.kids.len());
+        let kid = match wide.get(pick) {
+            Some(kid) if self.tape.below(4) != 0 => (*kid).clone(),
+            _ => self.kids.get(all)?.clone(),
+        };
+        note!(self, query_wide, kid.rows.len() >= 3);
         if self.tape.below(3) == 0
             && let Some((tq, t)) = self.port_type(&kid)
         {

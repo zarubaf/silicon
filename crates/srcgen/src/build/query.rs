@@ -68,9 +68,9 @@ const PER_RECORD: u32 = 3;
 const PORTS_ODDS: u32 = 2;
 /// The most text that the queries of a program add, in bytes: the largest
 /// program stays below its cap.
-const QUERY_BYTES: usize = 1500;
+const QUERY_BYTES: usize = 1300;
 /// A group uses a generated type in this many groups, if there is one.
-const STRUCT_ODDS: u32 = 3;
+const STRUCT_ODDS: u32 = 2;
 /// The most low bits of a query that an unsigned output takes. A signed output
 /// takes `-(query & 1)`, which fits each `SInt`.
 const MASK_BITS: u32 = 3;
@@ -396,15 +396,17 @@ impl Builder {
                 }
             })?;
         let kinds: BTreeSet<&str> = pool.iter().map(|op| reflect::info(&op.ty).kind).collect();
-        // A kind that few sources have counts twice: a tuple, a record, and
-        // an enum have names to read, and the others are rare.
-        let rare = [
-            "tuple", "record", "enum", "instance", "mem", "function", "type", "list", "reg",
-            "wire", "input",
-        ];
+        // A kind that few sources have counts more: an instance comes with a
+        // child only, and a tuple, a record, and an enum have names to read.
+        let weight = |k: &str| match k {
+            "instance" => 4,
+            "mem" | "function" | "type" | "list" => 3,
+            "tuple" | "record" | "enum" | "reg" | "wire" | "input" => 2,
+            _ => 1,
+        };
         let kinds: Vec<&str> = kinds
             .into_iter()
-            .flat_map(|k| std::iter::repeat_n(k, 1 + usize::from(rare.contains(&k))))
+            .flat_map(|k| std::iter::repeat_n(k, weight(k)))
             .collect();
         let kind = *kinds.get(self.tape.index(kinds.len()))?;
         let of_kind: Vec<Op> = pool
@@ -546,10 +548,109 @@ impl Builder {
             return;
         }
         self.on_query(|b| {
+            if b.tape.flag() {
+                b.wide_group(ctx, out);
+            }
+            if b.tape.flag() {
+                b.handle_group(ctx, out);
+            }
             for _ in 0..b.tape.below(TAIL + 1) {
                 b.one_group(ctx, names, out);
             }
         });
+    }
+
+    /// A record with a read of a handle of the top frame: an instance, a
+    /// register, a wire, or a child input. A handle is rare among the
+    /// sources, so a module reads one of them at its end.
+    fn handle_group(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) {
+        if self.queries >= MAX_GROUPS || self.query_bytes > QUERY_BYTES || ctx.envs.is_empty() {
+            return;
+        }
+        let handles: Vec<Op> = self
+            .ops
+            .iter()
+            .filter(|op| {
+                matches!(
+                    reflect::info(&op.ty).kind,
+                    "instance" | "reg" | "wire" | "input"
+                )
+            })
+            .cloned()
+            .collect();
+        let Some(op) = handles.get(self.tape.index(handles.len())).cloned() else {
+            return;
+        };
+        let (tq, t) = self.type_value(&op, false);
+        let (form, value) = if self.tape.flag() {
+            self.test(tq, &t)
+        } else {
+            self.size(&tq, &t, false)
+        };
+        if self.values(&value, &ctx.envs).is_none() {
+            return;
+        }
+        self.queries += 1;
+        self.emitted += 1;
+        note!(self, query_groups);
+        #[cfg(test)]
+        self.stats.query_kinds.insert(reflect::info(&t).kind);
+        let query = SExpr::Query(Box::new(Query { form, value }));
+        self.query_bytes += sexpr(&query).len() + 28;
+        let message = self.next_message();
+        out.push(Stmt::Diagnostic(message, query));
+    }
+
+    /// A record with a read of a wide result: the number of fields of a type
+    /// with 3 fields or more, or of the ports of a child with 3 ports or
+    /// more. The budget mode reads the cost of such a program.
+    fn wide_group(&mut self, ctx: &Ctx, out: &mut Vec<Stmt>) {
+        if self.queries >= MAX_GROUPS || self.query_bytes > QUERY_BYTES || ctx.envs.is_empty() {
+            return;
+        }
+        let mut pool = self.static_ops(ctx);
+        pool.extend(self.root_ops());
+        let wide: Vec<Op> = pool
+            .into_iter()
+            .filter(|op| reflect::info(&op.ty).fields.len() >= 3)
+            .collect();
+        let kids: Vec<Kid> = self
+            .kids
+            .iter()
+            .filter(|k| k.rows.len() >= 3)
+            .cloned()
+            .collect();
+        let (form, value) = match (wide.get(self.tape.index(wide.len())), kids.first()) {
+            (Some(op), _) if self.tape.flag() || kids.is_empty() => {
+                let tq = if op.place {
+                    builtin("TypeOf", QExpr::Text(op.text.clone()))
+                } else {
+                    QExpr::Text(op.text.clone())
+                };
+                let fields = read(builtin("typeInfo", tq), ".fields");
+                (
+                    QExpr::Call("len", Box::new(fields)),
+                    int(reflect::info(&op.ty).fields.len()),
+                )
+            }
+            (_, Some(kid)) => {
+                let kid = kids.get(self.tape.index(kids.len())).unwrap_or(kid);
+                let list = builtin("ports", QExpr::Text(kid.name.clone()));
+                (QExpr::Call("len", Box::new(list)), int(kid.rows.len()))
+            }
+            _ => return,
+        };
+        if self.values(&value, &ctx.envs).is_none() {
+            return;
+        }
+        self.queries += 1;
+        self.emitted += 1;
+        note!(self, query_groups);
+        note!(self, query_wide);
+        let query = SExpr::Query(Box::new(Query { form, value }));
+        self.query_bytes += sexpr(&query).len() + 28;
+        let message = self.next_message();
+        out.push(Stmt::Diagnostic(message, query));
     }
 
     /// A wire and a register that only the queries read, and a static `let`
@@ -705,6 +806,7 @@ impl Builder {
         #[cfg(test)]
         if let Some(t) = &t {
             self.stats.query_kinds.insert(reflect::info(t).kind);
+            note!(self, query_wide, reflect::info(t).fields.len() >= 3);
         }
         #[cfg(not(test))]
         let _ = t;
@@ -790,16 +892,17 @@ impl Builder {
     /// and a front end disagree on a type that the output reads. A name that
     /// a type position paired gets its `data_bits` mixed in first.
     pub(super) fn mix_query(&mut self, ctx: &Ctx, outputs: &mut [(String, Want, HExpr)]) {
-        if !self.query_on || self.query_bytes > QUERY_BYTES || outputs.is_empty() {
+        if !self.query_on || outputs.is_empty() {
             return;
         }
         self.on_query(|b| {
             let paired: Vec<Op> = b.ops.iter().filter(|op| op.paired).cloned().collect();
-            if b.tape.below(MIX_ODDS) != 0 && paired.is_empty() {
+            // A paired name always mixes: the type position is the reason.
+            if paired.is_empty() && (b.query_bytes > QUERY_BYTES || b.tape.below(MIX_ODDS) != 0) {
                 return;
             }
             let at = b.tape.index(outputs.len());
-            let from_pair = !paired.is_empty() && b.tape.flag();
+            let from_pair = !paired.is_empty() && b.tape.below(4) != 0;
             let (form, value) = match paired.get(b.tape.index(paired.len())) {
                 Some(op) if from_pair => {
                     let (tq, t) = b.type_value(op, true);
@@ -959,6 +1062,7 @@ mod tests {
             forms.push((format!("kind {kind}"), s.query_kinds.contains(kind)));
         }
         forms.push(("ports".to_owned(), text.contains("@ports(")));
+        forms.push(("wide result".to_owned(), s.query_wide > 0));
         forms.push((
             "ports container".to_owned(),
             text.contains("@TypeOf(l") || text.contains("@ports(l"),
@@ -1031,7 +1135,11 @@ mod tests {
         );
         for (form, n) in &with {
             let detail = ["root ", "kind ", "generated ", "ports ", "wrapper"];
-            let floor = if detail.iter().any(|d| form.starts_with(d)) {
+            // The budget mode reads the cost of a program with a wide result:
+            // a type with 3 fields or more, or a child with 3 ports or more.
+            let floor = if form == "wide result" {
+                TAPES * 3 / 10
+            } else if detail.iter().any(|d| form.starts_with(d)) {
                 TAPES / 32
             } else {
                 TAPES / 10
