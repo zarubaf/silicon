@@ -117,6 +117,57 @@ impl Value {
     }
 }
 
+/// A step of a place: an evaluated key, a position, or a field name.
+enum Step<'a> {
+    Key(&'a SExpr),
+    Pos(u32),
+    Name(&'a String),
+}
+
+/// A resolved step of a place.
+enum Sel {
+    Pos(usize),
+    Name(String),
+}
+
+/// The part of `v` that `sel` selects.
+fn part<'v>(v: &'v Value, sel: &Sel) -> Result<&'v Value, Fault> {
+    match (v, sel) {
+        (Value::Tuple(xs) | Value::Array(xs) | Value::List(_, xs), Sel::Pos(k)) => {
+            xs.get(*k).ok_or(Fault::Bound)
+        }
+        (Value::Record(ty, xs), Sel::Name(f)) => ty
+            .fields
+            .iter()
+            .position(|(g, _)| g == f)
+            .and_then(|k| xs.get(k))
+            .ok_or(Fault::Type),
+        _ => Err(Fault::Type),
+    }
+}
+
+/// The part of `v` at the path `path`, to write.
+fn part_mut<'v>(v: &'v mut Value, path: &[Sel]) -> Result<&'v mut Value, Fault> {
+    let Some((sel, rest)) = path.split_first() else {
+        return Ok(v);
+    };
+    let next = match (v, sel) {
+        (Value::Tuple(xs) | Value::Array(xs) | Value::List(_, xs), Sel::Pos(k)) => {
+            xs.get_mut(*k).ok_or(Fault::Bound)?
+        }
+        (Value::Record(ty, xs), Sel::Name(f)) => {
+            let k = ty
+                .fields
+                .iter()
+                .position(|(g, _)| g == f)
+                .ok_or(Fault::Type)?;
+            xs.get_mut(k).ok_or(Fault::Type)?
+        }
+        _ => return Err(Fault::Type),
+    };
+    part_mut(next, rest)
+}
+
 /// `@field(base, key)` after both operands have a value: a record takes the
 /// `String` of one of its fields, and a tuple, an array, and a list take a
 /// `Nat` below their length.
@@ -486,6 +537,28 @@ fn exec_in(
             env.statics.insert(root.clone(), new);
             env.statics.insert(name.clone(), result);
         }
+        Stmt::PlaceCall {
+            name,
+            place,
+            f,
+            arg,
+        } => {
+            let def = scope.mut_fns.get(f.as_str()).ok_or(Fault::Type)?;
+            let frame = Frame {
+                key: false,
+                callee: def.name.clone(),
+                within: within.map(str::to_owned),
+                result: name.clone(),
+            };
+            let mut ev = Evaluator::new(scope);
+            ev.within.clone_from(&frame.within);
+            ev.tag.clone_from(name);
+            let (root, new_root, result) = ev.place_call(place, def, arg, env, &frame)?;
+            env.statics.extend(ev.writes);
+            env.statics.insert(root, new_root);
+            env.statics.insert(name.clone(), result);
+            log.append(&mut ev.log);
+        }
         Stmt::PopLet(name, list) => {
             let Some(Value::List(_, xs)) = env.statics.get_mut(list) else {
                 return Err(Fault::Type);
@@ -644,6 +717,72 @@ impl<'a> Evaluator<'a> {
             within: None,
             tag: String::new(),
         }
+    }
+
+    /// The call of `def` on the place `place` with the explicit argument
+    /// `arg`: the keys of the place evaluate from the root outward, then
+    /// the argument, then the call runs on the part and the part takes its
+    /// final value. Gives the name of the root, its new value, and the
+    /// result.
+    fn place_call(
+        &mut self,
+        place: &SExpr,
+        def: &MutFn,
+        arg: &SExpr,
+        env: &Env,
+        frame: &Frame,
+    ) -> Result<(String, Value, Value), Fault> {
+        let mut steps = Vec::new();
+        let mut at = place;
+        let root = loop {
+            match at {
+                SExpr::Name(n) => break n.clone(),
+                SExpr::Index(b, k) | SExpr::At(b, k) => {
+                    steps.push(Step::Key(k));
+                    at = b;
+                }
+                SExpr::Select(b, k, _) => {
+                    steps.push(Step::Pos(*k));
+                    at = b;
+                }
+                SExpr::Field(b, f) => {
+                    steps.push(Step::Name(f));
+                    at = b;
+                }
+                _ => return Err(Fault::Type),
+            }
+        };
+        steps.reverse();
+        let top = env.statics.get(&root).cloned().ok_or(Fault::Type)?;
+        let mut cur = top.clone();
+        let mut path = Vec::new();
+        for step in steps {
+            let sel = match step {
+                Step::Pos(k) => Sel::Pos(k as usize),
+                Step::Name(f) => Sel::Name(f.clone()),
+                Step::Key(k) => match self.eval(k, env)? {
+                    Value::Str(f) => Sel::Name(f),
+                    Value::Int(n) => {
+                        if n.sign() == Sign::Minus {
+                            return Err(Fault::Nat);
+                        }
+                        Sel::Pos(usize::try_from(&n).map_err(|_| Fault::Bound)?)
+                    }
+                    _ => return Err(Fault::Type),
+                },
+            };
+            cur = part(&cur, &sel)?.clone();
+            path.push(sel);
+        }
+        let arg = typed(&STy::Int, self.eval(arg, env)?)?;
+        let start = self.log.len();
+        let (new, result) = call_mut(def, typed(&def.root, cur)?, arg, self.scope, &mut self.log)?;
+        for logged in self.log.iter_mut().skip(start) {
+            logged.frames.insert(0, frame.clone());
+        }
+        let mut top = top;
+        *part_mut(&mut top, &path)? = new;
+        Ok((root, top, result))
     }
 
     /// `f(root, arg)`: the call runs on the current value of the root,

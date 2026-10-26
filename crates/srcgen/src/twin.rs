@@ -1018,7 +1018,8 @@ impl Writer<'_> {
             | Stmt::MutLet(..)
             | Stmt::Push(..)
             | Stmt::PopLet(..)
-            | Stmt::MutCall { .. } => {
+            | Stmt::MutCall { .. }
+            | Stmt::PlaceCall { .. } => {
                 if exec_static(s, &mut fr.env, &self.scope).is_err() {
                     out.push(s.clone());
                 }

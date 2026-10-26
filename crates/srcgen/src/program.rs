@@ -509,6 +509,16 @@ pub(crate) enum Stmt {
         args: Vec<SExpr>,
         receiver: bool,
     },
+    /// `let name: Int = f(place, arg);`: a call of a function with a `mut`
+    /// formal on a place below a `let mut` root, a chain of `@field`,
+    /// `[i]`, and `.N` steps. The call writes its final `a0` back to the
+    /// part. The keys of the place can hold a `KeyCall`.
+    PlaceCall {
+        name: String,
+        place: SExpr,
+        f: String,
+        arg: SExpr,
+    },
     /// A block `{ ... }`. The twin writes a selected `comptime if` branch
     /// and each iteration of a `comptime for` as one.
     Block(Vec<Stmt>),
@@ -985,6 +995,12 @@ fn stmt(out: &mut String, depth: usize, s: &Stmt) {
                 .collect();
             format!("let {name}: Int = {f}({});", all.join(", "))
         }
+        Stmt::PlaceCall {
+            name,
+            place,
+            f,
+            arg,
+        } => format!("let {name}: Int = {f}({}, {});", sexpr(place), sexpr(arg)),
         Stmt::Assign(n, v) => format!("{n} = {};", hexpr(v)),
         Stmt::Connect(place, v) => {
             let place = match place {

@@ -181,6 +181,7 @@ impl Walk<'_> {
                 | Stmt::Push(..)
                 | Stmt::PopLet(..)
                 | Stmt::MutCall { .. }
+                | Stmt::PlaceCall { .. }
                 | Stmt::Diagnostic(..) => {
                     let mut logged = Vec::new();
                     exec_logged(s, env, &self.scope, &mut logged)?;

@@ -19,6 +19,11 @@
 //! front ends order it with the checks of the earlier steps (#378, #387).
 //! The record of the group shows the value and the new local.
 //!
+//! The same chain is a place: the group `let s3: Int = k2(@field(s0, s1)[k0(s1,
+//! 3)], 2);` passes the part of a `let mut` container as the `mut` actual of
+//! a function, and the keys of the place hold the call. A literal chain
+//! (`@field(@field(t, 1), 0)`) passes the part with no held key.
+//!
 //! A group declares only names of its own, keeps no name in the scope of the
 //! frame, and draws from the field tape alone, so a program without a group
 //! is the program of the other tapes alone.
@@ -33,6 +38,11 @@ use num_bigint::BigInt;
 /// most groups of one program.
 const GROUP_ODDS: u32 = 6;
 const MAX_GROUPS: u32 = 4;
+/// The slots of `key_fns`: the key function, the key function with a
+/// `diagnostic`, and the function that a place passes its part to.
+const PLAIN: usize = 0;
+const EFFECT: usize = 1;
+const PLACE: usize = 2;
 
 impl Builder {
     /// A group of statements after a statement of the frame, if the field
@@ -45,7 +55,11 @@ impl Builder {
             if b.tape.below(GROUP_ODDS) != GROUP_ODDS - 1 {
                 return Ok(());
             }
-            let stmts = b.held_read(names)?;
+            let stmts = if b.tape.flag() {
+                b.held_read(names)?
+            } else {
+                b.held_place(names)?
+            };
             // Each env runs the group, so a fault keeps it out.
             let ok = ctx.envs.iter().all(|env| {
                 let mut env: Env = env.clone();
@@ -63,12 +77,12 @@ impl Builder {
 
     /// The function `k<n>(mut a0: Int, x1: Int) -> Int` that adds to the
     /// root and gives an index of `0..2`, with a `diagnostic` or without.
-    fn key_fn(&mut self, effectful: bool) -> Built<String> {
-        let slot = usize::from(effectful);
+    fn key_fn(&mut self, slot: usize) -> Built<String> {
+        let effectful = slot == EFFECT;
         if let Some(name) = self.key_fns.get(slot).cloned().flatten() {
             return Ok(name);
         }
-        let name = format!("k{}", self.mut_fns.len());
+        let name = format!("k{}", self.mut_fns.len() + self.key_mut_fns.len());
         let var = |n: &str| SExpr::Name(n.to_owned());
         let sum = SExpr::Binary(SBin::Add, Box::new(var("a0")), Box::new(var("x1")));
         let diag = effectful.then(|| {
@@ -76,16 +90,25 @@ impl Builder {
             (self.next_message(), value)
         });
         let delta = self.tape.between(1, 3);
-        self.mut_fns.push(MutFn {
-            name: name.clone(),
-            root: STy::Int,
-            pre: Vec::new(),
-            update: SExpr::Binary(
+        let (update, ret) = if slot == PLACE {
+            (sum, var("a0"))
+        } else {
+            let delta = SExpr::Binary(
                 SBin::Add,
                 Box::new(var("a0")),
                 Box::new(int(i64::from(delta))),
-            ),
-            ret: SExpr::Binary(SBin::And, Box::new(sum), Box::new(int(1))),
+            );
+            (
+                delta,
+                SExpr::Binary(SBin::And, Box::new(sum), Box::new(int(1))),
+            )
+        };
+        self.key_mut_fns.push(MutFn {
+            name: name.clone(),
+            root: STy::Int,
+            pre: Vec::new(),
+            update,
+            ret,
             diag,
         });
         self.refresh()?;
@@ -99,9 +122,93 @@ impl Builder {
     /// and the record.
     fn held_read(&mut self, names: &mut Names) -> Built<Vec<Stmt>> {
         let early = self.tape.flag();
-        let f = self.key_fn(early)?;
-        let (c, k, v) = (names.fresh("s"), names.fresh("s"), names.fresh("s"));
+        let func = self.key_fn(if early { EFFECT } else { PLAIN })?;
+        let (cont, key, got) = (names.fresh("s"), names.fresh("s"), names.fresh("s"));
         let name = |n: &String| SExpr::Name(n.clone());
+        let (ty, value, tuple) = self.small_container();
+        let start = self.tape.between(0, 1);
+        let arg = self.tape.between(0, 5);
+        // A tuple takes no `[key]`, so its first step is `@field`. One step
+        // of the chain at least reads as `@field`.
+        let plain_first = !tuple && self.tape.flag();
+        let first = if plain_first {
+            SExpr::Index(Box::new(name(&cont)), Box::new(name(&key)))
+        } else {
+            SExpr::At(Box::new(name(&cont)), Box::new(name(&key)))
+        };
+        let call = SExpr::KeyCall(func, key.clone(), Box::new(int(i64::from(arg))));
+        let read = if plain_first || self.tape.flag() {
+            SExpr::At(Box::new(first), Box::new(call))
+        } else {
+            SExpr::Index(Box::new(first), Box::new(call))
+        };
+        note!(self, held_groups);
+        note!(self, early_groups, early);
+        let shown = SExpr::Tuple(vec![name(&got), name(&key)]);
+        Ok(vec![
+            Stmt::StaticLet(cont, ty, value),
+            Stmt::MutLet(key, STy::Int, int(i64::from(start))),
+            Stmt::StaticLet(got, STy::Int, read),
+            Stmt::Diagnostic(self.next_message(), shown),
+        ])
+    }
+
+    /// The statements of one place group: a `let mut` container, the call
+    /// of a function on a part of it, and the record of the result and of
+    /// the container. A held place reads a local `k` in the first key and
+    /// calls a function on `k` in the second.
+    fn held_place(&mut self, names: &mut Names) -> Built<Vec<Stmt>> {
+        let held = self.tape.flag();
+        let early = self.tape.flag();
+        let outer = self.key_fn(PLACE)?;
+        let (cont, key, got) = (names.fresh("s"), names.fresh("s"), names.fresh("s"));
+        let name = |n: &String| SExpr::Name(n.clone());
+        let (ty, value, tuple) = self.small_container();
+        let lit = |sel: &mut Builder| int(i64::from(sel.tape.between(0, 1)));
+        let (first_key, second_key) = if held {
+            let func = self.key_fn(if early { EFFECT } else { PLAIN })?;
+            let arg = int(i64::from(self.tape.between(0, 5)));
+            (name(&key), SExpr::KeyCall(func, key.clone(), Box::new(arg)))
+        } else {
+            (lit(self), lit(self))
+        };
+        let (base, sel) = (Box::new(name(&cont)), Box::new(first_key));
+        // A tuple takes `.N` or `@field`, an array `[i]` or `@field`; one
+        // step reads as `@field` at least.
+        let plain_first = !held && self.tape.flag();
+        let first = match (&*sel, tuple, plain_first) {
+            (SExpr::Int(n, radix), true, true) => {
+                let key = u32::try_from(n).unwrap_or(0);
+                SExpr::Select(base, key, *radix)
+            }
+            (_, false, true) => SExpr::Index(base, sel),
+            _ => SExpr::At(base, sel),
+        };
+        let place = if plain_first || self.tape.flag() {
+            SExpr::At(Box::new(first), Box::new(second_key))
+        } else {
+            SExpr::Index(Box::new(first), Box::new(second_key))
+        };
+        note!(self, place_groups);
+        note!(self, held_place_groups, held);
+        note!(self, early_groups, held && early);
+        let arg = int(i64::from(self.tape.between(0, 6)));
+        let shown = SExpr::Tuple(vec![name(&got), name(&cont), name(&key)]);
+        let mut stmts = vec![Stmt::MutLet(cont.clone(), ty, value)];
+        stmts.push(Stmt::MutLet(key.clone(), STy::Int, int(0)));
+        stmts.push(Stmt::PlaceCall {
+            name: got,
+            place,
+            f: outer,
+            arg,
+        });
+        stmts.push(Stmt::Diagnostic(self.next_message(), shown));
+        Ok(stmts)
+    }
+
+    /// A container of two rows of two integers: a tuple or an array of
+    /// arrays.
+    fn small_container(&mut self) -> (STy, SExpr, bool) {
         let row = STy::Array(Box::new(STy::Int), 2);
         let tuple = self.tape.flag();
         let ty = if tuple {
@@ -119,31 +226,7 @@ impl Builder {
         } else {
             SExpr::Array(rows)
         };
-        let start = self.tape.between(0, 1);
-        let arg = self.tape.between(0, 5);
-        // A tuple takes no `[k]`, so its first step is `@field`. One step
-        // of the chain at least reads as `@field`.
-        let plain_first = !tuple && self.tape.flag();
-        let first = if plain_first {
-            SExpr::Index(Box::new(name(&c)), Box::new(name(&k)))
-        } else {
-            SExpr::At(Box::new(name(&c)), Box::new(name(&k)))
-        };
-        let call = SExpr::KeyCall(f, k.clone(), Box::new(int(i64::from(arg))));
-        let read = if plain_first || self.tape.flag() {
-            SExpr::At(Box::new(first), Box::new(call))
-        } else {
-            SExpr::Index(Box::new(first), Box::new(call))
-        };
-        note!(self, held_groups);
-        note!(self, early_groups, early);
-        let shown = SExpr::Tuple(vec![name(&v), name(&k)]);
-        Ok(vec![
-            Stmt::StaticLet(c, ty, value),
-            Stmt::MutLet(k, STy::Int, int(i64::from(start))),
-            Stmt::StaticLet(v, STy::Int, read),
-            Stmt::Diagnostic(self.next_message(), shown),
-        ])
+        (ty, value, tuple)
     }
 
     fn small_int(&mut self) -> SExpr {

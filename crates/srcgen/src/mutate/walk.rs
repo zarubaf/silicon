@@ -394,6 +394,11 @@ impl<'a> Walk<'a> {
                 }
                 self.window(root, f, args, *receiver);
             }
+            Stmt::PlaceCall { place, f, arg, .. } => {
+                self.rename(f);
+                self.sexpr(place);
+                self.sexpr(arg);
+            }
             Stmt::Assign(n, v) => {
                 self.rename(n);
                 self.hexpr(v);
@@ -423,6 +428,18 @@ impl<'a> Walk<'a> {
             }
             Stmt::Error(_) => {}
             Stmt::Block(body) => self.stmts(body, false),
+            Stmt::Call(..)
+            | Stmt::HList(..)
+            | Stmt::HPush(..)
+            | Stmt::Mem(..)
+            | Stmt::WritePort { .. } => self.resource_parts(s),
+        }
+    }
+
+    /// The parts of a call of a helper, a list of handles, a memory, and a
+    /// write port.
+    fn resource_parts(&mut self, s: &mut Stmt) {
+        match s {
             Stmt::Call(f, args) => {
                 self.rename(f);
                 self.args(f, args, HExpr::Static(zero()));
@@ -451,6 +468,7 @@ impl<'a> Walk<'a> {
                 self.hexpr(data);
                 self.hexpr(en);
             }
+            _ => {}
         }
     }
 
