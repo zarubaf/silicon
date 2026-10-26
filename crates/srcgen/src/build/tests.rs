@@ -525,7 +525,7 @@ fn no_effectful_function_reaches_a_structural_position() {
             let held = t.starts_with("const F") && t.ends_with(';') && uses <= 2;
             // The call of a module body, or the call of a nested function.
             // A chain of two steps can call it in each key.
-            let calls = if t.contains("@field(@field(") { 2 } else { 1 };
+            let calls = if t.contains("@field(") { 2 } else { 1 };
             let call = (t.starts_with("let s") || t.starts_with("let r0"))
                 && t.contains(": Int = ")
                 && uses <= calls;
