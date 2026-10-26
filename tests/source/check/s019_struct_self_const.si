@@ -1,0 +1,10 @@
+// S019: the constant form is S019 at the use of the constant.
+// TOP M()
+// expected-error S019 @+2
+// expected-message: `R` depends on itself
+const R: Type = @Struct([FieldInfo("a", R)]);
+module M() domains() {
+    output o: Bool;
+    let r = R(true);
+    o := true;
+}

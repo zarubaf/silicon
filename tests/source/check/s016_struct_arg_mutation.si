@@ -1,0 +1,14 @@
+// S016: an argument of `@Struct` cannot change a binding from before.
+// TOP M()
+fn grab(mut l: List[Nat]) -> List[FieldInfo] {
+    push(l, 1);
+    return list(FieldInfo);
+}
+module M() domains() {
+    output o: Bool;
+    let mut l = list(Nat);
+    // expected-error S016 @+2
+    // expected-message: an argument of `@Struct` cannot change `l`; change `l` before `@Struct`, keep the result in a `let`, and use that name in the argument
+    let t = @Struct(grab(l));
+    o := true;
+}

@@ -1,0 +1,9 @@
+// S010: `@Struct` takes a list or an array of `FieldInfo`. A type is another value, and the text gives the fix.
+// TOP M()
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not a value of `Type`; build each field with the prelude `FieldInfo(name, ty)`
+    let t = @Struct(Bool);
+    o := true;
+}

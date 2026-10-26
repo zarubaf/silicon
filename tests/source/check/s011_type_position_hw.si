@@ -1,0 +1,17 @@
+// S011: a type position reads no hardware. The condition `r` of the `if` is the first node with a hardware value, so the later key `key()` never evaluates and its `diagnostic` makes no record.
+// TOP M()
+// OBSERVE-NOT: (record
+fn key() -> Nat {
+    diagnostic("key", 0);
+    return 0;
+}
+module M() {
+    output o: Bool;
+    reg r: Bool = false;
+    let ts = [Bool, Bool];
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `Bool`; compute the value from static values, for example from constants and `comptime` parameters
+    let y: @field(if (r) { ts } else { ts }, key()) = true;
+    r := true;
+    o := true;
+}

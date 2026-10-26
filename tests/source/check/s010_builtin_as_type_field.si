@@ -1,0 +1,14 @@
+// S010: `@field(rs, 0)` in a type position reads no value. It selects a part of a hardware list, not a `Type`.
+// TOP M()
+module M() {
+    output o: Bool;
+    reg r0: Bool = false;
+    reg r1: Bool = false;
+    let rs = [r0, r1];
+    // expected-error S010 @+2
+    // expected-message: a type position needs a `Type`, but `@field` gives a handle of `Reg[Bool]`; select a part of type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part
+    let y: @field(rs, 0) = true;
+    r0 := true;
+    r1 := true;
+    o := true;
+}

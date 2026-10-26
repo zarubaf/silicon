@@ -1,0 +1,12 @@
+// S010: a function is generic when its result type holds a builtin that names a parameter. Here `@TypeOf(x)` names `x`, so `f` is no value.
+// TOP M()
+comptime fn f(x: UInt[8]) -> @TypeOf(x) {
+    return x;
+}
+module M() domains() {
+    output o: Bool;
+    // expected-error S010 @+2
+    // expected-message: `f` is generic; a generic function is not a value
+    let g = f;
+    o := true;
+}
