@@ -1252,6 +1252,73 @@ fn the_plan_gives_the_ports_of_the_top() {
     assert!(checked > 100, "{checked}");
 }
 
+/// The plain and enum ports, the entries of a family, and the leaf ports of
+/// a record come in one order, the port layout of section 7.5: the rows of
+/// the `PortInfo` list of the top, without the `Unit` entries, name the
+/// owners of the ports of the program in the order of `Program::ports()`,
+/// the inputs first (ADR 0032: one rule).
+#[test]
+fn the_rows_of_the_top_follow_the_port_order() {
+    let mut checked = 0;
+    for tape in tapes(256) {
+        let mut b = Builder::new(tape);
+        let Ok(p) = b.program() else { continue };
+        let Some(sig) = b.sigs.first() else { continue };
+        let ports = p.ports();
+        // A record port has one leaf per field, in a row.
+        let mut owners: Vec<String> = Vec::new();
+        for (n, _) in ports.inputs.iter().chain(&ports.outputs) {
+            let owner = n.split('.').next().unwrap_or(n).to_owned();
+            if owners.last() != Some(&owner) {
+                owners.push(owner);
+            }
+        }
+        let rows: Vec<String> = portinfo::rows(sig, &b.port_helpers, |_| None)
+            .into_iter()
+            .filter(|r| r.plan_ty != PTy::Unit)
+            .map(|r| r.public.to_string())
+            .collect();
+        assert_eq!(rows, owners, "{:?}", sig.plan);
+        checked += usize::from(rows.len() >= 2);
+    }
+    assert!(checked > 100, "{checked}");
+}
+
+/// Equal lists of fields make one type: two generated types have one id
+/// if and only if their lists are equal, so `==` of two aliases of
+/// `@Struct([])` is true, and a list with two swapped fields is another type
+/// (ADR 0018: the generator never predicts a value that the language does
+/// not give).
+#[test]
+fn equal_lists_of_fields_share_one_id() {
+    let (mut empty, mut full, mut swapped) = (0, 0, 0);
+    for tape in tapes(1024) {
+        let mut b = Builder::new(tape);
+        if b.program().is_err() {
+            continue;
+        }
+        for (i, g) in b.gens.iter().enumerate() {
+            for h in &b.gens[..i] {
+                let (a, c) = (&g.def.fields, &h.def.fields);
+                assert_eq!(a == c, g.id == h.id, "{} and {}", g.def.name, h.def.name);
+                if a == c {
+                    if a.is_empty() {
+                        empty += 1;
+                    } else {
+                        full += 1;
+                    }
+                } else if a.len() == c.len() && a.iter().all(|f| c.contains(f)) {
+                    swapped += 1;
+                }
+            }
+        }
+    }
+    assert!(
+        empty > 0 && full > 0 && swapped > 0,
+        "{empty} {full} {swapped}"
+    );
+}
+
 /// A port draw comes from the port tape only, also while the hand tape or
 /// the side tape is swapped in (tape isolation): the other tapes keep all
 /// of their numbers.
