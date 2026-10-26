@@ -2583,60 +2583,61 @@ def targetKeys (ev : Resolve.Expr → M (Option Out)) (sels : List Sel) :
   return keys.toList
 
 /-!
-The key `i` of an index step of a `@TypeOf` operand (section 6.2, **`@TypeOf` order**). It
-evaluates by `ev` in a structural context of the kind `query` (`S016`). Then it is static
+The key `i` of an index step of an operand of the query `q` (section 6.2, **`@TypeOf` order**).
+It evaluates by `ev` in a structural context of the kind `query` (`S016`). Then it is static
 (`S011`): a handle gives "Handle at a static position", and another hardware value gives "Value
 not static".
 -/
-def queryKey (ev : Resolve.Expr → M (Option Out)) (i : Resolve.Expr) : M Value := do
-  let o ← guardedBy (.query .typeOf) do need i (← ev i)
-  staticValue i.pos "a key of `@TypeOf`" o.value
+def queryKey (ev : Resolve.Expr → M (Option Out)) (q : Builtin) (i : Resolve.Expr) :
+    M Value := do
+  let o ← guardedBy (.query q) do need i (← ev i)
+  staticValue i.pos s!"a key of `@{q.name}`" o.value
   static i.pos o.value
 
 /-!
-The steps `sels` of a `@TypeOf` operand from the part `q`, once from the root outward (section
-6.2, **`@TypeOf` order**). Each step charges 1 at its node. Then the key of an index evaluates
-(`queryKey`), and the step selects the part or its type (`queryStep`). A field of an `Instance`
-handle selects the child port with no read (`portFind`, `portQuery`). A field with an index
-after it charges as the **Selection order** of a value: the index node, then the field node. A
+The steps `sels` of an operand of the query `q` from the part `cur`, once from the root outward
+(section 6.2, **`@TypeOf` order**). Each step charges 1 at its node. Then the key of an index
+evaluates (`queryKey`), and the step selects the part or its type (`queryStep`). A field of an
+`Instance` handle selects the child port with no read (`portFind`, `portQuery`). A field with an
+index after it charges as the **Selection order** of a value: the index node, then the field node. A
 field that names a family of the child takes this index as its key. The key evaluates in a
-structural context of the kind `query`. It gets the checks of a selection key (`selectionKey`),
-and it selects the entry of the child (`childPort`). Another field selects its port, and the
-index then takes its key as a step.
+structural context of the kind `query`. It gets the checks of a selection key (`selectionKey`), and
+it selects the entry of the child (`childPort`). Another field selects its port, and the index then
+takes its key as a step.
 -/
-def queryWalk (ev : Resolve.Expr → M (Option Out)) : Query → List Sel → M Query
-  | q, [] => pure q
+def queryWalk (ev : Resolve.Expr → M (Option Out)) (q : Builtin) : Query → List Sel → M Query
+  | cur, [] => pure cur
   | .value v@(.handle (.inst id path iface ty)) _, .field fp f :: .index ip ks :: rest => do
     charge ip 1
     let [k] := ks | fail .S010 ip "an index of a value has one argument"
     charge fp 1
     if let some y ← Elab.childFamily v f then
-      let w ← guardedBy (.query .typeOf) do return (← need k (← ev k)).value
+      let w ← guardedBy (.query q) do return (← need k (← ev k)).value
       let key ← selectionKey fp k.pos f.name w
-      queryWalk ev (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
+      queryWalk ev q (portQuery id path (← childPort k.pos iface ty y f.name key)) rest
     else
       let port ← portFind fp iface ty ((← read).field f.pos) f.name
-      let r ← queryStep (portQuery id path port) (.index ip k.pos (← queryKey ev k))
-      queryWalk ev r rest
+      let r ← queryStep (portQuery id path port) (.index ip k.pos (← queryKey ev q k))
+      queryWalk ev q r rest
   | .value (.handle (.inst id path iface ty)) _, .field fp f :: rest => do
     charge fp 1
     let port ← portFind fp iface ty ((← read).field f.pos) f.name
-    queryWalk ev (portQuery id path port) rest
-  | q, .index p [i] :: rest => do
+    queryWalk ev q (portQuery id path port) rest
+  | cur, .index p [i] :: rest => do
     charge p 1
-    queryWalk ev (← queryStep q (.index p i.pos (← queryKey ev i))) rest
+    queryWalk ev q (← queryStep cur (.index p i.pos (← queryKey ev q i))) rest
   | _, .index p _ :: _ => do
     charge p 1
     fail .S010 p "an index of a value has one argument"
-  | q, .select p r i :: rest => do
+  | cur, .select p r i :: rest => do
     charge p 1
-    queryWalk ev (← queryStep q (.select p r i)) rest
-  | q, .field p f :: rest => do
+    queryWalk ev q (← queryStep cur (.select p r i)) rest
+  | cur, .field p f :: rest => do
     charge p 1
-    queryWalk ev (← queryStep q (.field p ((← read).field f.pos) f.name f.name)) rest
-  | q, .key p b k :: rest => do
+    queryWalk ev q (← queryStep cur (.field p ((← read).field f.pos) f.name f.name)) rest
+  | cur, .key p b k :: rest => do
     charge p 1
-    queryWalk ev (← queryField p b k.pos q (← queryKey ev k)) rest
+    queryWalk ev q (← queryField p b k.pos cur (← queryKey ev q k)) rest
 termination_by _ sels => sels.length
 
 /-!
@@ -2803,7 +2804,7 @@ def sinkValue (p : Pos) (t : Ty) : Val → M Agg
 /-!
 The evaluator. `eval`, `typeExpr`, `stmt`, and `block` are the entry functions. Each charges
 one unit, then calls deeper with the bound `n`. The helpers `name`, `spec`, `index`,
-`indexBase`, `familySel`, `typeOfPart`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`,
+`indexBase`, `familySel`, `queryPart`, `params`, `placeAt`, `args`, `ctor`, `actuals`, `invoke`,
 `call`, `hwStmt`, `entryDecl`, and `instantiate` get the bound `n` of their caller after its
 charge.
 They call entry functions, `spec`, which a name of a struct item uses, and the helpers that
@@ -3017,7 +3018,7 @@ mutual
           let vs ← operands n xs fun _ o => pure o.value
           return some ⟨← variantOf p t j vs, false, none⟩
         | .builtin (.typeOf p x) =>
-          return some ⟨.static (.type (← typeOfPart n p x)), false, none⟩
+          return some ⟨.static (.type (← queryTy p (← queryPart n .typeOf x))), false, none⟩
         | .builtin (.typeInfo p x) => do
           -- Steps 2 to 4 of the `@typeInfo` order (section 6.2): the argument under the guard
           -- `arg` and its record, its kind, then the use of `TypeInfo`.
@@ -3205,7 +3206,7 @@ mutual
   termination_by (n + 1, 0)
 
   /--
-  The type of the place `x` of `@TypeOf` at `p` (sections 5.4, 6.2, and 9.3). The node charged 1.
+  The part of the place `x` of the query `q` (sections 5.4, 6.2, and 9.3). The node charged 1.
   The root resolves with no charge. A local gives its slot and its declared type, if it has one.
   Its steps then run once from the root outward (`queryWalk`). A family root with an index runs
   the selection order. The index node and the name node charge 1 each. Then the key evaluates in
@@ -3213,30 +3214,30 @@ mutual
   "Family as a value". A `const` item gives its value and its annotation as the declared type
   (`constItem`). A root that names no binding evaluates the whole operand as an ordinary
   expression, in the `raw` context and in a structural context of the kind `query`. Its value has
-  no declared type. Then the part gives its type (`queryTy`).
+  no declared type.
   -/
-  def typeOfPart (n : Nat) (p : Pos) (x : Resolve.Expr) : M Ty := do
-    let whole : M Ty := do
-      let o ← guardedBy (.query .typeOf) do need x (← eval n x)
-      queryTy p (.value o.value none)
+  def queryPart (n : Nat) (q : Builtin) (x : Resolve.Expr) : M Query := do
+    let whole : M Query := do
+      let o ← guardedBy (.query q) do need x (← eval n x)
+      pure (.value o.value none)
     match chain x with
     | some (.name rp y r@(.local id), sels) => do
-      let q ← match (← get).frame[id]? with
+      let cur ← match (← get).frame[id]? with
         | some sl => pure (Query.value sl.value (if sl.declared then sl.ty else none))
         | none => do pure (Query.value (← name n rp y r).value none)
-      queryTy p (← queryWalk (eval n) q sels)
-    | some (.name rp y (.family id _), .index q ks :: sels) => do
-      charge q 1
-      let [k] := ks | fail .S010 q "an index of a value has one argument"
+      queryWalk (eval n) q cur sels
+    | some (.name rp y (.family id _), .index ip ks :: sels) => do
+      charge ip 1
+      let [k] := ks | fail .S010 ip "an index of a value has one argument"
       charge rp 1
-      let v ← guardedBy (.query .typeOf) do return (← need k (← eval n k)).value
+      let v ← guardedBy (.query q) do return (← need k (← eval n k)).value
       let e ← entryVal k.pos y id (← selectionKey rp k.pos y v)
-      queryTy p (← queryWalk (eval n) (.value e none) sels)
+      queryWalk (eval n) q (.value e none) sels
     | some (.name rp y (.family ..), _) => fail .S010 rp (Elab.familyValueText y)
     | some (.name rp y (.item i), sels) => do
       let some (.const cp _ ty v) := (← read).items[i]? | whole
       let (c, t) ← constItem n rp cp y i ty v
-      queryTy p (← queryWalk (eval n) (.value (.static c) (some t)) sels)
+      queryWalk (eval n) q (.value (.static c) (some t)) sels
     | _ => whole
   termination_by (n + 1, 2)
 

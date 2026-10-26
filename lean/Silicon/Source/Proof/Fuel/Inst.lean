@@ -168,18 +168,19 @@ theorem target_f {ev ev' : Resolve.Expr → M (Option Out)}
   unfold target; follows [targetPart_f he]
 
 theorem queryKey_f {ev ev' : Resolve.Expr → M (Option Out)}
-    (he : ∀ e, Follows cap (ev e) (ev' e)) (i : Resolve.Expr) :
-    Follows cap (queryKey ev i) (queryKey ev' i) := by
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (q : Builtin) (i : Resolve.Expr) :
+    Follows cap (queryKey ev q i) (queryKey ev' q i) := by
   unfold queryKey; follows [he, need_f, guardedBy_f, staticValue_f, static_f]
 
 theorem queryWalk_f {ev ev' : Resolve.Expr → M (Option Out)}
-    (he : ∀ e, Follows cap (ev e) (ev' e)) :
-    ∀ (q : Query) (sels : List Sel), Follows cap (queryWalk ev q sels) (queryWalk ev' q sels)
-  | q, [] => by rw [queryWalk.eq_def, queryWalk.eq_def]; follows
-  | q, sel :: rest => by
+    (he : ∀ e, Follows cap (ev e) (ev' e)) (q : Builtin) :
+    ∀ (cur : Query) (sels : List Sel),
+      Follows cap (queryWalk ev q cur sels) (queryWalk ev' q cur sels)
+  | cur, [] => by rw [queryWalk.eq_def, queryWalk.eq_def]; follows
+  | cur, sel :: rest => by
     rw [queryWalk.eq_def, queryWalk.eq_def]
     follows [he, need_f, guardedBy_f, selectionKey_f, childPort_f, portFind_f, childFamily_f,
-      queryKey_f he, queryStep_f, queryField_f, queryWalk_f he]
+      queryKey_f he, queryStep_f, queryField_f, queryWalk_f he q]
 termination_by _ sels => sels.length
 decreasing_by all_goals simp_all <;> omega
 
@@ -212,11 +213,11 @@ theorem familySel_f (he : ∀ e, Follows m (eval k e) (eval m e)) (p np : Pos) (
   rw [familySel.eq_def k, familySel.eq_def m]
   follows [he, need_f, guardedBy_f, selectionKey_f, entryAt_f]
 
-theorem typeOfPart_f (he : ∀ e, Follows m (eval k e) (eval m e))
-    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (p : Pos) (x : Resolve.Expr) :
-    Follows m (typeOfPart k p x) (typeOfPart m p x) := by
-  rw [typeOfPart.eq_def k, typeOfPart.eq_def m]
-  follows [he, name_f he ht, constItem_f he ht, queryWalk_f he, queryTy_f, need_f, guardedBy_f,
+theorem queryPart_f (he : ∀ e, Follows m (eval k e) (eval m e))
+    (ht : ∀ t, Follows m (typeExpr k t) (typeExpr m t)) (q : Builtin) (x : Resolve.Expr) :
+    Follows m (queryPart k q x) (queryPart m q x) := by
+  rw [queryPart.eq_def k, queryPart.eq_def m]
+  follows [he, name_f he ht, constItem_f he ht, queryWalk_f he, need_f, guardedBy_f,
     selectionKey_f, entryVal_f]
 
 theorem entryDecl_f (he : ∀ e, Follows m (eval k e) (eval m e))
@@ -270,7 +271,7 @@ theorem follows_all : ∀ n,
           enumUse_f (he k) (ht k), variantOf_f,
           operands_f (he k), comparable_f, params_f (ht k), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
-          familySel_f (he k), typeOfPart_f (he k) (ht k), staticValue_f, fieldOut_f,
+          familySel_f (he k), queryPart_f (he k) (ht k), queryTy_f, staticValue_f, fieldOut_f,
           argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f,
           structArg_f, generated_f, atUse_f, conformVal_f]
       · rw [eval.eq_def (k + 1), eval.eq_def (m + 1)]
@@ -284,7 +285,7 @@ theorem follows_all : ∀ n,
           enumUse_f (he m) (ht m), variantOf_f,
           operands_f (he m), comparable_f, params_f (ht m), fnTy_f, structural_f, scrutTy_f,
           matchArms_f, binderTys_f, bindArm_f, scrutParts_f, shared_f, matchHw_f,
-          familySel_f (he m), typeOfPart_f (he m) (ht m), staticValue_f, fieldOut_f,
+          familySel_f (he m), queryPart_f (he m) (ht m), queryTy_f, staticValue_f, fieldOut_f,
           argNode_f, onPlace_f, operand_f, argElement_f, guardedBy_f, typeInfoArg_f, typeInfo_f,
           structArg_f, generated_f, atUse_f, conformVal_f]
     · rcases n' with _ | m

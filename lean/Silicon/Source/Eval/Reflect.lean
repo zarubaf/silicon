@@ -2,7 +2,7 @@
 import Silicon.Source.Eval.Container
 
 /-!
-The type steps of `@TypeOf(x)` (sections 5.4 and 9.3). `Eval.typeOfPart` resolves the root of
+The type steps of `@TypeOf(x)` (sections 5.4 and 9.3). `Eval.queryPart` resolves the root of
 the place `x`. `Eval.queryWalk` charges each step and evaluates its key in a structural context
 of the kind `query`. Then the step runs here. The walk goes once from the root outward.
 
