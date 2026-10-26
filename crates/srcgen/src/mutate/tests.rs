@@ -84,17 +84,22 @@ fn all(p: &Program, kind: Kind) -> Vec<Mutant> {
 }
 
 /// A draw that picks `kind`: the kinds of ports come from the draws that
-/// leave the remainder `PORT_ODDS - 1`, and the others from the draws that
-/// leave another remainder.
+/// leave the remainder `PORT_ODDS - 1`, the kinds of `@field` from the
+/// others with the remainder `FIELD_ODDS - 1` of the quotient, and the
+/// other kinds from the rest.
 fn index(kind: Kind) -> u32 {
     let at = KINDS.iter().position(|&k| k == kind).unwrap();
-    let old = KINDS.len() - PORT_KINDS;
-    let draw = if at >= old {
-        (at - old) * PORT_ODDS + PORT_ODDS - 1
+    let draw = if at >= OLD_KINDS + PORT_KINDS {
+        let nth = at - OLD_KINDS - PORT_KINDS;
+        (nth * FIELD_ODDS + FIELD_ODDS - 1) * PORT_ODDS
+    } else if at >= OLD_KINDS {
+        (at - OLD_KINDS) * PORT_ODDS + PORT_ODDS - 1
     } else {
-        (0..PORT_ODDS)
-            .map(|t| at + old * t)
-            .find(|d| d % PORT_ODDS != PORT_ODDS - 1)
+        (0..PORT_ODDS * FIELD_ODDS)
+            .map(|t| at + OLD_KINDS * t)
+            .find(|d| {
+                d % PORT_ODDS != PORT_ODDS - 1 && (d / PORT_ODDS) % FIELD_ODDS != FIELD_ODDS - 1
+            })
             .unwrap()
     };
     u32::try_from(draw).unwrap()
@@ -477,7 +482,7 @@ fn predictions_are_frequent() {
     );
     assert_eq!(
         codes.into_iter().collect::<Vec<_>>(),
-        ["S002", "S003", "S007", "S018", "S019"]
+        ["S002", "S003", "S007", "S018"]
     );
 }
 
@@ -2102,4 +2107,54 @@ fn the_fixed_set_of_mutants_reaches_the_codes_of_ports() {
         untaken >= 5,
         "{untaken} families with no declaration that runs: {counts:?}"
     );
+}
+
+/// The kinds of `@field`, with the code that their mutants predict.
+const FIELD_CODES: [(Kind, &[&str]); 11] = [
+    (Kind::FieldKeyType, &["S010"]),
+    (Kind::NoField, &["S010"]),
+    (Kind::FieldRange, &["S012", "S013"]),
+    (Kind::FieldBase, &["S010"]),
+    (Kind::EnumField, &["S010"]),
+    (Kind::KeyNotStatic, &["S005"]),
+    (Kind::ReadInput, &["S017"]),
+    (Kind::FamilyValue, &["S010"]),
+    (Kind::ScalarKeyIndex, &["S022"]),
+    (Kind::TargetKey, &["S016"]),
+    (Kind::EarlyStep, &["S013"]),
+];
+
+/// Each kind of `@field` gets at least 5 predictions over the fixed
+/// programs, and each prediction is one of its codes.
+#[test]
+fn the_kinds_of_field_get_predictions() {
+    let ps = programs();
+    for (kind, codes) in FIELD_CODES {
+        let mut predicted = 0;
+        for p in &ps {
+            for site in 0..sites(kind, &p.items, &p.top).min(4) {
+                let m = mutate(p, index(kind), u32::try_from(site).unwrap());
+                if let Some(code) = m.expect {
+                    assert!(codes.contains(&code), "{kind:?} predicted {code}");
+                    predicted += 1;
+                }
+            }
+        }
+        assert!(predicted >= 5, "{kind:?} predicted {predicted} mutants");
+    }
+}
+
+/// A key of more than 64 characters occurs in a mutant of `NoField`, which
+/// both front ends cut in their messages (section 5.5, #386).
+#[test]
+fn a_missing_key_is_sometimes_longer_than_64_characters() {
+    let long = "a".repeat(70);
+    let found = programs().iter().any(|p| {
+        (0..sites(Kind::NoField, &p.items, &p.top)).any(|s| {
+            mutate(p, index(Kind::NoField), u32::try_from(s).unwrap())
+                .text
+                .contains(&long)
+        })
+    });
+    assert!(found);
 }
