@@ -375,15 +375,23 @@ def userFieldInfo : Ty → Bool
   | .struct _ "FieldInfo" _ _ .user => true
   | _ => false
 
+/-! The name and the type of a `FieldInfo` record. -/
+def fieldOf : Value → Option (String × Ty)
+  | .record _ ⟨[.str x, .type t]⟩ => some (x, t)
+  | _ => none
+
 /-!
-The records of the argument `v` of `@Struct` at the argument `pos` (section 6.2, **`@Struct`
-order**, step 4). A `List[FieldInfo]` or a `[FieldInfo; N]` of the prelude `FieldInfo` gives its
-records. A value of a user `FieldInfo`, also as the element type, is "User `FieldInfo` in
-`@Struct`". Each other value is "Argument of `@Struct`". The check reads only the type of `v`.
+The fields of the argument `v` of `@Struct` at the argument `pos` (section 6.2, **`@Struct`
+order**, step 4). A `List[FieldInfo]` or a `[FieldInfo; N]` of the prelude `FieldInfo` gives the
+name and the type of each record. A value of a user `FieldInfo`, also as the element type, is
+"User `FieldInfo` in `@Struct`". Each other value is "Argument of `@Struct`". The check reads the
+type of `v` and the two parts of each record, and it charges nothing.
 -/
-def structArg (pos : Pos) (v : Val) : M (List Value) := do
+def structArg (pos : Pos) (v : Val) : M (List (String × Ty)) := do
   match v with
-  | .static (.array t xs) | .static (.list t xs) => if preludeFieldInfo t then return xs.toList
+  | .static (.array t xs) | .static (.list t xs) =>
+    if preludeFieldInfo t then
+      if let some fs := xs.toList.mapM fieldOf then return fs
   | _ => pure ()
   let user := match v.ty? with
     | some (.array e _) | some (.list e) => userFieldInfo e
@@ -396,25 +404,18 @@ def structArg (pos : Pos) (v : Val) : M (List Value) := do
   fail .S010 pos (s!"`@Struct` takes a `List[FieldInfo]` or a `[FieldInfo; N]`, not {v.about}; " ++
     "build each field with the prelude `FieldInfo(name, ty)`")
 
-/-! The name and the type of a `FieldInfo` record. -/
-def fieldOf : Value → Option (String × Ty)
-  | .record _ ⟨[.str x, .type t]⟩ => some (x, t)
-  | _ => none
-
 /-!
-The fields of the records `xs` of the argument of `@Struct` at its `@` `p`, after the fields
-`fs` with the member map `ms` (section 6.2, **`@Struct` order**, step 5). Each name charges its
-size as a string, which counts characters. Then it gets the name rule (`S022`) and its symbol
-(`symbolOf`). The symbol goes into the member map, and a symbol that the map holds is `S022`
-"Second field name", with the two indices from 0. The typed use of the argument gave each record
-the type `FieldInfo`, so each record holds a name and a type.
+The fields `xs` of the argument of `@Struct` at its `@` `p`, after the fields `fs` with the member
+map `ms` (section 6.2, **`@Struct` order**, step 5). Each name charges its size as a string, which
+counts characters. Then it gets the name rule (`S022`) and its symbol (`symbolOf`). The symbol
+goes into the member map, and a symbol that the map holds is `S022` "Second field name", with the
+two indices from 0.
 -/
 def genFields (p : Pos) :
-    List Value → Std.TreeMap Nat Nat compare → Array (String × Ty) →
+    List (String × Ty) → Std.TreeMap Nat Nat compare → Array (String × Ty) →
       M (Std.TreeMap Nat Nat compare × Array (String × Ty))
   | [], ms, fs => pure (ms, fs)
-  | x :: xs, ms, fs => do
-    let some (name, t) := fieldOf x | fail .S010 p s!"{x.literal} has no entry"
+  | (name, t) :: xs, ms, fs => do
     charge p (Value.str name).size
     nameRule p name "field"
     let y ← symbolOf name
@@ -424,14 +425,14 @@ def genFields (p : Pos) :
     genFields p xs (ms.insert y fs.size) (fs.push (name, t))
 
 /-!
-The generated record type of the records `xs` at the `@` `p` (section 6.2, **`@Struct` order**,
+The generated record type of the fields `xs` at the `@` `p` (section 6.2, **`@Struct` order**,
 steps 5 to 9). After the fields (`genFields`), the metadata gets its size limit and its depth
 check (`S015`), as for a tuple type. Then the size of the new type term charges, then the
 metadata sums. The look-up in the table of generated record types comes last
 (`Specs.generate`), so a hit charges the same as a miss. The walk reads the stored metadata of
 each field type, and it never goes into a field type.
 -/
-def generated (p : Pos) (xs : List Value) : M Ty := do
+def generated (p : Pos) (xs : List (String × Ty)) : M Ty := do
   let (ms, fs) ← genFields p xs {} #[]
   let fs := fs.toList
   let parts := fs.map (·.2.info)

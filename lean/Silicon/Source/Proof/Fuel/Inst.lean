@@ -67,14 +67,14 @@ theorem nameRule_f (p : Pos) (x kind : String) : Follows cap (nameRule p x kind)
 theorem structArg_f (p : Pos) (v : Val) : Follows cap (structArg p v) (structArg p v) := by
   unfold structArg; follows
 
-theorem genFields_f (p : Pos) : ∀ (xs : List Value) (ms : Std.TreeMap Nat Nat compare)
+theorem genFields_f (p : Pos) : ∀ (xs : List (String × Ty)) (ms : Std.TreeMap Nat Nat compare)
     (fs : Array (String × Ty)), Follows cap (genFields p xs ms fs) (genFields p xs ms fs)
   | [], ms, fs => by rw [genFields]; follows
-  | x :: xs, ms, fs => by
+  | _ :: xs, ms, fs => by
     rw [genFields]
     follows [nameRule_f, symbolOf_f, fun ms fs => genFields_f p xs ms fs]
 
-theorem generated_f (p : Pos) (xs : List Value) :
+theorem generated_f (p : Pos) (xs : List (String × Ty)) :
     Follows cap (generated p xs) (generated p xs) := by
   unfold generated; follows [genFields_f, bounded_f, sums_f]
 
