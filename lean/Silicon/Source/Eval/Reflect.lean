@@ -455,12 +455,16 @@ def generated (p : Pos) (xs : List (String × Ty)) : M Ty := do
 
 /-!
 The fix `{h}` of "`@ports` of a non-instance" for the part `q` (section 6.2). It reads only the
-part and its type. The three cases are a container of a type with the handle flag, a `Type`
-value of an `Instance` type, and each other part.
+part and its type. The three cases are an array or a list of an `Instance` element type, a
+`Type` value of an `Instance` type, and each other part. A container of registers or wires has
+the handle flag too, so the element type decides, not the flag.
 -/
 def portsHint : Query → String
   | .value (.agg a) _ =>
-    if a.ty?.any (·.info.handles) then "select one instance, for example `xs[0]`" else instHint
+    match a.ty? with
+    | some (.array (.inst ..) _) | some (.list (.inst ..)) =>
+      "select one instance, for example `xs[0]`"
+    | _ => instHint
   | .value (.static (.type (.inst ..))) _ =>
     "a type has no ports; pass the handle of `instance u = M(...);`"
   | _ => instHint
