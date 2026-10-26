@@ -32,10 +32,7 @@ rust | S012 Memory depth out of range | 314
 lean | S010 `@ports` of a non-instance | 346
 rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
-rust | S022 Second field name | 381
 rust | S010 Builtin as a type | 381
-rust | S010 Argument of `@Struct` | 381
-rust | S010 User `FieldInfo` in `@Struct` | 381
 unlisted | S001 a comparison does not chain | 354
 unlisted | S001 a comparison does not chain; use parentheses | 354
 unlisted | S001 a parameter of a function type has no `comptime` | 354
@@ -310,7 +307,6 @@ unlisted | S017 unscannable lean/Silicon/Source/Eval.lean | 354
 unlisted | S017 unscannable lean/Silicon/Source/Eval/Container.lean | 354
 unlisted | S018 unscannable crates/elab/src/eval/inst/bind.rs | 354
 unlisted | S018 unscannable lean/Silicon/Source/Eval/Inst.lean | 354
-unlisted | S019 the constant `{}` depends on itself | 354
 unlisted | S019 the enum `{}` depends on itself | 354
 unlisted | S019 the instantiation of `{}` is not in the table | 354
 unlisted | S019 the parameter types of `{}` depend on `{}` | 354
