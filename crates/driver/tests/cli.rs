@@ -1013,6 +1013,30 @@ fn eval_of_a_port_in_a_helper_is_s011_with_the_function_that_declares() -> Test 
     Ok(())
 }
 
+/// A field of a generated record type, read in a top expression. The top expression has no
+/// symbols for its fields, so the look-up goes by the name.
+#[test]
+fn eval_reads_a_field_of_a_generated_record_type() -> Test {
+    let src = "type G = @Struct([FieldInfo(\"a\", UInt[8]), FieldInfo(\"b\", Bool)]);\n\
+               const X: G = G(3, true);\n";
+    let cases = [
+        ("X.a", "(uint 8 3)\n"),
+        ("X.b", "(bool true)\n"),
+        ("G(4, false).a", "(uint 8 4)\n"),
+        ("@TypeOf(X.a) == UInt[8]", "(bool true)\n"),
+        (
+            "@Struct([FieldInfo(\"zz\", Bool)])(true).zz",
+            "(bool true)\n",
+        ),
+    ];
+    for (expr, expected) in cases {
+        let path = file("eval-generated-field.si", src.as_bytes())?;
+        let out = agree("eval", &[expr], &path)?;
+        assert_eq!(text(&out), expected, "{expr}");
+    }
+    Ok(())
+}
+
 /// Runs `silicon cost FILE --top TOP` with the flags `flags`. Each call has its own file.
 fn cost(src: &str, top: &str, flags: &[&str]) -> std::io::Result<(String, Option<i32>)> {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
