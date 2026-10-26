@@ -12,6 +12,8 @@ use syntax::SyntaxKind;
 /// the `S022` "Name rule", and a keyword is the `S022` "Keyword name" (section 6.2). The caller
 /// charges the size of `s` first.
 pub(super) fn name_rule(pos: Pos, s: &str, kind: &str) -> Res<()> {
+    #[cfg(test)]
+    crate::counters::add(crate::counters::Count::Scanned, s.chars().count() as u64);
     if !syntax::is_identifier(s) {
         return fail(
             Code::S022,

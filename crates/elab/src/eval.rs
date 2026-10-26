@@ -26,6 +26,7 @@ mod call;
 mod container;
 mod data;
 mod field;
+mod generate;
 mod handle;
 mod hwops;
 mod info;
@@ -978,15 +979,10 @@ impl Evaluator<'_> {
                 pos,
                 args: BuiltinArgs::TypeInfo(arg),
             } => Ok(Some(self.type_info(*pos, arg)?)),
-            // TODO(#381): evaluate `@Struct` (design section 9.3).
             Expr::Builtin {
                 pos,
-                args: BuiltinArgs::Struct(_),
-            } => fail(
-                Code::S004,
-                *pos,
-                "a builtin is not supported yet".to_owned(),
-            ),
+                args: BuiltinArgs::Struct(arg),
+            } => Ok(Some(self.struct_builtin(*pos, arg)?)),
             Expr::Unary { pos, op, arg } => self.unary_expr(*pos, *op, arg),
             Expr::Binary {
                 pos,
