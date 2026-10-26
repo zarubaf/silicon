@@ -4200,4 +4200,46 @@ def genFields : Layout.Fields := Elab.fieldsOf genOnce.1 (Elab.leafFields genOnc
     (Elab.leafFields (genOnce.1.generate [("u", .unit), ("b", .bool)] {}).1)).map (·.toList) ==
   some [(1, "b", .bool)]
 
+/-!
+A builtin in a type position (section 6.2, **Type position order**). It evaluates as an
+expression under the record of a builtin argument. `@TypeOf` and `@Struct` give a type, also as
+the type of a port. A place that is the whole operand reads no value, so `@field` of a handle is
+"Builtin as a type" at the `@`. A hardware condition in the operand is `S011` at its node. An
+index after the builtin is `S007` in pass 4.
+-/
+#guard tyRecords "  let x: UInt[8] = s;\n  let y: @TypeOf(x) = x;\n" == ["ok"]
+#guard tyRecords "  let rs = [rg, rg];\n  let y: @field(rs, 0) = i;\n" == ["S010 22:10"]
+#guard said (tyMod "  let rs = [rg, rg];\n  let y: @field(rs, 0) = i;\n") ==
+  "a type position needs a `Type`, but `@field` gives a handle of `Reg[P]`; select a part of " ++
+    "type `Type`, or write `@TypeOf(@field(x, k))` for the type of the part"
+#guard tyRecords "  let ts = [P, P];\n  let y: @field(if (rg.b.0) { ts } else { ts }, 0) = i;\n" ==
+  ["S011 22:21"]
+#guard said (tyMod "  let t: @typeInfo(P) = i;\n") ==
+  "a type position needs a `Type`, but `@typeInfo` gives a value of `TypeInfo`; select a " ++
+    "`Type` from it, for example `@field(@typeInfo(T), \"element\")`"
+#guard tyRecords "  let y: @Struct([FieldInfo(\"a\", Bool)])[2] = i;\n" == ["S007 21:10"]
+#guard tyRecords "  let y: @Struct(if (rg.b.0) { [] } else { [] }) = i;\n" == ["S011 21:22"]
+-- The guard kind `arg` of `@Struct` names the builtin in its `S016` text.
+#guard said (tyMod "  let t = @Struct(fd());\n"
+    "fn fd() -> [FieldInfo; 0] { diagnostic(\"a\", 0); return []; }\n") ==
+  "an argument of `@Struct` has no graph effect such as `diagnostic`; call `diagnostic` " ++
+    "before `@Struct`, keep the result in a `let`, and use that name in the argument"
+def gsPort : String :=
+  "type G = @Struct([FieldInfo(\"a\", UInt[8]), FieldInfo(\"b\", Bool)]);\n" ++
+  "module M() {\n  input a: UInt[8];\n  output y: G;\n  y := G(a, true);\n}\n"
+#guard (elabOnly gsPort "M").startsWith "ok"
+
+/-!
+A generated record type as a module argument (section 7.1): the emitted name has the digest form.
+The child makes the type of the same list again and gets the type of its argument.
+-/
+def gsArg : String :=
+  "module C(comptime T: Type) {\n  input a: T;\n  output y: Bool;\n  y := a.b;\n" ++
+  "  static_assert(T == @Struct([FieldInfo(\"b\", Bool)]), \"same\");\n}\n" ++
+  "module M() {\n  input a: Bool;\n  output y: Bool;\n" ++
+  "  instance u = C(@Struct([FieldInfo(\"b\", Bool)]));\n" ++
+  "  u.a := @Struct([FieldInfo(\"b\", Bool)])(a);\n  y := u.y;\n}\n"
+#guard order gsArg "M" == ["C$0h" ++ Names.sha16
+    "(instantiation root C ((type (gstruct ((\"b\" bool))))))", "M"]
+
 end Silicon.Source.Test.Elab
