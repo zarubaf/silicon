@@ -815,6 +815,19 @@ builtin is `S007` "Index of a builtin type" at the `@`, at 1, 2, and 3 levels.
   "`@Struct(...)` in a type position takes 0 argument(s), but it has 2; the type is " ++
     "complete, so remove the index"
 
+/-!
+`@typeInfo` gives a record and `@field` any part, so their index in a type has the fix of the
+builtin (section 6.2).
+-/
+#guard fails (modBody "let y: @typeInfo(Bool)[1] = 0;") .S007 2 8
+#guard message (modBody "let y: @typeInfo(Bool)[1] = 0;") ==
+  "`@typeInfo(...)` in a type position takes 0 argument(s), but it has 1; `@typeInfo` gives a " ++
+    "record, so remove the index, and select a `Type` from the record, for example " ++
+    "`@field(@typeInfo(T), \"element\")`"
+#guard message (modBody "let xs = [Bool];\nlet y: @field(xs, 0)[1, 2] = 0;") ==
+  "`@field(...)` in a type position takes 0 argument(s), but it has 2; remove the index, or " ++
+    "select inside `@field`, for example `@field(@field(x, k), i)`"
+
 /-! `@ports` gives a list and not a type, so its index in a type has its own text (section 6.2). -/
 #guard fails (modBody "let u = 1;\nlet y: @ports(u)[0] = 0;") .S007 3 8
 #guard message (modBody "let u = 1;\nlet y: @ports(u)[0][1] = 0;") ==
