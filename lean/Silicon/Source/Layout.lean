@@ -102,9 +102,7 @@ with the values of its leaves in packing order. The domain ports stay in their o
 before `d$0rst`.
 -/
 def arrange (domain : List α) (ps : Array (Elab.PortDecl × Array α)) : Ports α :=
-  let ident (q : Elab.PortDecl) : String × PortId := (q.name, q.sym, q.key)
-  let sorted := (ps.qsort fun x y => portBefore (ident x.1) (ident y.1)).toList
-  let leaves (input : Bool) := (sorted.filter (·.1.input == input)).flatMap (·.2.toList)
-  ⟨domain ++ leaves true, leaves false⟩
+  let (ins, outs) := Elab.layoutOrder ps (·.1)
+  ⟨domain ++ ins.flatMap (·.2.toList), outs.flatMap (·.2.toList)⟩
 
 end Silicon.Source.Layout

@@ -264,7 +264,7 @@ def Port.id (q : Port) : PortId := (q.sym, q.key)
 /-!
 The order of two ports by their public names and their identities (section 7.5). The name
 sorts first, then the key as a number, with no key first. One symbol is one name, so the names
-compare only when the symbols differ. The port layout sorts with it (`Layout.arrange`).
+compare only when the symbols differ. The port layout sorts with it (`layoutOrder`).
 -/
 def portBefore : String × PortId → String × PortId → Bool
   | (x, s, k), (y, t, l) =>
@@ -293,7 +293,9 @@ def Port.core (q : Port) : Name :=
 
 /-!
 The interface of a done instantiation: its emitted name, its ports by their identity, its
-number of inputs, and its domain. A combinational module has no domain. `families` gives the
+number of inputs, and its domain. A combinational module has no domain. `schema` holds each
+port in the order of the port layout (section 7.5), also an empty port. The interface fills it
+once, so no query sorts. `families` gives the
 direction of each port family by the symbol of its name, `true` for an input. It also gives the
 position of the first declaration. It holds each family that the resolver found in the module,
 also without an entry. It holds a family of a helper or a `PortKey` only with an entry (section
@@ -302,6 +304,7 @@ also without an entry. It holds a family of a helper or a `PortKey` only with an
 structure Iface where
   name : Names.Name
   ports : Std.HashMap PortId Port
+  schema : Array Port
   inputs : Nat
   domain : Option String
   families : Std.HashMap Nat (Bool × Pos)
@@ -974,6 +977,16 @@ def PortDecl.path (q : PortDecl) : Path :=
   match q.key with
   | some k => ⟨q.name, [.family k]⟩
   | none => ⟨q.name, []⟩
+
+/-!
+The parts `ps` in the order of the port layout (section 7.5). `decl` gives the port of a part.
+The inputs come first, then the outputs, each in the order of `portBefore`. The layout of the
+lowering (`Layout.arrange`) and the schema of an interface (`iface`) take this one order.
+-/
+def layoutOrder (ps : Array α) (decl : α → PortDecl) : List α × List α :=
+  let ident (x : α) : String × PortId := ((decl x).name, (decl x).sym, (decl x).key)
+  let sorted := (ps.qsort fun x y => portBefore (ident x) (ident y)).toList
+  (sorted.filter fun x => (decl x).input, sorted.filter fun x => !(decl x).input)
 
 structure RegDecl where
   path : Path

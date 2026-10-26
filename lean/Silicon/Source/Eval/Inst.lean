@@ -475,13 +475,15 @@ def bindings : Eval.M Unit := do
 /-!
 The interface of a done instantiation with the port families `fams` of its module and the table
 of public names `pub` of its body (section 5.6). It holds the entries that the body declared at
-run time, and each family of `fams` or of `pub`.
+run time, and each family of `fams` or of `pub`. Its schema sorts the ports once, in the order of
+the port layout (`layoutOrder`).
 -/
 def iface (name : Name) (b : Body) (fams : Std.HashMap Nat (Bool × Pos))
     (pub : Std.HashMap Nat (Public × Pos × Nat)) : Iface :=
-  ⟨name,
-   b.ports.zipIdx.foldl (fun m (q, j) =>
-     m.insert (q.sym, q.key) ⟨q.name, q.sym, q.key, q.input, q.ty, q.pos, j⟩) {},
+  let ps := b.ports.zipIdx.map fun (q, j) =>
+    (q, (⟨q.name, q.sym, q.key, q.input, q.ty, q.pos, j⟩ : Port))
+  let (ins, outs) := layoutOrder ps (·.1)
+  ⟨name, ps.foldl (fun m (_, q) => m.insert q.id q) {}, ((ins ++ outs).map (·.2)).toArray,
    (b.ports.filter (·.input)).size, b.domain,
    pub.fold (init := fams) fun m y (f, p, _) => match f with
      | .family i => m.insert y (i, p)
