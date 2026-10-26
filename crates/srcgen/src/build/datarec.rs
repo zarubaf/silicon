@@ -19,10 +19,10 @@
 //! A group draws from its own tape alone, and every group holds at least
 //! one `@field`, so a program without one is the program of the other tapes.
 
-use super::hw::{Want, literal_ty};
+use super::hw::{DEPTH, Want, literal_ty};
 use super::stat::Reach;
 use super::stat::{bin, int};
-use super::{Builder, Built, Ctx, Hw, Lane, Module};
+use super::{Builder, Built, Ctx, Helper, Hw, Lane, Module};
 use crate::program::{FieldTy, HExpr, Item, Place, SBin, SExpr, Scalar, Stmt, StructDef, Ty};
 
 /// One statement of the top frame in this many is followed by a group, and
@@ -60,7 +60,7 @@ impl Builder {
         let envs = ctx.envs.len();
         let id = self.rec_defs.len() / 2;
         let (inner, outer) = (format!("I{id}"), format!("R{id}"));
-        let leaves: Vec<Scalar> = (0..LEAVES)
+        let mut leaves: Vec<Scalar> = (0..LEAVES)
             .map(|_| {
                 let w = self.tape.between(1, 8);
                 if self.tape.flag() {
@@ -70,6 +70,16 @@ impl Builder {
                 }
             })
             .collect();
+        // Three groups in four, where a helper exists, pass a leaf to a helper with a `mut` formal
+        // of the type of that leaf.
+        let helper = self.record_helper().filter(|_| self.tape.below(4) != 0);
+        let mut_leaf = helper.as_ref().map(|(_, root)| {
+            let at = 1 + self.tape.index(2);
+            if let Some(slot) = leaves.get_mut(at) {
+                *slot = *root;
+            }
+            at
+        });
         let field = |t: Scalar| match t {
             Scalar::SInt(_) => FieldTy::SInt(width(t)),
             _ => FieldTy::UInt(width(t)),
@@ -91,7 +101,27 @@ impl Builder {
                 ("d1".to_owned(), field(at(2))),
             ],
         });
-        let register = m.clocked && self.tape.flag();
+        if let (Some((h, _)), Some(at)) = (&helper, mut_leaf) {
+            let name = m.names.fresh("v");
+            let [x, y, z] = [0, 1, 2]
+                .map(|i| self.driver_at(ctx, &Want::uniform(at_leaf(&leaves, i), envs), 2));
+            let value = HExpr::Record(
+                outer.clone(),
+                vec![HExpr::Record(inner.clone(), vec![x, y]), z],
+            );
+            out.push(Stmt::Let {
+                name: name.clone(),
+                mutable: true,
+                ty: Some(Ty::Rec(outer.clone())),
+                value,
+            });
+            self.record_mut_call(ctx, m, (h, &name, at), out);
+            for _ in 0..self.tape.between(1, 2) {
+                self.record_read(ctx, m, &name, (&leaves, envs), out);
+            }
+            return;
+        }
+        let register = m.clocked && self.tape.below(3) != 0;
         let name = m.names.fresh(if register { "r" } else { "w" });
         if register {
             let reach = self.reach(ctx);
@@ -115,6 +145,45 @@ impl Builder {
         }
     }
 
+    /// `let l = g(<leaf>, e);` or `let l = <leaf>.g(e);`: the leaf `at` of
+    /// the record `name` is the `mut` actual of the helper `h`.
+    fn record_mut_call(
+        &mut self,
+        ctx: &mut Ctx,
+        m: &mut Module,
+        (h, name, at): (&Helper, &str, usize),
+        out: &mut Vec<Stmt>,
+    ) {
+        let envs = ctx.envs.len();
+        let reach = self.reach(ctx);
+        let place = self.record_place(name, at, reach);
+        let (extra_ty, extra) = h.params.get(1).map(|(_, t, s)| (t.clone(), *s)).unzip();
+        let want = Want {
+            types: vec![extra.unwrap_or(Scalar::Bool); envs],
+            ty: extra_ty,
+        };
+        let arg = self.value(ctx, &want, DEPTH);
+        let call = if self.tape.flag() {
+            HExpr::Receiver(Box::new(place), h.name.clone(), vec![arg])
+        } else {
+            HExpr::Call(h.name.clone(), vec![place, arg])
+        };
+        let result = m.names.fresh("l");
+        out.push(Stmt::Let {
+            name: result.clone(),
+            mutable: false,
+            ty: None,
+            value: call,
+        });
+        ctx.port.push(Hw {
+            expr: HExpr::Name(result),
+            ty: Some(h.ret.0.clone()),
+            types: vec![h.ret.1; envs],
+            mutable: false,
+        });
+        note!(self, rec_mut_calls);
+    }
+
     /// `let l = <leaf>;` for a leaf of the record `name`, read through a
     /// chain of `@field`, and the leaf as a hardware value of the frame.
     fn record_read(
@@ -128,18 +197,7 @@ impl Builder {
         let i = self.tape.index(LEAVES);
         let Some(&t) = leaves.get(i) else { return };
         let r = self.reach(ctx);
-        let root = HExpr::Name(name.to_owned());
-        let read = if i < 2 {
-            // Two steps: the inner record, then its leaf.
-            note!(self, rec_chains);
-            let first = self.leaf_key("d0", r);
-            let base = HExpr::FieldOf(Box::new(root), first);
-            let second = self.leaf_key(&format!("d{i}"), r);
-            HExpr::FieldOf(Box::new(base), second)
-        } else {
-            let key = self.leaf_key("d1", r);
-            HExpr::FieldOf(Box::new(root), key)
-        };
+        let read = self.record_place(name, i, r);
         let local = m.names.fresh("l");
         out.push(Stmt::Let {
             name: local.clone(),
@@ -153,6 +211,36 @@ impl Builder {
             types: vec![t; envs],
             mutable: false,
         });
+    }
+
+    /// The chain of `@field` from the record `name` to its leaf `i`: two
+    /// steps for a leaf of the inner record, one for the other.
+    fn record_place(&mut self, name: &str, i: usize, r: Reach<'_>) -> HExpr {
+        let root = HExpr::Name(name.to_owned());
+        if i < 2 {
+            note!(self, rec_chains);
+            let first = self.leaf_key("d0", r);
+            let base = HExpr::FieldOf(Box::new(root), first);
+            let second = self.leaf_key(&format!("d{i}"), r);
+            HExpr::FieldOf(Box::new(base), second)
+        } else {
+            let key = self.leaf_key("d1", r);
+            HExpr::FieldOf(Box::new(root), key)
+        }
+    }
+
+    /// A helper with a `mut` first formal of a finite integer type, and the
+    /// concrete type of that formal.
+    fn record_helper(&mut self) -> Option<(Helper, Scalar)> {
+        let found: Vec<(Helper, Scalar)> = self
+            .mut_helpers
+            .iter()
+            .filter_map(|h| {
+                let (_, _, root) = h.params.first()?;
+                matches!(root, Scalar::UInt(_) | Scalar::SInt(_)).then(|| (h.clone(), *root))
+            })
+            .collect();
+        found.get(self.tape.index(found.len())).cloned()
     }
 
     /// The key of the leaf of a chain: half of them call a function, so that
@@ -177,6 +265,11 @@ impl Builder {
     }
 }
 
+/// The type of the leaf `i`.
+fn at_leaf(leaves: &[Scalar], i: usize) -> Scalar {
+    leaves.get(i).copied().unwrap_or(Scalar::Bool)
+}
+
 /// The literal width of a leaf.
 fn width(t: Scalar) -> SExpr {
     match t {
@@ -190,8 +283,8 @@ mod tests {
     use super::super::build;
     use super::super::tests::tapes;
 
-    /// A group declares two structs, a wire or a register of the outer one,
-    /// and reads a leaf with `@field`. The twin has one wire or register for
+    /// A group declares two structs, a wire, a register, or a `let mut` of the
+    /// outer one, and reads a leaf with `@field`. The twin has one wire or register for
     /// each leaf and no struct of hardware data.
     #[test]
     fn a_group_declares_a_record_and_the_twin_flattens_it() {
@@ -205,10 +298,7 @@ mod tests {
             found += 1;
             assert!(text.contains("struct I0 {"), "{text}");
             assert!(text.contains(": R0"), "{text}");
-            assert!(
-                text.contains("@field(w") || text.contains("@field(r"),
-                "{text}"
-            );
+            assert!(text.contains("@field("), "{text}");
             let twin = crate::twin(&p).text;
             assert!(!twin.contains("struct R0"), "{twin}");
             assert!(twin.contains("_d1"), "{twin}");
