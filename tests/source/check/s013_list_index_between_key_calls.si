@@ -1,0 +1,22 @@
+// S013: The read `l[0][one()][7][two()]` checks the range of `[7]` after `one()` evaluates and before `two()` evaluates. Only the value of a list gives its length, so the key `one()` evaluates before the walk checks the steps before it, and the failed check of `[7]` takes back the record of `two()` only.
+// TOP M()
+// OBSERVE-COUNT-1: (string "one")
+// OBSERVE-NOT: (string "two")
+fn one() -> Nat {
+    diagnostic("one", 0);
+    return 0;
+}
+fn two() -> Nat {
+    diagnostic("two", 0);
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut l = list(List[List[Int]]);
+    l.push(list(List[Int]));
+    l[0].push(list(Int));
+    // expected-error S013 @+1
+    let z = l[0][one()][7][two()];
+    o := x;
+}
