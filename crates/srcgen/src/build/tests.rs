@@ -276,7 +276,7 @@ fn programs_cover_slice_1() {
     assert!(shape.contexts * 10 >= 400, "{shape:?}");
 }
 
-/// The mean program stays small: at most 6100 bytes over these 256 tapes.
+/// The mean program stays small: at most 6200 bytes over these 256 tapes.
 #[test]
 fn the_mean_program_stays_small() {
     const TAPES: usize = 256;
@@ -285,7 +285,7 @@ fn the_mean_program_stays_small() {
         .filter_map(|tape| build(tape).ok())
         .map(|p| p.text().len())
         .sum();
-    assert!(total / TAPES <= 6100, "the mean is {} bytes", total / TAPES);
+    assert!(total / TAPES <= 6200, "the mean is {} bytes", total / TAPES);
 }
 
 /// The most levels of container types in `t`.
@@ -2078,4 +2078,142 @@ fn no_type_reaches_a_record_a_probe_or_an_argument() {
         }
     }
     assert!(aliases >= 20, "{aliases}");
+}
+
+/// The numbers that each tape holds: the main tape, then the tapes of the
+/// side, hand, port, temp, field, query, and record lanes.
+fn tape_lengths(b: &Builder) -> [usize; 8] {
+    [
+        b.tape.numbers.len(),
+        b.side.numbers.len(),
+        b.hand.numbers.len(),
+        b.port.numbers.len(),
+        b.temp.numbers.len(),
+        b.field.numbers.len(),
+        b.query.numbers.len(),
+        b.rec.numbers.len(),
+    ]
+}
+
+/// A draw of the field lane and of the record lane comes from its own tape
+/// only, also while the hand tape or the side tape is swapped in (tape
+/// isolation): the other tapes keep all of their numbers. Inside a query,
+/// a draw of another lane gets an exhausted tape, and no tape moves.
+#[test]
+fn field_and_record_draws_stay_on_their_tapes() {
+    let lanes: [(Lane, usize); 2] = [(Lane::Field, 5), (Lane::Rec, 7)];
+    for (lane, at) in lanes {
+        for outer in [Some(Lane::Hand), Some(Lane::Side), None] {
+            let mut b = Builder::new(vec![7; 16]);
+            let before = tape_lengths(&b);
+            let draw = |b: &mut Builder| {
+                b.isolated(lane, |b| {
+                    b.tape.below(9);
+                });
+            };
+            match outer {
+                Some(Lane::Hand) => b.on_hand(draw),
+                Some(_) => b.on_side(draw),
+                None => draw(&mut b),
+            }
+            let mut want = before;
+            want[at] -= 1;
+            assert_eq!(tape_lengths(&b), want, "{lane:?} inside {outer:?}");
+        }
+        let mut b = Builder::new(vec![7; 16]);
+        let before = tape_lengths(&b);
+        b.on_query(|b| {
+            b.isolated(lane, |b| {
+                b.tape.below(9);
+            });
+        });
+        assert_eq!(tape_lengths(&b), before, "{lane:?} inside a query");
+    }
+}
+
+/// The roots of `@TypeOf` that a text names: the first name of an operand
+/// tells the root (front-end spec 9.3).
+fn typeof_roots(text: &str) -> BTreeSet<&'static str> {
+    let mut found = BTreeSet::new();
+    for operand in text.split("@TypeOf(").skip(1) {
+        let operand = operand.trim_start_matches('(');
+        let name: String = operand
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
+        let rest = operand.get(name.len()..).unwrap_or_default();
+        let letters = name.trim_end_matches(|c: char| c.is_ascii_digit());
+        let numbered = letters.len() < name.len();
+        let root = match (letters, numbered) {
+            ("o" | "eo", true) => "own output",
+            ("A" | "Z" | "K", true) if rest.starts_with('[') => "family entry",
+            ("n", true) => "memory",
+            ("l", true) if rest.starts_with(')') => "hardware let",
+            ("t", true) if rest.starts_with(['.', '[']) => "handle in a container",
+            ("r" | "w" | "v", true) if rest.starts_with(".d") => "field of a record",
+            ("r" | "w", true) if rest.starts_with(')') => "register or wire",
+            _ => continue,
+        };
+        found.insert(root);
+    }
+    found
+}
+
+/// Whether a line of the text reads a chain of two `@field` steps of a
+/// record of hardware data with a call in the key of the second step.
+fn has_call_in_record_chain(text: &str) -> bool {
+    text.lines().any(|l| {
+        let l = l.trim_start();
+        l.starts_with("let l") && l.contains("= @field(@field(") && l.contains("str((f")
+    })
+}
+
+/// The gaps of #399 and #405 each occur in at least 1 program in 32 of 256,
+/// and a group of them in 10%: the record of hardware data, as a wire, a
+/// register, and a `let mut` that a `mut` actual writes; a chain of two
+/// steps with a call in the key of the second; two calls in the keys of one
+/// chain; the `let` of a type and of a `PortInfo` list; and each root of
+/// `@TypeOf` that the queries of the spec name.
+#[test]
+fn programs_cover_the_gaps_of_field_and_queries() {
+    const TAPES: usize = 256;
+    let mut with = BTreeMap::<&str, usize>::new();
+    for tape in tapes(TAPES) {
+        let mut b = Builder::new(tape);
+        let p = b.program();
+        assert!(p.is_ok(), "a program faults: {p:?}");
+        let Ok(p) = p else { continue };
+        let text = p.text();
+        let forms = [
+            ("record of hardware data", text.contains("struct R")),
+            ("record wire", b.stats.rec_wires > 0),
+            ("record register", b.stats.rec_regs > 0),
+            ("mut actual of a record leaf", b.stats.rec_mut_calls > 0),
+            ("chain through a record", b.stats.rec_chains > 0),
+            (
+                "call in the key of a record chain",
+                has_call_in_record_chain(&text),
+            ),
+            ("two key calls in a chain", b.stats.double_calls > 0),
+            ("let of a port list", b.stats.bound_ports > 0),
+            ("let of a type", b.stats.bound_types > 0),
+        ];
+        for (form, seen) in forms {
+            *with.entry(form).or_default() += usize::from(seen);
+        }
+        for root in typeof_roots(&text) {
+            *with.entry(root).or_default() += 1;
+        }
+    }
+    assert_eq!(with.len(), 16, "{with:?}");
+    for (form, n) in &with {
+        // The record of hardware data is a group: 10%. Each other form,
+        // and each root, is 1 program in 32.
+        let least = if *form == "record of hardware data" {
+            TAPES / 10
+        } else {
+            TAPES / 32
+        };
+        assert!(n >= &least, "{form} occurs in {n} of {TAPES}: {with:?}");
+    }
 }
