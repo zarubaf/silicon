@@ -2224,8 +2224,15 @@ fn the_kinds_of_queries_get_predictions() {
     for (kind, codes) in QUERY_CODES {
         let (mut mutants, mut predicted) = (0, 0);
         for p in &ps {
-            for site in 0..sites(kind, &p.items, &p.top).min(4) {
+            let count = sites(kind, &p.items, &p.top);
+            for site in 0..count.min(4) {
                 let m = mutate(p, index(kind), u32::try_from(site).unwrap());
+                // A kind that falls back to another kind does not count: the
+                // mutant says what its own kind does at the site.
+                let own = apply(kind, &mut p.items.clone(), &p.top, site).map(|(what, _)| what);
+                if own.as_deref() != Some(m.what.as_str()) {
+                    continue;
+                }
                 mutants += 1;
                 if let Some(code) = m.expect {
                     assert!(codes.contains(&code), "{kind:?} predicted {code}");
