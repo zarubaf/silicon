@@ -1,0 +1,26 @@
+// An empty port has a place in the order and a `PortInfo`, with the type `Unit`. The input still needs its binding.
+// TOP M()
+module C() {
+    input e: ();
+    input a: Bool;
+    output z: ();
+    output q: Bool;
+    z := ();
+    q := a;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    u.e := ();
+    u.a := x;
+    let ps = @ports(u);
+    static_assert(len(ps) == 4, "four ports");
+    static_assert(ps[0] == PortInfo(PortKey("a", false, 0), Bool, true, "clock"), "a");
+    static_assert(ps[1] == PortInfo(PortKey("e", false, 0), Unit, true, "clock"), "the empty input");
+    static_assert(ps[2] == PortInfo(PortKey("q", false, 0), Bool, false, "clock"), "q");
+    static_assert(ps[3] == PortInfo(PortKey("z", false, 0), Unit, false, "clock"), "the empty output");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x true) out=(o true)
+// STEP in=(clock$0rst false x false) out=(o false)

@@ -1,0 +1,11 @@
+// S007: `@field` in a type position gives a part of a value, so an index after it is an error. The fix selects inside `@field`.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: Bool;
+    let ts = [UInt[8], Bool];
+    // expected-error S007 @+2
+    // expected-message: `@field(...)` in a type position takes 0 argument(s), but it has 1; remove the index, or select inside `@field`, for example `@field(@field(x, k), i)`
+    let y: @field(ts, 0)[1] = x;
+    o := true;
+}

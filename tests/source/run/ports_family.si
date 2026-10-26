@@ -1,0 +1,29 @@
+// A family gives one `PortInfo` for each entry, in the order of the keys as numbers. The key is indexed, and the name is the family name. A family without an entry gives none.
+// TOP M()
+module C() {
+    input req[10]: UInt[4];
+    input req[2]: UInt[4];
+    input req[1]: UInt[4];
+    input none[0]: Bool;
+    output o: UInt[4];
+    o := req[1] +% req[2] +% req[10];
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.req[1] := x;
+    u.req[2] := x;
+    u.req[10] := x;
+    u.none[0] := true;
+    let ps = @ports(u);
+    static_assert(len(ps) == 5, "five ports");
+    static_assert(ps[0].key == PortKey("none", true, 0), "the family none");
+    static_assert(ps[1].key == PortKey("req", true, 1), "the entry 1");
+    static_assert(ps[2].key == PortKey("req", true, 2), "the entry 2");
+    static_assert(ps[3].key == PortKey("req", true, 10), "the entry 10 after the entry 2");
+    static_assert(ps[4].key == PortKey("o", false, 0), "the output");
+    o := u.o;
+}
+// STEP in=(clock$0rst false x 1) out=(o 3)
+// STEP in=(clock$0rst false x 5) out=(o 15)

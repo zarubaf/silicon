@@ -1,0 +1,21 @@
+// The list is a base of a place: an index, a field, `@field`, and a chain of them select the parts of a `PortInfo`.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    static_assert(@ports(u)[0].key.name == "a", "an index, then fields");
+    static_assert(@field(@ports(u)[1], "ty") == UInt[4], "@field");
+    static_assert(@ports(u)[0].is_input, "the direction");
+    static_assert(!@ports(u)[1].is_input, "the output");
+    static_assert(@field(@ports(u)[0].key, "indexed") == false, "a field of a field");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x 3) out=(o 3)
+// STEP in=(clock$0rst false x 9) out=(o 9)

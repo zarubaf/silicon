@@ -1,0 +1,21 @@
+// S011: A key of the operand is static. A function parameter carries a hardware value there.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+fn pick(us: [Instance[C]; 2], i: UInt[4]) -> Nat {
+    // expected-error S011 @+2
+    // expected-message: a static position needs a static value, not a value of `UInt[4]`; compute the value from static values, for example from constants and `comptime` parameters
+    return len(@ports(us[i]));
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let us = [u, u];
+    let n = pick(us, x);
+    o := u.q;
+}

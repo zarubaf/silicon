@@ -1,0 +1,24 @@
+// A child with parameters gives the ports of its instantiation. The parameter sets the number of entries and the type.
+// TOP M()
+module C(comptime n: Nat, comptime T: Type) {
+    comptime for i in 0..n {
+        input req[i]: T;
+    }
+    output q: T;
+    q := req[0];
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C(3, UInt[4]);
+    comptime for i in 0..3 {
+        u.req[i] := x;
+    }
+    let ps = @ports(u);
+    static_assert(len(ps) == 4, "three entries and the output");
+    static_assert(ps[2].key == PortKey("req", true, 2), "the last entry");
+    static_assert(ps[2].ty == UInt[4], "the parameter type");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x 5) out=(o 5)
+// STEP in=(clock$0rst false x 12) out=(o 12)

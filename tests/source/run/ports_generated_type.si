@@ -1,0 +1,21 @@
+// A port of a generated record type has one `PortInfo` with the whole type. The type equals the one that `@Struct` builds again.
+// TOP M()
+type G = @Struct([FieldInfo("a", UInt[4]), FieldInfo("b", Bool)]);
+module C() {
+    input g: G;
+    output q: G;
+    q := g;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.g := G(x, true);
+    let ps = @ports(u);
+    static_assert(len(ps) == 2, "one entry for each port");
+    static_assert(ps[0].ty == G, "the input type");
+    static_assert(ps[1].ty == @Struct([FieldInfo("a", UInt[4]), FieldInfo("b", Bool)]), "the output type");
+    o := u.q.a;
+}
+// STEP in=(clock$0rst false x 3) out=(o 3)
+// STEP in=(clock$0rst false x 9) out=(o 9)

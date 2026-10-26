@@ -1,0 +1,10 @@
+// S007: `@typeInfo` in a type position gives a record, so an index after it is an error. The fix selects a `Type` from the record.
+// TOP M()
+module M() domains() {
+    input x: UInt[8];
+    output o: Bool;
+    // expected-error S007 @+2
+    // expected-message: `@typeInfo(...)` in a type position takes 0 argument(s), but it has 1; `@typeInfo` gives a record, so remove the index, and select a `Type` from the record, for example `@field(@typeInfo(T), "element")`
+    let y: @typeInfo(Bool)[1] = x;
+    o := true;
+}

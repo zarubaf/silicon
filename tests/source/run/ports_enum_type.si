@@ -1,0 +1,32 @@
+// An enum port and a record port are one entry each, with the whole type. The core leaves do not show.
+// TOP M()
+struct P {
+    a: UInt[4],
+    b: Bool,
+}
+type T2 = (Bool, UInt[2]);
+enum Op: UInt[2] {
+    Add = 0,
+    Load(UInt[8]) = 1,
+}
+module C() {
+    input p: P;
+    input t: T2;
+    output op: Op;
+    op := Op::Add;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.p := P(x, true);
+    u.t := (true, 1);
+    let ps = @ports(u);
+    static_assert(len(ps) == 3, "one entry for each port");
+    static_assert(ps[0].key == PortKey("p", false, 0) && ps[0].ty == P, "the record");
+    static_assert(ps[1].key == PortKey("t", false, 0) && ps[1].ty == T2, "the tuple");
+    static_assert(ps[2].key == PortKey("op", false, 0) && ps[2].ty == Op, "the enum");
+    o := x;
+}
+// STEP in=(clock$0rst false x 3) out=(o 3)
+// STEP in=(clock$0rst false x 9) out=(o 9)

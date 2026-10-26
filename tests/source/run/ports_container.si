@@ -1,0 +1,27 @@
+// The handle comes from a container, by an index and by `@field`. A list of instances grows with `push`, and the element still gives its ports.
+// TOP M()
+module C() {
+    input a: Bool;
+    output q: Bool;
+    q := a;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    instance w = C();
+    u.a := x;
+    w.a := x;
+    let us = [u, w];
+    let mut ls = list(Instance[C]);
+    push(ls, u);
+    static_assert(len(@ports(us[1])) == 2, "an index");
+    static_assert(len(@ports(@field(us, 0))) == 2, "@field");
+    static_assert(len(@ports(ls[0])) == 2, "a list");
+    comptime for i in 0..2 {
+        static_assert(@ports(us[i])[1].key == PortKey("q", false, 0), "a loop index");
+    }
+    o := w.q;
+}
+// STEP in=(clock$0rst false x true) out=(o true)
+// STEP in=(clock$0rst false x false) out=(o false)

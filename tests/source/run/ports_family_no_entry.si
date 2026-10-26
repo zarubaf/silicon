@@ -1,0 +1,23 @@
+// A family that has no entry gives no `PortInfo`. The loop declares no entry, so the child has the one port `a`.
+// TOP M()
+module C() {
+    input a: Bool;
+    output q: Bool;
+    comptime for i in 0..0 {
+        input req[i]: Bool;
+    }
+    q := a;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    let ps = @ports(u);
+    static_assert(len(ps) == 2, "the family gives none");
+    static_assert(ps[0].key == PortKey("a", false, 0), "a");
+    static_assert(ps[1].key == PortKey("q", false, 0), "q");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x true) out=(o true)
+// STEP in=(clock$0rst false x false) out=(o false)

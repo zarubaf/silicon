@@ -1,0 +1,22 @@
+// A child without a `domains` clause has the domain `clock`.
+// TOP M()
+module C() {
+    input a: Bool;
+    output q: Bool;
+    reg r: Bool = false;
+    r := a;
+    q := r;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    let ps = @ports(u);
+    static_assert(ps[0].domain == "clock", "the input");
+    static_assert(ps[1].domain == "clock", "the output");
+    o := u.q;
+}
+// STEP in=(clock$0rst true x false) out=(o false)
+// STEP in=(clock$0rst false x true) out=(o false)
+// STEP in=(clock$0rst false x false) out=(o true)

@@ -1,0 +1,25 @@
+// A wrapper declares one port for each `PortInfo` of the child. The key of the info is the `as` key, and the type is the data type. It binds the inputs and reads the outputs with `@field(u, p.key)`.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    input req[2]: UInt[4];
+    output q: UInt[4];
+    output gnt[2]: UInt[4];
+    q := a;
+    gnt[2] := req[2];
+}
+module M() {
+    instance u = C();
+    let ps = @ports(u);
+    comptime for i in 0..len(ps) {
+        comptime if (ps[i].is_input) {
+            input x: @field(ps[i], "ty") as ps[i].key;
+            @field(u, ps[i].key) := x;
+        } else {
+            output y: @field(ps[i], "ty") as ps[i].key;
+            y := @field(u, ps[i].key);
+        }
+    }
+}
+// STEP in=(clock$0rst false a 3 req[2] 5) out=(gnt[2] 5 q 3)
+// STEP in=(clock$0rst false a 9 req[2] 1) out=(gnt[2] 1 q 9)

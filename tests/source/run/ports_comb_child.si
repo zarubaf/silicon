@@ -1,0 +1,19 @@
+// A combinational child has the clause `domains()`, so the domain of its ports is the empty string.
+// TOP M()
+module C() domains() {
+    input a: Bool;
+    output q: Bool;
+    q := !a;
+}
+module M() {
+    input x: Bool;
+    output o: Bool;
+    instance u = C();
+    u.a := x;
+    let ps = @ports(u);
+    static_assert(ps[0].domain == "", "the input");
+    static_assert(ps[1].domain == "", "the output");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x true) out=(o false)
+// STEP in=(clock$0rst false x false) out=(o true)

@@ -1,0 +1,29 @@
+// The public name of a port is its `as` key, not its binder. The ports sort by the public name: `aa` is `zz`, so it sorts after `m`. A scalar `PortKey("req", true, 1)` joins the family `req` and sorts by its key as a number.
+// TOP M()
+module C() {
+    input m: UInt[4];
+    input aa: UInt[4] as "zz";
+    input req[10]: UInt[4];
+    input r: UInt[4] as PortKey("req", true, 1);
+    output q: UInt[4];
+    q := m +% aa +% req[10] +% req[1];
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.m := x;
+    u.zz := x;
+    u.req[1] := x;
+    u.req[10] := x;
+    let ps = @ports(u);
+    static_assert(len(ps) == 5, "five ports");
+    static_assert(ps[0].key == PortKey("m", false, 0), "m");
+    static_assert(ps[1].key == PortKey("req", true, 1), "the scalar key joins the family");
+    static_assert(ps[2].key == PortKey("req", true, 10), "the entry 10");
+    static_assert(ps[3].key == PortKey("zz", false, 0), "the key zz of the binder aa");
+    static_assert(ps[4].key == PortKey("q", false, 0), "q");
+    o := u.q;
+}
+// STEP in=(clock$0rst false x 1) out=(o 4)
+// STEP in=(clock$0rst false x 5) out=(o 4)

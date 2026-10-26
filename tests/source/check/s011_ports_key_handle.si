@@ -1,0 +1,19 @@
+// S011: A key of the operand is static. An instance handle in a key is not.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let xs = [u];
+    let ys = [u];
+    // expected-error S011 @+2
+    // expected-message: a key of `@ports` holds the instance `u`, but it takes only static values; pass the data through a port, or use it in the module that declares it
+    let t = @ports(xs[ys[0]]);
+    o := u.q;
+}

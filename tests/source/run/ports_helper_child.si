@@ -1,0 +1,31 @@
+// The ports of a helper of the child are public ports of the child. A helper that runs last declares its entries late, and they still sort by key.
+// TOP M()
+fn lane(comptime k: Nat) -> UInt[4] {
+    input req[k]: UInt[4];
+    output tap: UInt[4] as "tap" + str(k);
+    tap := req[k] +% 1;
+    return req[k];
+}
+module C() {
+    input first: UInt[4];
+    let a = lane(2);
+    let b = lane(0);
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.first := x;
+    u.req[0] := x;
+    u.req[2] := x;
+    let ps = @ports(u);
+    static_assert(len(ps) == 5, "five ports");
+    static_assert(ps[0].key == PortKey("first", false, 0), "first");
+    static_assert(ps[1].key == PortKey("req", true, 0), "req 0");
+    static_assert(ps[2].key == PortKey("req", true, 2), "req 2");
+    static_assert(ps[3].key == PortKey("tap0", false, 0), "tap0");
+    static_assert(ps[4].key == PortKey("tap2", false, 0), "tap2");
+    o := u.tap2;
+}
+// STEP in=(clock$0rst false x 3) out=(o 4)
+// STEP in=(clock$0rst false x 15) out=(o 0)

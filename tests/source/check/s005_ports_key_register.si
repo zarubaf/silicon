@@ -1,0 +1,20 @@
+// S005: A key of the operand is a static position, so a register there is rejected by the static check.
+// TOP M()
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    reg r: UInt[1] = 0;
+    let us = [u, u];
+    // expected-error S005 @+2
+    // expected-message: `r` is a register; a static position needs a static value
+    let t = @ports(us[r]);
+    r := 0;
+    o := u.q;
+}

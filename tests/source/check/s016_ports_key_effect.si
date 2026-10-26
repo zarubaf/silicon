@@ -1,0 +1,19 @@
+// S016: A key of the operand has no graph effect such as `diagnostic`. No record exists.
+// TOP M()
+// OBSERVE-NOT: (record
+module C() {
+    input a: UInt[4];
+    output q: UInt[4];
+    q := a;
+}
+module M() {
+    input x: UInt[4];
+    output o: UInt[4];
+    instance u = C();
+    u.a := x;
+    let xs = [u];
+    // expected-error S016 @+2
+    // expected-message: a key of `@ports` has no graph effect such as `diagnostic`; call `diagnostic` before `@ports`, keep the result in a `let`, and use that name in the key
+    let t = @ports(xs[diagnostic("k", 0)]);
+    o := u.q;
+}
