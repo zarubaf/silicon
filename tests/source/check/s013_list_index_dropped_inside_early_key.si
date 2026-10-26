@@ -1,0 +1,27 @@
+// S013: The read `l[0][one()][7][f()]` fails the range check of `[one()]`, which is 0 on an empty list. In Rust `f()` evaluates early, and its own read `m[0][one()][5][two()]` fails a range check inside it. Lean never evaluates `f()`, so the run ends with the outer check, and only the record of the outer `one()` stays.
+// TOP M()
+// OBSERVE-COUNT-1: (string "one")
+// OBSERVE-NOT: (string "two")
+fn one() -> Nat {
+    diagnostic("one", 0);
+    return 0;
+}
+fn two() -> Nat {
+    diagnostic("two", 0);
+    return 0;
+}
+fn f() -> Nat {
+    let mut m = list(List[Int]);
+    m.push(list(Int));
+    let y = m[0][one()][5][two()];
+    return 0;
+}
+module M() {
+    input x: UInt[8];
+    output o: UInt[8];
+    let mut l = list(List[Int]);
+    l.push(list(Int));
+    // expected-error S013 @+1
+    let z = l[0][one()][7][f()];
+    o := x;
+}
