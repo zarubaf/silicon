@@ -23,6 +23,8 @@ pub(super) struct Row {
     pub(super) input: bool,
     /// The type of the port, if a query reflects it.
     pub(super) ty: Option<RTy>,
+    /// The type as the plan declares it.
+    pub(super) plan_ty: PTy,
 }
 
 /// A child that a query can read: its name, its `PortInfo` list, and its
@@ -45,6 +47,7 @@ pub(super) fn rows(sig: &Sig, helpers: &[PortHelper], ty: impl Fn(&Ty) -> Option
                 public: Public::scalar(n),
                 input,
                 ty: ty(t),
+                plan_ty: PTy::Data(t.clone()),
             })
             .collect()
     };
@@ -55,17 +58,19 @@ pub(super) fn rows(sig: &Sig, helpers: &[PortHelper], ty: impl Fn(&Ty) -> Option
                 public: Public::scalar(n),
                 input,
                 ty: Some(RTy::Static(STy::Enum(Box::new(d.clone())))),
+                plan_ty: PTy::Data(Ty::Enum(d.name.clone())),
             })
             .collect()
     };
     let declared = sig.plan.declared(helpers).into_iter().map(|d| Row {
         public: d.public,
         input: d.dir == Dir::In,
-        ty: match d.ty {
-            PTy::Data(t) => ty(&t),
+        ty: match &d.ty {
+            PTy::Data(t) => ty(t),
             // An empty port has the type `Unit`.
             PTy::Unit => Some(RTy::Unit),
         },
+        plan_ty: d.ty,
     });
     let mut out: Vec<Row> = own(&sig.inputs, true)
         .into_iter()
@@ -213,6 +218,7 @@ mod tests {
             enum_inputs: Vec::new(),
             enum_outputs: Vec::new(),
             plan: PortPlan::default(),
+            wraps: None,
         }
     }
 

@@ -465,10 +465,10 @@ impl Builder {
     /// inputs if `bound`. A helper has one child; without a later module,
     /// or with a child already, there is none.
     fn helper_child(&mut self, hb: &mut Hb, bound: bool) -> Built<Option<(String, FTy, Leaf)>> {
-        if !hb.children.is_empty() || self.sigs.len() < 2 {
+        if !hb.children.is_empty() || self.modules() < 2 {
             return Ok(None);
         }
-        let later = u32::try_from(self.sigs.len() - 1).map_err(|_| Fault::Type)?;
+        let later = u32::try_from(self.modules() - 1).map_err(|_| Fault::Type)?;
         let j = self.tape.between(1, later) as usize;
         let sig = self.sigs.get(j).cloned().ok_or(Fault::Type)?;
         let envs = [Env::default()];
