@@ -4248,4 +4248,171 @@ def gsArg : String :=
 #guard order gsArg "M" == ["C$0h" ++ Names.sha16
     "(instantiation root C ((type (gstruct ((\"b\" bool))))))", "M"]
 
+/-!
+`@ports` in a module (section 9.3). The child `C` has a scalar and an `as` key next to a
+binder. It has an empty port and a port with a core keyword as its name. It has family entries
+of the body and of a helper that runs last. It has the scalar `as PortKey("req", true, 1)` next
+to `req[10]`. Its outputs are an aggregate, an enum, and a `@Struct` type. The list has one
+`PortInfo` for each port, also the empty one. They come in port-layout order: the inputs, then
+the outputs, each by public name, then by key as a number. A key holds the public name, never
+the core name `add$0k`. An aggregate port and an enum port are one entry with their whole type.
+A `diagnostic` record serializes them.
+-/
+def ptKid : String :=
+  "struct P { a: UInt[4], b: Bool }\nenum Op: UInt[2] { Add = 0, Load(UInt[8]) = 1 }\n" ++
+  "type G = @Struct([FieldInfo(\"x\", Bool)]);\n" ++
+  "fn lane(comptime k: Nat) -> UInt[4] {\n  input req[k]: UInt[4];\n  return req[k];\n}\n" ++
+  "module C() domains(d) {\n  input m: UInt[4];\n  input aa: UInt[4] as \"zz\";\n" ++
+  "  input e: ();\n  input add: Bool;\n  input req[10]: UInt[4];\n" ++
+  "  input r: UInt[4] as PortKey(\"req\", true, 1);\n  output pr: P;\n  output op: Op;\n" ++
+  "  output gs: G;\n  pr := P();\n  op := Op::Add;\n  gs := G();\n  let x = lane(0);\n}\n"
+def ptMod (body : String) (fs : String := "") : String :=
+  ptKid ++ fs ++ "module M() {\n  input i: UInt[4];\n  input req[2]: Bool;\n" ++
+  "  reg rg: P = P();\n  instance u = C();\n" ++ body ++
+  "  u.m := i;\n  u.zz := i;\n  u.e := ();\n  u.add := true;\n  u.req[0] := i;\n" ++
+  "  u.req[1] := i;\n  u.req[10] := i;\n  rg := rg;\n}\n"
+/-! The value of each `diagnostic` record of `body`, then `ok` or the first error. -/
+def ptRecords (body : String) (fs : String := "") : List String :=
+  (observed (ptMod body fs)).map fun r =>
+    if r.startsWith "(record" then
+      String.ofList (r.splitOn "(string \"t\") ").getLast!.toList.dropLast
+    else r
+def ptLoop (x : String) : String :=
+  s!"  let ps = @ports(u);\n  comptime for j in 0..len(ps) \{\n    diagnostic(\"t\", {x});\n  }\n"
+def ptKey (x : String) (indexed : Bool) (k : Nat) : String :=
+  s!"(record (struct prelude PortKey ()) ((string \"{x}\") (bool {indexed}) (int {k})))"
+def ptPart (t : String) (input : Bool) : String :=
+  s!"(tuple ((type {t}) (bool {input}) (string \"d\")))"
+#guard ptRecords (ptLoop "ps[j].key") ==
+  [ptKey "add" false 0, ptKey "e" false 0, ptKey "m" false 0, ptKey "req" true 0,
+    ptKey "req" true 1, ptKey "req" true 10, ptKey "zz" false 0, ptKey "gs" false 0,
+    ptKey "op" false 0, ptKey "pr" false 0, "ok"]
+#guard ptRecords (ptLoop "(ps[j].ty, ps[j].is_input, ps[j].domain)") ==
+  [ptPart "bool" true, ptPart "unit" true, ptPart "(uint 4)" true, ptPart "(uint 4)" true,
+    ptPart "(uint 4)" true, ptPart "(uint 4)" true, ptPart "(uint 4)" true,
+    ptPart "(gstruct ((\"x\" bool)))" false, ptPart "(enum root Op ())" false,
+    ptPart "(struct root P ())" false, "ok"]
+-- The domain is `clock` without a `domains` clause, and empty for `domains()`. A child without
+-- ports gives an empty list. A record prints with its prelude struct types.
+#guard ptRecords ("  instance k = K();\n  instance z = Z();\n" ++
+    "  diagnostic(\"t\", @ports(k));\n  diagnostic(\"t\", @ports(z));\n")
+    "module K() {\n  output q: Bool;\n  q := true;\n}\nmodule Z() domains() {\n}\n" ==
+  ["(list (struct prelude PortInfo ()) ((record (struct prelude PortInfo ()) (" ++
+      ptKey "q" false 0 ++ " (type bool) (bool false) (string \"clock\")))))",
+    "(list (struct prelude PortInfo ()) ())", "ok"]
+-- The handle comes from a container, from `@field`, and from a parameter.
+#guard ptRecords ("  let us = [u];\n  diagnostic(\"t\", len(@ports(us[0])));\n" ++
+    "  diagnostic(\"t\", len(@ports(@field(us, 0))));\n  diagnostic(\"t\", np(u));\n")
+    "fn np(x: Instance[C]) -> Nat { return len(@ports(x)); }\n" ==
+  ["(int 10)", "(int 10)", "(int 10)", "ok"]
+
+/-!
+Each other part is `S010` "`@ports` of a non-instance" at the start of the operand. These parts
+are a register and its field, an own port and an own entry, a child input, and a child output and
+its field. They are also a child entry, a domain, a container of instances, a `Type`, a tuple,
+and an integer. A part that keeps
+only its type names it as `hardware T`. The fix follows the kind of the part. A bare family is
+"Family as a value". A string index names `@ports` in its fix.
+-/
+def ptInst : String := "pass the name of an instance, for example `u` of `instance u = M(...);`"
+def ptNot (a h : String) : String := s!"`@ports` takes an instance handle, not {a}; {h}"
+#guard [("rg", "a handle of `Reg[P]`"), ("rg.a", "hardware UInt[4]"),
+    ("i", "a value of `UInt[4]`"), ("req[2]", "a value of `Bool`"),
+    ("u.m", "a handle of `Input[UInt[4]]`"), ("u.pr", "hardware P"),
+    ("u.pr.a", "hardware UInt[4]"), ("u.req[0]", "a handle of `Input[UInt[4]]`"),
+    ("clock", "the domain `clock`")].all fun (x, a) =>
+  failure (ptMod s!"  let t = @ports({x});\n") 100000000 == s!"S010 28:18 {ptNot a ptInst}"
+#guard failure (ptMod "  let us = [u];\n  let t = @ports(us);\n") 100000000 ==
+  s!"S010 29:18 {ptNot "a value of `[Instance[C]; 1]`" "select one instance, for example `xs[0]`"}"
+#guard failure (ptMod "  let ty = @TypeOf(u);\n  let t = @ports(ty);\n") 100000000 ==
+  "S010 29:18 " ++
+    ptNot "a value of `Type`" "a type has no ports; pass the handle of `instance u = M(...);`"
+#guard failure (ptMod "  let tp = (1, 2);\n  let t = @ports(tp);\n") 100000000 ==
+  s!"S010 29:18 {ptNot "a value of `(Int, Int)`" ptInst}"
+#guard failure (ptMod "  let n = 3;\n  let t = @ports(n);\n") 100000000 ==
+  s!"S010 29:18 {ptNot "a value of `Int`" ptInst}"
+#guard failure (ptMod "  let t = @ports(req);\n") 100000000 ==
+  "S010 28:18 `req` is a port family, not a value; select one port with `req[k]`"
+#guard failure (ptMod "  let st = \"ab\";\n  let t = @ports(st[0]);\n") 100000000 ==
+  "S010 29:18 a query cannot index a string; `@ports` takes an instance handle, so pass the " ++
+    "name of an instance"
+-- The operand is a place (`S001`), a module name is no value, and an instance is not visible in
+-- its own arguments (`S003`).
+#guard ptRecords "  let t = @ports(@ports(u));\n" == ["S001 28:18"]
+#guard ptRecords "  let t = @ports(C);\n" == ["S003 28:18"]
+#guard ptRecords "  instance w = D(@ports(w));\n" "module D(comptime n: Nat) {\n}\n" ==
+  ["S003 30:25"]
+
+/-!
+In a type position, `@ports` is "Builtin as a type". The fix `@field(@ports(u)[0], "ty")` gives
+a `Type`, also inside `@typeInfo(...)`.
+-/
+#guard failure (ptMod "  let y: @ports(u) = i;\n") 100000000 ==
+  "S010 28:10 a type position needs a `Type`, but `@ports` gives a value of `List[PortInfo]`; " ++
+    "select the type of one port, for example `@field(@ports(u)[0], \"ty\")`"
+#guard ptRecords ("  let y: @field(@ports(u)[2], \"ty\") = i;\n" ++
+    "  diagnostic(\"t\", @typeInfo(@field(@ports(u)[2], \"ty\")).width);\n") == ["(int 4)", "ok"]
+
+/-!
+A forwarding wrapper declares one port for each `PortInfo` and binds it with `@field(u, p.key)`,
+also the empty input. The round trip gives the ports of the child in the same order.
+-/
+def ptFwd : String :=
+  "struct P { a: UInt[4], b: Bool }\n" ++
+  "fn lane(comptime k: Nat) -> UInt[4] {\n  input req[k]: UInt[4];\n" ++
+  "  output gnt: UInt[4] as PortKey(\"gnt\", true, k);\n  gnt := req[k];\n  return req[k];\n}\n" ++
+  "module C() {\n  input m: UInt[4];\n  input e: ();\n  output pr: P;\n  reg s: UInt[4] = 0;\n" ++
+  "  s := m;\n  pr := P(s, true);\n  let x = lane(0);\n  let y = lane(2);\n}\n" ++
+  "module M() {\n  instance u = C();\n  let ps = @ports(u);\n" ++
+  "  comptime for i in 0..len(ps) {\n    comptime if (ps[i].is_input) {\n" ++
+  "      input x: @field(ps[i], \"ty\") as ps[i].key;\n      @field(u, ps[i].key) := x;\n" ++
+  "    } else {\n      output y: @field(ps[i], \"ty\") as ps[i].key;\n" ++
+  "      y := @field(u, ps[i].key);\n    }\n  }\n}\n"
+#guard (design ptFwd "M").any fun d =>
+  match d.insts.toList.map (·.iface.schema.toList.map Eval.Port.text) with
+  | [c, m] => c == m && c == ["e", "m", "req[0]", "req[2]", "gnt[0]", "gnt[2]", "pr"]
+  | _ => false
+
+/-!
+The cost of `@ports` (section 6.2, **`@ports` order**). The operand root charges nothing, so the
+node is the first charge at the `@`. The first use of `PortInfo` completes `PortKey`, and its last
+charge is 4 units. Then the call charges 1 for each of the 10 ports, then the recursive size of the
+result. One unit less than each of these charges stops at the `@`. A second call in a loop charges
+the same as a second call outside it, for each run of the body.
+-/
+def ptCost : String := ptMod "  let ps = @ports(u);\n"
+#guard failure ptCost 358 == "S015 28:12 " ++ Eval.payText 4 3
+#guard failure ptCost 359 == "S015 28:12 " ++ Eval.payText 10 0
+#guard failure ptCost 368 == "S015 28:12 " ++ Eval.payText 10 9
+#guard failure ptCost 369 == "S015 28:12 " ++ Eval.payText 121 0
+#guard failure ptCost 489 == "S015 28:12 " ++ Eval.payText 121 120
+#guard failure ptCost 490 == "S015 29:3 " ++ Eval.payText 1 0
+def ptCalls (inner outer : String) : Nat :=
+  let loop := s!"  comptime for j in 0..len(ps) \{\n{inner}  }\n"
+  elabUnits (ptMod s!"  let ps = @ports(u);\n{outer}{loop}") "M"
+#guard ptCalls "    let qs = @ports(u);\n" "" - ptCalls "" "" ==
+  10 * (ptCalls "" "  let qs = @ports(u);\n" - ptCalls "" "")
+
+/-!
+The depth of the result is 2 plus the depth of the port type. A port type of the depth N - 1 is
+thus `S015` at the `@` with the nesting depth N, and it passes with N + 1.
+-/
+def ptDeep : String :=
+  "module K() domains() {\n  output q: [[[[[Bool; 1]; 1]; 1]; 1]; 1];\n" ++
+  "  q := [[[[[Bool; 1]; 1]; 1]; 1]; 1]();\n}\n" ++
+  "module M() domains() {\n  instance k = K();\n  let t = @ports(k);\n}\n"
+#guard elabAt ptDeep "M" 100000000 7 == "S015 7:11"
+#guard (elabAt ptDeep "M" 100000000 8).startsWith "ok"
+
+/-!
+A `List[PortInfo]` as a module argument serializes as a list of prelude records in the digest
+(section 7.1).
+-/
+#guard order (ptMod "  instance k = K();\n  instance w = D(@ports(k));\n"
+    ("module K() {\n  output q: Bool;\n  q := true;\n}\n" ++
+      "module D(comptime ps: List[PortInfo]) {\n}\n")) "M" ==
+  ["C", "K", "D$0h" ++ Names.sha16 ("(instantiation root D ((list (struct prelude PortInfo ()) " ++
+    "((record (struct prelude PortInfo ()) (" ++ ptKey "q" false 0 ++
+    " (type bool) (bool false) (string \"clock\")))))))"), "M"]
+
 end Silicon.Source.Test.Elab
