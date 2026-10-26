@@ -1,0 +1,2 @@
+// `@ports` parses in a type position, with the same place operand as in an expression.
+const A: @ports(x) = f;

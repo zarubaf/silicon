@@ -34,7 +34,6 @@ rust | S010 `@ports` of a non-instance | 346
 pin | S010 `@ports` of a non-instance | 346
 lean | S010 String index in a query | 346
 rust | S010 String index in a query | 346
-lean | S007 Index of `@ports` in a type | 346
 rust | S007 Index of `@ports` in a type | 346
 pin | S007 Index of `@ports` in a type | 346
 unlisted | S001 a comparison does not chain | 354
@@ -63,6 +62,7 @@ unlisted | S002 the variant `{}` is already declared in this enu | 354
 unlisted | S003 `{}` is not {} | 354
 unlisted | S003 unscannable crates/resolve/src/walk.rs | 354
 unlisted | S004 {} is not supported yet | 354
+unlisted | S004 a builtin is not supported yet | 346
 unlisted | S005 `{}` is {}; a static position needs a static val | 354
 unlisted | S006 a `comptime fn` has no memory port call | 354
 unlisted | S006 a `comptime fn` has no {} | 354

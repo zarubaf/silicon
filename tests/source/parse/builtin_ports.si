@@ -1,0 +1,2 @@
+// `@ports` parses as a primary in an expression: its operand is a place, as for `@TypeOf`.
+const A: T = @ports(x);
