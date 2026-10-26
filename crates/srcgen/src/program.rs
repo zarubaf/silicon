@@ -1004,6 +1004,17 @@ pub(crate) fn field_ty_text(t: &FieldTy) -> String {
     }
 }
 
+/// The text of `FieldInfo("name", type)`.
+pub(crate) fn field_info((name, t): &(String, FieldTy)) -> String {
+    format!("FieldInfo({}, {})", string(name), field_ty_text(t))
+}
+
+/// The text of a list of `FieldInfo`.
+pub(crate) fn list_text(fields: &[(String, FieldTy)]) -> String {
+    let items: Vec<String> = fields.iter().map(field_info).collect();
+    format!("[{}]", items.join(", "))
+}
+
 fn render_enum(out: &mut String, def: &EnumDef) {
     line(
         out,

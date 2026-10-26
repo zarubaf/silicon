@@ -20,7 +20,7 @@ use super::stat::{Reach, int};
 use super::{Builder, Built, Ctx, Names};
 use crate::eval::{Value, record_ty};
 use crate::program::{
-    FieldTy, Item, QExpr, Query, RecTy, SExpr, STy, Stmt, StructDef, field_ty_text, string,
+    FieldTy, Item, QExpr, Query, RecTy, SExpr, STy, Stmt, StructDef, field_info, list_text,
 };
 use num_bigint::BigInt;
 
@@ -51,16 +51,6 @@ impl Gen {
     pub(super) fn data(&self) -> bool {
         self.rec.zeroable() && !self.rec.fields.is_empty()
     }
-}
-
-/// The text of `FieldInfo("name", type)`.
-fn field_info((name, t): &(String, FieldTy)) -> String {
-    format!("FieldInfo({}, {})", string(name), field_ty_text(t))
-}
-
-fn list_text(fields: &[(String, FieldTy)]) -> String {
-    let items: Vec<String> = fields.iter().map(field_info).collect();
-    format!("[{}]", items.join(", "))
 }
 
 fn struct_of(form: QExpr) -> QExpr {
