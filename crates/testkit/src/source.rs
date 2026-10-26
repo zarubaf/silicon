@@ -227,7 +227,8 @@ pub fn compare_observe(
 
 /// True when the text of a file may call `diagnostic`. A cheap scan is enough: a file without a
 /// call has no record, and the compare of `observe` costs two runs.
-fn makes_records(source: &str) -> bool {
+#[must_use]
+pub fn makes_records(source: &str) -> bool {
     source.contains("diagnostic")
 }
 
