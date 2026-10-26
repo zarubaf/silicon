@@ -1,4 +1,4 @@
-// S013: The read `n[0][one()][3][spin()]` fails the range check of `[3]`. Lean checks it after `one()` evaluates and before `spin()` evaluates, whose zero value the fuel cannot pay. In Rust `spin()` evaluates early, and the failed check takes back its record. So only the record of `one()` stays, and the `S015` of `spin()` loses to the failed check.
+// S013: The read `n[0][one()][3][spin()]` fails the range check of `[3]`. Lean checks it after `one()` evaluates and before `spin()` evaluates, whose zero value the fuel cannot pay. In Rust `spin()` evaluates early, its record waits for the walk, and the failed check drops it. So only the record of `one()` stays, and the `S015` of `spin()` loses to the failed check.
 // TOP M()
 // OBSERVE-COUNT-1: (string "one")
 // OBSERVE-NOT: (string "spin")
