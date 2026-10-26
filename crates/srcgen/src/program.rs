@@ -442,6 +442,9 @@ pub(crate) enum HExpr {
     /// `base.f`: an output `f` of the child that `base` holds, or a field
     /// of a struct of handles. The base is a container of handles.
     Member(Box<HExpr>, String),
+    /// `@field(base, key)` of a container of handles, a struct of handles,
+    /// or a child: the key is a `String`, a `Nat`, or a `PortKey`.
+    FieldOf(Box<HExpr>, SExpr),
 }
 
 /// The target of `:=`.
@@ -1326,6 +1329,7 @@ pub(crate) fn hexpr(e: &HExpr) -> String {
         HExpr::Entry(fam, k) => format!("{fam}[{}]", sexpr(k)),
         HExpr::ChildEntry(u, fam, k) => format!("{}.{fam}[{}]", hexpr(u), sexpr(k)),
         HExpr::Member(b, f) => format!("{}.{f}", hexpr(b)),
+        HExpr::FieldOf(b, k) => format!("@field({}, {})", hexpr(b), sexpr(k)),
     }
 }
 

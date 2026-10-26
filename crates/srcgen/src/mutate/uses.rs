@@ -81,6 +81,7 @@ fn hexpr(root: &str, e: &HExpr, callees: &Callees, uses: &mut Uses) {
         | HExpr::Index(a, _)
         | HExpr::Select(a, _)
         | HExpr::Member(a, _)
+        | HExpr::FieldOf(a, _)
         | HExpr::Read(a) => {
             hexpr(root, a, callees, uses);
         }

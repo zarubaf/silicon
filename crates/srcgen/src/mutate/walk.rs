@@ -1301,6 +1301,10 @@ impl<'a> Walk<'a> {
                 self.sexpr(i);
             }
             HExpr::Select(b, _) | HExpr::Member(b, _) | HExpr::Read(b) => self.hexpr(b),
+            HExpr::FieldOf(b, k) => {
+                self.hexpr(b);
+                self.sexpr(k);
+            }
             HExpr::ReadPort { mem, addr, en, .. } => {
                 self.rename(mem);
                 self.hexpr(addr);
@@ -1421,6 +1425,7 @@ impl<'a> Walk<'a> {
             | HExpr::Index(..)
             | HExpr::Select(..)
             | HExpr::Member(..)
+            | HExpr::FieldOf(..)
             | HExpr::Read(_)
             | HExpr::ReadPort { .. } => self.handle_expr(e),
             HExpr::Receiver(recv, f, args) => {

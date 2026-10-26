@@ -15,8 +15,9 @@
 use super::stat::{Reach, bin, int};
 use super::{Builder, Lane};
 use crate::eval::Value;
-use crate::program::{Radix, SBin, SExpr, STy};
+use crate::program::{FTy, FieldTy, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt};
 use num_bigint::BigInt;
+use std::collections::BTreeSet;
 
 /// One eligible step in this many reads as `@field`: a record or a list is
 /// rare, so it gets better odds than a tuple or an array.
@@ -26,6 +27,10 @@ pub(super) const ARRAY_ODDS: u32 = 8;
 const TUPLE_ODDS: u32 = 12;
 /// The most steps of one program that read as `@field`.
 pub(super) const MAX_FIELDS: u32 = 16;
+/// One eligible read or target of hardware in this many takes the spelling,
+/// and the most in one program.
+const HW_ODDS: u32 = 6;
+const MAX_HW_FIELDS: u32 = 24;
 
 impl Builder {
     /// Runs `f` on the field tape, isolated from the other tapes.
@@ -203,6 +208,241 @@ impl Builder {
         let offset = i64::from(k) - value;
         Some(bin(SBin::Add, call, int(offset)))
     }
+}
+
+/// What the spelling pass knows about the item under it: the instances,
+/// which take a `PortKey`, and the names of the fields of structs of
+/// handles, which take only a `String`.
+struct Cx<'a> {
+    instances: BTreeSet<String>,
+    records: &'a BTreeSet<String>,
+}
+
+impl Builder {
+    /// Rewrites reads and `:=` targets of children and containers of handles
+    /// in `items` to `@field`, in place. The value of each stays the same.
+    pub(super) fn spell_hardware(&mut self, items: &mut [Item]) {
+        let records: BTreeSet<String> = items
+            .iter()
+            .filter_map(|item| match item {
+                Item::Struct(def) => Some(def),
+                _ => None,
+            })
+            .flat_map(|def| def.fields.iter())
+            .filter(|(_, t)| matches!(t, FieldTy::Handle(_)))
+            .map(|(f, _)| f.clone())
+            .collect();
+        self.on_field(|b| {
+            // Two programs in five spell hardware at all.
+            if b.tape.below(5) < 3 {
+                return;
+            }
+            let mut spelled = 0;
+            for item in items.iter_mut() {
+                match item {
+                    Item::Module { body, .. } => {
+                        let mut cx = Cx {
+                            instances: instances(body, &[]),
+                            records: &records,
+                        };
+                        b.spell_stmts(body, &mut cx, &mut spelled);
+                    }
+                    Item::Helper {
+                        params,
+                        body,
+                        result,
+                        ..
+                    } => {
+                        let mut cx = Cx {
+                            instances: instances(body, params),
+                            records: &records,
+                        };
+                        b.spell_stmts(body, &mut cx, &mut spelled);
+                        b.spell_expr(result, &mut cx, &mut spelled);
+                    }
+                    _ => {}
+                }
+            }
+        });
+    }
+
+    fn spell_stmts(&mut self, body: &mut [Stmt], cx: &mut Cx<'_>, spelled: &mut u32) {
+        for s in body {
+            match s {
+                Stmt::Let { value, .. } | Stmt::Assign(_, value) => {
+                    self.spell_expr(value, cx, spelled);
+                }
+                Stmt::Connect(place, value) => {
+                    self.spell_place(place, cx, spelled);
+                    self.spell_expr(value, cx, spelled);
+                }
+                Stmt::If(_, then, els) => {
+                    self.spell_stmts(then, cx, spelled);
+                    if let Some(els) = els {
+                        self.spell_stmts(els, cx, spelled);
+                    }
+                }
+                Stmt::For(_, _, _, body) | Stmt::Block(body) => self.spell_stmts(body, cx, spelled),
+                _ => {}
+            }
+        }
+    }
+
+    /// Whether the next eligible node takes the spelling.
+    fn spell_site(&mut self, spelled: &mut u32) -> bool {
+        if *spelled >= MAX_HW_FIELDS || self.tape.below(HW_ODDS) != HW_ODDS - 1 {
+            return false;
+        }
+        *spelled += 1;
+        true
+    }
+
+    fn spell_place(&mut self, place: &mut Place, cx: &mut Cx<'_>, spelled: &mut u32) {
+        match place {
+            Place::Field(u, p) => {
+                if self.spell_site(spelled) {
+                    let key = self.port_key(p, cx.instances.contains(u));
+                    *place = Place::Path(HExpr::FieldOf(Box::new(HExpr::Name(u.clone())), key));
+                }
+            }
+            Place::ChildEntry(u, fam, k) => {
+                if self.spell_site(spelled) {
+                    let key = self.entry_key(fam, k.clone());
+                    *place = Place::Path(HExpr::FieldOf(Box::new(HExpr::Name(u.clone())), key));
+                }
+            }
+            Place::Path(e) => self.spell_expr(e, cx, spelled),
+            Place::Name(_) | Place::Entry(..) => {}
+        }
+    }
+
+    /// Rewrites the selections of `e`, the base first. A call keeps its
+    /// actuals as they are: a handle formal takes the handle itself.
+    fn spell_expr(&mut self, e: &mut HExpr, cx: &mut Cx<'_>, spelled: &mut u32) {
+        match e {
+            HExpr::Unary(_, a) | HExpr::Resize(_, a) | HExpr::Reinterpret(_, a) => {
+                self.spell_expr(a, cx, spelled);
+            }
+            HExpr::Binary(_, a, b) => {
+                self.spell_expr(a, cx, spelled);
+                self.spell_expr(b, cx, spelled);
+            }
+            HExpr::If(c, t, f) => {
+                for x in [c, t, f] {
+                    self.spell_expr(x, cx, spelled);
+                }
+            }
+            HExpr::Index(b, i) => {
+                self.spell_expr(b, cx, spelled);
+                if self.spell_site(spelled) {
+                    let (base, key) = (std::mem::replace(&mut **b, HExpr::Unit), i.clone());
+                    *e = HExpr::FieldOf(Box::new(base), key);
+                }
+            }
+            HExpr::Select(b, k) => {
+                self.spell_expr(b, cx, spelled);
+                if self.spell_site(spelled) {
+                    let key = SExpr::Int(BigInt::from(*k), self.radix());
+                    let base = std::mem::replace(&mut **b, HExpr::Unit);
+                    *e = HExpr::FieldOf(Box::new(base), key);
+                }
+            }
+            HExpr::Member(b, f) => {
+                self.spell_expr(b, cx, spelled);
+                if self.spell_site(spelled) {
+                    let child = !cx.records.contains(f.as_str());
+                    let key = self.port_key(f, child);
+                    let base = std::mem::replace(&mut **b, HExpr::Unit);
+                    *e = HExpr::FieldOf(Box::new(base), key);
+                }
+            }
+            HExpr::ChildEntry(b, fam, k) => {
+                self.spell_expr(b, cx, spelled);
+                if self.spell_site(spelled) {
+                    let key = self.entry_key(fam, k.clone());
+                    let base = std::mem::replace(&mut **b, HExpr::Unit);
+                    *e = HExpr::FieldOf(Box::new(base), key);
+                }
+            }
+            HExpr::Field(u, q) => {
+                if self.spell_site(spelled) {
+                    let key = self.port_key(q, cx.instances.contains(u.as_str()));
+                    *e = HExpr::FieldOf(Box::new(HExpr::Name(u.clone())), key);
+                }
+            }
+            HExpr::Match(m) => {
+                self.spell_expr(&mut m.scrutinee, cx, spelled);
+                for (_, arm) in &mut m.arms {
+                    self.spell_expr(arm, cx, spelled);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The key of a port or of a field: a `String`, and for a child also a
+    /// scalar `PortKey`.
+    fn port_key(&mut self, name: &str, child: bool) -> SExpr {
+        let text = self.name_key(name);
+        if child && self.tape.flag() {
+            note!(self, field_scalar_keys);
+            return SExpr::PortKey(Box::new(text), false, Box::new(int(0)));
+        }
+        text
+    }
+
+    /// The key of the entry `fam[k]`: an indexed `PortKey`.
+    fn entry_key(&mut self, fam: &str, k: SExpr) -> SExpr {
+        let name = self.name_key(fam);
+        note!(self, field_entry_keys);
+        SExpr::PortKey(Box::new(name), true, Box::new(k))
+    }
+
+    /// The literal of a name, or a join of its letters and its number.
+    fn name_key(&mut self, name: &str) -> SExpr {
+        let split = name.find(|c: char| c.is_ascii_digit());
+        let joined = split.filter(|&at| at > 0 && name[at..].chars().all(|c| c.is_ascii_digit()));
+        match joined {
+            Some(at) if self.tape.below(3) == 0 => {
+                note!(self, field_joined_keys);
+                let n: u32 = name[at..].parse().unwrap_or(0);
+                let n = SExpr::Int(BigInt::from(n), Radix::Dec);
+                bin(
+                    SBin::Add,
+                    SExpr::Str(name[..at].to_owned()),
+                    SExpr::StrOf(Box::new(n)),
+                )
+            }
+            _ => SExpr::Str(name.to_owned()),
+        }
+    }
+}
+
+/// The names of the instances of a body, and of the formals of an instance
+/// type.
+fn instances(body: &[Stmt], params: &[(String, FTy)]) -> BTreeSet<String> {
+    fn walk(body: &[Stmt], out: &mut BTreeSet<String>) {
+        for s in body {
+            match s {
+                Stmt::Instance(n, ..) => {
+                    out.insert(n.clone());
+                }
+                Stmt::If(_, then, els) => {
+                    walk(then, out);
+                    walk(els.as_deref().unwrap_or_default(), out);
+                }
+                Stmt::For(_, _, _, body) | Stmt::Block(body) => walk(body, out),
+                _ => {}
+            }
+        }
+    }
+    let mut out: BTreeSet<String> = params
+        .iter()
+        .filter(|(_, t)| matches!(t, FTy::Instance(..)))
+        .map(|(n, _)| n.clone())
+        .collect();
+    walk(body, &mut out);
+    out
 }
 
 fn at(base: &SExpr, key: SExpr) -> SExpr {

@@ -829,7 +829,39 @@ impl Writer<'_> {
             HExpr::ChildEntry(u, fam, k) => {
                 HExpr::Field(self.instance_of(u, fr), self.entry(fam, k, fr))
             }
+            HExpr::FieldOf(b, k) => self.hexpr(&self.selection(b, k, fr), fr),
         }
+    }
+
+    /// The ordinary selection that `@field(base, key)` stands for: the
+    /// field or the port of a `String` or a scalar `PortKey`, the entry of
+    /// an indexed `PortKey`, and the element of a `Nat`. The twin has no
+    /// `@field`, so it resolves each selection as the builder wrote it
+    /// before the spelling.
+    fn selection(&self, base: &HExpr, key: &SExpr, fr: &Frame) -> HExpr {
+        let named = |f: String| match base {
+            HExpr::Name(u) => HExpr::Field(u.clone(), f),
+            b => HExpr::Member(Box::new(b.clone()), f),
+        };
+        let text = |e: &SExpr| match self.value(e, fr) {
+            Some(Value::Str(s)) => Some(s),
+            _ => None,
+        };
+        let found = match key {
+            SExpr::PortKey(name, true, k) => {
+                text(name).map(|n| HExpr::ChildEntry(Box::new(base.clone()), n, (**k).clone()))
+            }
+            SExpr::PortKey(name, false, _) => text(name).map(named),
+            k => match self.value(k, fr) {
+                Some(Value::Str(f)) => Some(named(f)),
+                Some(Value::Int(_)) => Some(HExpr::Index(Box::new(base.clone()), k.clone())),
+                _ => None,
+            },
+        };
+        found.unwrap_or_else(|| {
+            self.fault.set(true);
+            base.clone()
+        })
     }
 
     /// The handle that the actual `e` of a handle formal names. A container
@@ -874,6 +906,7 @@ impl Writer<'_> {
                 }
                 self.handle(result, &inner)
             }
+            HExpr::FieldOf(b, k) => self.handle(&self.selection(b, k, fr), fr),
             HExpr::Select(b, k) => seq(b)
                 .get(*k as usize)
                 .cloned()
@@ -1327,6 +1360,7 @@ fn subst(e: &HExpr, map: &BTreeMap<String, HExpr>) -> HExpr {
         HExpr::Index(b, i) => HExpr::Index(sub(b), i.clone()),
         HExpr::Select(b, k) => HExpr::Select(sub(b), *k),
         HExpr::Member(b, f) => HExpr::Member(sub(b), f.clone()),
+        HExpr::FieldOf(b, k) => HExpr::FieldOf(sub(b), k.clone()),
         HExpr::Read(h) => HExpr::Read(sub(h)),
         HExpr::Unary(op, a) => HExpr::Unary(*op, sub(a)),
         HExpr::Binary(op, a, b) => HExpr::Binary(*op, sub(a), sub(b)),
@@ -1998,6 +2032,7 @@ mod tests {
             | HExpr::Select(a, _)
             | HExpr::Member(a, _)
             | HExpr::Read(a) => read_names(a, out),
+            HExpr::FieldOf(..) => panic!("a twin has no @field"),
             HExpr::Binary(_, a, b) => {
                 read_names(a, out);
                 read_names(b, out);
