@@ -938,4 +938,15 @@ type node holds the resolved builtin.
     | _ => false
   | .error _ => false
 
+/-! The operand of `@ports` resolves as an expression, also in a type position. -/
+#guard ok (fnBody "let u = 1;\nlet t = @ports(u);\nreturn p;")
+#guard fails (fnBody "let t = @ports(q);\nreturn p;") .S003 2 16
+#guard fails (fnBody "let t: @ports(q) = 1;\nreturn p;") .S003 2 15
+#guard match run "fn f(x: Nat) -> @ports(x) { return @ports(x); }" with
+  | .ok items => match items[0]? with
+    | some (Resolve.Item.fn _ _ _ _ (.builtin (.ports _ (.name _ "x" (.local _))))
+        [.ret _ (some (.builtin (.ports _ (.name _ "x" (.local _)))))]) => true
+    | _ => false
+  | .error _ => false
+
 end Silicon.Source.Test.Resolve
