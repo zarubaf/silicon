@@ -18,9 +18,17 @@ pub(in crate::eval) struct Records {
     /// The number of walks with early keys that have not ended. A walk can wait inside the key of
     /// another, so its records stay pending until the outermost one ends.
     open: usize,
-    /// The code and the position of the first failed check that dropped the records of an early
-    /// key.
-    dropped: Option<(Code, Pos)>,
+    /// The failed check that dropped the records of an early key and that must end the run.
+    dropped: Option<Dropped>,
+}
+
+/// A failed check that dropped the records of an early key: its code, its position, and its mark
+/// in the pending records while they are pending.
+#[derive(Clone, Copy)]
+struct Dropped {
+    code: Code,
+    pos: Pos,
+    mark: Option<usize>,
 }
 
 impl Records {
@@ -44,18 +52,28 @@ impl Records {
     }
 
     /// The walk that `open` started ended. With `cut`, a step before an early key failed its
-    /// check `failed`, so the records from the mark `cut` go: Lean never evaluated that key. The
-    /// pending records become kept when no walk is open any more.
+    /// check `failed`, so the records from the mark `cut` go: Lean never evaluated that key. A
+    /// check that failed inside that key goes with them, as Lean never ran it, so the run must
+    /// end with `failed`. The pending records become kept when no walk is open any more.
     pub(in crate::eval) fn close(&mut self, cut: Option<(usize, &Stop)>) {
-        if let Some((mark, failed)) = cut {
+        if let Some((mark, Stop::Error(e))) = cut {
             self.pending.truncate(mark);
-            if let (None, Stop::Error(e)) = (self.dropped, failed) {
-                self.dropped = Some((e.code, e.pos));
+            let inside = |d: &Dropped| d.mark.is_some_and(|m| mark <= m);
+            if self.dropped.as_ref().is_none_or(inside) {
+                self.dropped = Some(Dropped {
+                    code: e.code,
+                    pos: e.pos,
+                    mark: Some(mark),
+                });
             }
         }
-        self.open = self.open.saturating_sub(1);
+        debug_assert!(self.open > 0, "a walk closes that did not open");
+        self.open -= 1;
         if self.open == 0 {
             self.kept.append(&mut self.pending);
+            if let Some(d) = self.dropped.as_mut() {
+                d.mark = None;
+            }
         }
     }
 
@@ -79,11 +97,9 @@ impl Records {
 
 /// Whether the run with the result `outcome` ended at the failed check `dropped`, if one dropped
 /// the records of an early key.
-fn ended<T>(dropped: Option<(Code, Pos)>, outcome: &Res<T>) -> bool {
+fn ended<T>(dropped: Option<Dropped>, outcome: &Res<T>) -> bool {
     match dropped {
         None => true,
-        Some((code, pos)) => {
-            matches!(outcome, Err(Stop::Error(e)) if e.code == code && e.pos == pos)
-        }
+        Some(d) => matches!(outcome, Err(Stop::Error(e)) if e.code == d.code && e.pos == d.pos),
     }
 }
