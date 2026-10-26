@@ -47,7 +47,7 @@ unlisted | S001 expected a type | 354
 unlisted | S001 expected an expression | 354
 unlisted | S001 expected an item | 354
 unlisted | S001 expected the end of the expression | 354
-unlisted | S001 expected the name of a builtin | 354
+unlisted | S001 expected a builtin name | 354
 unlisted | S001 invalid escape | 354
 unlisted | S001 number literal is not below 2^65536 | 354
 unlisted | S001 parser fuel exhausted | 354
