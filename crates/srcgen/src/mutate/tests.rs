@@ -2143,6 +2143,32 @@ fn the_kinds_of_field_get_predictions() {
     }
 }
 
+/// The mutants of `EarlyStep` are at least 5% of the mutants of the fixed
+/// programs, though its site is rare, and none predicts another code than
+/// `S013`.
+#[test]
+fn early_step_gets_a_share_of_the_draws() {
+    let ps = programs();
+    let early = ps
+        .iter()
+        .enumerate()
+        .filter(|(n, p)| {
+            let draw = u32::try_from(*n).unwrap().wrapping_mul(0x9e37_79b1);
+            let m = mutate(p, draw, draw.rotate_left(7));
+            let hit = m
+                .what
+                .contains("give the step before a key with a diagnostic");
+            assert!(
+                !hit || m.expect.is_none_or(|c| c == "S013"),
+                "{:?}",
+                m.expect
+            );
+            hit
+        })
+        .count();
+    assert!(early * 20 >= ps.len(), "{early} of {}", ps.len());
+}
+
 /// A key of more than 64 characters occurs in a mutant of `NoField`, which
 /// both front ends cut in their messages (section 5.5, #386).
 #[test]
