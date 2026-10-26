@@ -29,7 +29,7 @@ const TUPLE_ODDS: u32 = 12;
 pub(super) const MAX_FIELDS: u32 = 16;
 /// One eligible read or target of hardware in this many takes the spelling,
 /// and the most in one program.
-const HW_ODDS: u32 = 6;
+const HW_ODDS: u32 = 5;
 const MAX_HW_FIELDS: u32 = 24;
 
 impl Builder {
@@ -233,8 +233,8 @@ impl Builder {
             .map(|(f, _)| f.clone())
             .collect();
         self.on_field(|b| {
-            // Two programs in five spell hardware at all.
-            if b.tape.below(5) < 3 {
+            // Three programs in five spell hardware.
+            if b.tape.below(5) < 2 {
                 return;
             }
             let mut spelled = 0;

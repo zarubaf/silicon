@@ -14,6 +14,8 @@ use num_bigint::BigInt;
 use std::collections::BTreeMap;
 use std::mem;
 
+mod field;
+
 /// The sites of `Kind::Delete` that one binding makes, when the helper that
 /// holds it also declares the resource.
 const DELETE_BINDING_SITES: usize = 32;
@@ -66,6 +68,16 @@ pub(super) struct Walk<'a> {
     /// many indexed declarations each name has in the current item.
     families: Vec<String>,
     indexed: BTreeMap<String, usize>,
+    /// The static `String` names: the `let`s and the consts of that type.
+    strs: Vec<String>,
+    /// The inputs of the current module, the module of each instance, the
+    /// inputs of each module, and the functions that run a `diagnostic`.
+    inputs: Vec<String>,
+    children: BTreeMap<String, String>,
+    module_inputs: BTreeMap<String, Vec<String>>,
+    diag_fns: Vec<String>,
+    /// How many targets of a `:=` the walk is in: 0 or 1.
+    targets: u8,
     /// The name and index of the current item, and the count of its
     /// statements so far.
     item: String,
@@ -98,6 +110,12 @@ impl<'a> Walk<'a> {
             used: Vec::new(),
             families: Vec::new(),
             indexed: BTreeMap::new(),
+            strs: Vec::new(),
+            inputs: Vec::new(),
+            children: BTreeMap::new(),
+            module_inputs: BTreeMap::new(),
+            diag_fns: Vec::new(),
+            targets: 0,
             item: String::new(),
             index: 0,
             stmt: 0,
@@ -138,6 +156,38 @@ impl<'a> Walk<'a> {
         self.mut_helpers = mut_helpers(items);
         self.static_formals = static_formals(items);
         self.binders = binders(items);
+        self.strs = items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Const {
+                    name, ty: STy::Str, ..
+                } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        self.diag_fns = items
+            .iter()
+            .filter_map(|i| match i {
+                Item::MutFn(f) if f.diag.is_some() => Some(f.name.clone()),
+                _ => None,
+            })
+            .collect();
+        self.module_inputs = items
+            .iter()
+            .filter_map(|i| match i {
+                Item::Module { name, body, .. } => {
+                    let inputs = body
+                        .iter()
+                        .filter_map(|s| match s {
+                            Stmt::Input(n, _) => Some(n.clone()),
+                            _ => None,
+                        })
+                        .collect();
+                    Some((name.clone(), inputs))
+                }
+                _ => None,
+            })
+            .collect();
         let mut i = 0;
         while let Some(item) = items.get(i) {
             let name = item_name(item).to_owned();
@@ -179,6 +229,8 @@ impl<'a> Walk<'a> {
             _ => Vec::new(),
         };
         self.indexed.clear();
+        self.inputs.clear();
+        self.children.clear();
         if let Item::Module { body, .. } | Item::Helper { body, .. } = item {
             count_indexed(body, &mut self.indexed);
         }
@@ -396,7 +448,10 @@ impl<'a> Walk<'a> {
             }
             Stmt::PlaceCall { place, f, arg, .. } => {
                 self.rename(f);
+                // The place is no value: a base that is no place is `S008`.
+                self.targets = 1;
                 self.sexpr(place);
+                self.targets = 0;
                 self.sexpr(arg);
             }
             Stmt::Assign(n, v) => {
@@ -606,16 +661,32 @@ impl<'a> Walk<'a> {
     fn place_parts(&mut self, place: &mut Place) {
         match place {
             Place::Name(n) | Place::Field(n, _) => self.rename(n),
-            Place::Path(e) => self.hexpr(e),
+            Place::Path(e) => {
+                self.targets = 1;
+                self.hexpr(e);
+                self.targets = 0;
+            }
             Place::Entry(fam, k) => {
                 self.rename(fam);
-                self.entry_key(k);
+                match self.target_key(k) {
+                    Some((what, code)) => self.target_hit(what, code),
+                    None => self.entry_key(k),
+                }
             }
             Place::ChildEntry(u, _, k) => {
                 self.rename(u);
-                self.entry_key(k);
+                match self.target_key(k) {
+                    Some((what, code)) => self.target_hit(what, code),
+                    None => self.entry_key(k),
+                }
             }
         }
+    }
+
+    /// The hit of a key in the target of a `:=`.
+    fn target_hit(&mut self, what: &str, code: &'static str) {
+        let code = self.always.then_some(code);
+        self.hit(format!("{what} in {}", self.item), Effect::Code(code));
     }
 
     /// The key of a selection: a site of `KeyRange` and `KeyType`, else a
@@ -630,6 +701,15 @@ impl<'a> Walk<'a> {
     fn note_hardware(&mut self, s: &Stmt) {
         if let Stmt::Input(n, _) | Stmt::Reg(n, ..) = s {
             self.hardware.push(n.clone());
+        }
+        if let Stmt::Input(n, _) = s {
+            self.inputs.push(n.clone());
+        }
+        if let Stmt::Instance(u, m, _) = s {
+            self.children.insert(u.clone(), m.clone());
+        }
+        if let Stmt::StaticLet(n, STy::Str, _) = s {
+            self.strs.push(n.clone());
         }
         if let Stmt::Port(p) = s
             && p.key.is_none()
@@ -1214,7 +1294,7 @@ impl<'a> Walk<'a> {
             self.hit(what, Effect::Code(None));
             return;
         }
-        if self.enum_sites(e) {
+        if self.enum_sites(e) || self.static_field(e) {
             return;
         }
         match e {
@@ -1359,6 +1439,7 @@ impl<'a> Walk<'a> {
 
     fn hexpr(&mut self, e: &mut HExpr) {
         if self.hardware_enum_eq(e)
+            || self.hardware_field(e)
             || (matches!(e, HExpr::Static(s) if int_valued(s)) && self.arm_stage(e))
         {
             return;

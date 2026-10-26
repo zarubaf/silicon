@@ -187,9 +187,34 @@ enum Kind {
     /// An `as` key breaks the name rule, or a scalar `PortKey` gets the
     /// index 1.
     BadName,
+    /// The key of an `@field` becomes a value of another type.
+    FieldKeyType,
+    /// The `String` key of an `@field` names no field and no port.
+    NoField,
+    /// A `Nat` key of an `@field` becomes `-1` or `99`, and the index of an
+    /// entry key becomes `99` or `2^32`.
+    FieldRange,
+    /// The base of an `@field` becomes a `String`.
+    FieldBase,
+    /// The base of an `@field` becomes an enum value.
+    EnumField,
+    /// The key of an `@field` becomes the name of a port.
+    KeyNotStatic,
+    /// A read of a child through `@field` selects an input of the child.
+    ReadInput,
+    /// The key of an entry of a family becomes the scalar `PortKey` of the
+    /// family.
+    FamilyValue,
+    /// A scalar `PortKey` gets the index 1.
+    ScalarKeyIndex,
+    /// A key of a `:=` target calls a function that runs a `diagnostic`.
+    TargetKey,
+    /// The step before a key that runs a `diagnostic` gets a key out of
+    /// range.
+    EarlyStep,
 }
 
-const KINDS: [Kind; 33] = [
+const KINDS: [Kind; 44] = [
     Kind::Delete,
     Kind::Duplicate,
     Kind::Rename,
@@ -223,12 +248,29 @@ const KINDS: [Kind; 33] = [
     Kind::KeyType,
     Kind::ScalarFamily,
     Kind::BadName,
+    Kind::FieldKeyType,
+    Kind::NoField,
+    Kind::FieldRange,
+    Kind::FieldBase,
+    Kind::EnumField,
+    Kind::KeyNotStatic,
+    Kind::ReadInput,
+    Kind::FamilyValue,
+    Kind::ScalarKeyIndex,
+    Kind::TargetKey,
+    Kind::EarlyStep,
 ];
 
 /// The kinds of ports at the end of `KINDS`, and the draws in `PORT_ODDS`
 /// that pick one of them.
 const PORT_KINDS: usize = 4;
 const PORT_ODDS: usize = 8;
+/// The kinds before the kinds of ports, and the kinds of `@field` at the end
+/// of `KINDS`. One draw in `FIELD_ODDS` of those that do not pick a kind of
+/// ports picks a kind of `@field`.
+const OLD_KINDS: usize = 29;
+const FIELD_KINDS: usize = 11;
+const FIELD_ODDS: usize = 6;
 
 /// The value `2^w`, or for a signed type the value `-2^(w - 1) - 1`, that
 /// no value of the type `w` bits wide has. Three kinds use it: a tag, and a
@@ -255,7 +297,7 @@ impl Kind {
     /// The function that the mutant adds, with its newline.
     fn function(self) -> String {
         match self {
-            Kind::ArmEffect | Kind::TypeEffect => format!(
+            Kind::ArmEffect | Kind::TypeEffect | Kind::TargetKey => format!(
                 "comptime fn {EFFECT_FN}(x: Int) -> Int {{\n    diagnostic(\"{EFFECT_FN}\", x);\n    return x;\n}}\n"
             ),
             Kind::ArmMutation | Kind::TypeMutation => {
@@ -274,9 +316,12 @@ pub fn mutate(program: &Program, kind: u32, site: u32) -> Mutant {
     // One draw in `PORT_ODDS` picks a kind of ports, the others keep their
     // kinds. A program without a site of ports falls back to the earlier
     // kinds.
-    let old_kinds = KINDS.len() - PORT_KINDS;
+    let old_kinds = OLD_KINDS;
+    let spare = kind as usize / PORT_ODDS;
     let first = if kind as usize % PORT_ODDS == PORT_ODDS - 1 {
-        old_kinds + (kind as usize / PORT_ODDS) % PORT_KINDS
+        old_kinds + spare % PORT_KINDS
+    } else if spare % FIELD_ODDS == FIELD_ODDS - 1 {
+        old_kinds + PORT_KINDS + (spare / FIELD_ODDS) % FIELD_KINDS
     } else {
         kind as usize % old_kinds
     };
