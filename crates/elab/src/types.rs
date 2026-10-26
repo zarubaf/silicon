@@ -1141,6 +1141,19 @@ impl Types {
             .args
             .iter()
             .fold(1u64, |sum, arg| sum.saturating_add(arg.size()));
+        self.seal_spec(s, size, fields, meta, depth)
+    }
+
+    /// Completes the specialization `s` with the recursive size `size` of its struct type, its
+    /// field types, and its metadata, and gives its struct type.
+    fn seal_spec(
+        &mut self,
+        s: SpecId,
+        size: u64,
+        fields: Vec<TyId>,
+        meta: Meta,
+        depth: u64,
+    ) -> TyId {
         let strings = fields.iter().any(|field| field.holds_string());
         // The function flag of a struct reads the field types, not the static arguments.
         let funcs = fields.iter().any(|field| field.holds_fn());
