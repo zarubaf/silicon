@@ -22,11 +22,11 @@
 # line. So the `docs` commit that adds a row can pass before the `test` commit that adds its lines.
 # `cargo xtask spec-texts --strict`, which `just ci` runs, makes every finding an error: add or
 # remove the lines in a `test` commit.
-pin | S011 Static handle type {s}=a key of `@TypeOf` | 354
-pin | S011 Static handle type {s}=a key of `@ports` | 354
-pin | S011 Static handle type {s}=a key of `@field` | 354
-pin | S011 Handle at a static position {s}=a const | 354
-pin | S011 Domain at a static position {s}=a const | 354
+pin | S011 Static handle type {s}=a key of `@TypeOf` | 407
+pin | S011 Static handle type {s}=a key of `@ports` | 407
+pin | S011 Static handle type {s}=a key of `@field` | 407
+pin | S011 Handle at a static position {s}=a const | 407
+pin | S011 Domain at a static position {s}=a const | 407
 lean | S011 Static part of a `match` | 311
 rust | S011 Static part of a `match` | 311
 lean | S010 Memory as data | 314
