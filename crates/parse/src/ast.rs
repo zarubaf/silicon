@@ -695,15 +695,6 @@ impl Expr {
         }
     }
 
-    /// The builtin and the operands of a builtin node, in source order. Another node has none.
-    #[must_use]
-    pub fn builtin_operands(&self) -> Option<(Builtin, Vec<&Expr>)> {
-        match self {
-            Expr::Builtin { args, .. } => Some((args.builtin(), args.operands().collect())),
-            _ => None,
-        }
-    }
-
     fn leaf() -> Expr {
         Expr::Bool {
             pos: Pos { line: 0, col: 0 },
