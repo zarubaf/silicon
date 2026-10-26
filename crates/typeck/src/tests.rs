@@ -1528,6 +1528,39 @@ fn the_operand_of_typeof_is_no_static_position_but_its_indices_and_keys_are() {
 }
 
 #[test]
+fn the_operand_of_ports_is_no_static_position_but_its_indices_and_keys_are() {
+    ok(&mod_body("reg r: Bool = false;\nlet t = @ports(r);"));
+    ok(&mod_body(
+        "reg r: UInt[8] = 0;\nlet x: UInt[data_bits(@ports(r))] = 0;",
+    ));
+    for (src, line, col) in [
+        (
+            "reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t = @ports(rs[w]);",
+            4,
+            19,
+        ),
+        (
+            "reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t: @ports(rs[w]) = 0;",
+            4,
+            18,
+        ),
+        (
+            "reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t = @field(@ports(rs[w]), 0);",
+            4,
+            26,
+        ),
+    ] {
+        fails(&mod_body(src), S005, line, col);
+    }
+    assert_eq!(
+        message(&mod_body(
+            "reg rs: [Bool; 2] = [false, false];\nwire w: UInt[1];\nlet t = @ports(rs[w]);"
+        )),
+        "`w` is a wire; a static position needs a static value"
+    );
+}
+
+#[test]
 fn the_argument_of_typeinfo_is_no_static_position_but_its_indices_are() {
     ok(&mod_body("reg r: Bool = false;\nlet t = @typeInfo(r);"));
     ok(&mod_body(
@@ -1566,11 +1599,10 @@ fn a_builtin_in_a_type_position_is_no_static_position_but_its_indices_are() {
 
 #[test]
 fn an_index_after_a_builtin_type_is_s007_at_the_at() {
-    let text = |q: &str| {
-        format!(
-            "a type from `{q}` takes 0 argument(s), but it has 1; remove the index after `{q}(...)`"
-        )
+    let text = |q: &str, h: &str| {
+        format!("`{q}(...)` in a type position takes 0 argument(s), but it has 1; {h}")
     };
+    let complete = "the type is complete, so remove the index";
     for (ty, line, col, q) in [
         ("@TypeOf(x)[8]", 3, 8, "@TypeOf"),
         ("@Struct(x)[8]", 3, 8, "@Struct"),
@@ -1582,15 +1614,58 @@ fn an_index_after_a_builtin_type_is_s007_at_the_at() {
     ] {
         let src = mod_body(&format!("input x: UInt[8];\nlet y: {ty} = x;"));
         fails(&src, S007, line, col);
-        assert_eq!(message(&src), text(q), "{ty}");
+        assert_eq!(message(&src), text(q, complete), "{ty}");
     }
     // The chain reports once. The last index has two arguments and reports nothing.
     let src = mod_body("input x: UInt[8];\nlet y: @TypeOf(x)[1][2, 3] = x;");
-    assert_eq!(
-        message(&src),
-        "a type from `@TypeOf` takes 0 argument(s), but it has 1; remove the index after \
-         `@TypeOf(...)`"
-    );
+    assert_eq!(message(&src), text("@TypeOf", complete));
+}
+
+#[test]
+fn an_index_after_a_builtin_type_has_the_fix_of_its_builtin() {
+    let text = |q: &str, h: &str| {
+        format!("`{q}(...)` in a type position takes 0 argument(s), but it has 1; {h}")
+    };
+    for (ty, want) in [
+        (
+            "@typeInfo(x)[8]",
+            text(
+                "@typeInfo",
+                "`@typeInfo` gives a record, so remove the index, and select a `Type` from the \
+                 record, for example `@field(@typeInfo(T), \"element\")`",
+            ),
+        ),
+        (
+            "@field(x, 0)[8]",
+            text(
+                "@field",
+                "remove the index, or select inside `@field`, for example \
+                 `@field(@field(x, k), i)`",
+            ),
+        ),
+    ] {
+        let src = mod_body(&format!("input x: UInt[8];\nlet y: {ty} = x;"));
+        fails(&src, S007, 3, 8);
+        assert_eq!(message(&src), want, "{ty}");
+    }
+}
+
+#[test]
+fn an_index_after_ports_in_a_type_has_its_own_text() {
+    let want = "`@ports` gives a `List[PortInfo]`; select a port type with \
+                `@field(@ports(u)[0], \"ty\")`";
+    for (ty, line, col) in [
+        ("@ports(x)[8]", 3, 8),
+        ("@ports(x)[8, 9]", 3, 8),
+        ("@ports(x)[x]", 3, 8),
+        ("[@ports(x)[8]; 2]", 3, 9),
+        ("(@ports(x), @ports(x)[1])", 3, 20),
+        ("@ports(x)[1][2][3]", 3, 8),
+    ] {
+        let src = mod_body(&format!("input x: UInt[8];\nlet y: {ty} = x;"));
+        fails(&src, S007, line, col);
+        assert_eq!(message(&src), want, "{ty}");
+    }
 }
 
 #[test]
