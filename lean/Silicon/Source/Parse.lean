@@ -206,6 +206,10 @@ def enumParamsText : String :=
   "an enum with parameters is not supported yet; remove the parameters, and give each payload " ++
     "a fixed type"
 
+def secondDomainText : String :=
+  "a second clock domain is not supported yet; it comes with more domains (#11); a module has " ++
+    "one domain or none, so keep one name in the `domains` clause"
+
 def packagePath (t : Token) : P α := throw ⟨.S004, t.pos, packagePathText⟩
 
 def sym (s : String) : P Unit := do
@@ -956,7 +960,7 @@ def domainNames : P (List Ident) := do
   if ← acceptSym ")" then return [n]
   sym ","
   let t ← peek
-  if t.kind matches .ident _ then later t "more than one domain"
+  if t.kind matches .ident _ then throw ⟨.S004, t.pos, secondDomainText⟩
   sym ")"
   return [n]
 
