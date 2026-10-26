@@ -1556,15 +1556,15 @@ const PINNED: [u64; 256] = [
     0x1479_b723_234d_9f97,
 ];
 
-/// A program with no `@field` is the program of the same tape before the
-/// form existed: a form draws only from its own tape and adds only text that
-/// holds `@field`. At least 10% of the tapes hold no `@field`.
+/// A program with no `@field` and no query is the program of the same tape
+/// before the form existed: a form draws only from its own tape and adds only
+/// text that holds `@field`. At least 10% of the tapes hold neither.
 #[test]
 fn a_program_without_field_forms_keeps_its_text() {
     let mut kept = 0;
     for (tape, pinned) in tapes(256).into_iter().zip(PINNED) {
         let text = build(tape).map_or_else(|e| e.to_string(), |p| p.text());
-        if !text.contains("@field") {
+        if !text.contains("@field") && !has_query(&text) {
             assert_eq!(fingerprint(&text), pinned, "{text}");
             kept += 1;
         }
