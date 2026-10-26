@@ -54,6 +54,7 @@ fn flipped(t: &Ty) -> Ty {
         Ty::UInt(w) => Ty::SInt(w.clone()),
         Ty::SInt(w) => Ty::UInt(w.clone()),
         Ty::Enum(name) => Ty::Enum(name.clone()),
+        Ty::Rec(name) => Ty::Rec(name.clone()),
         Ty::Query(t, _) => flipped(t),
     }
 }

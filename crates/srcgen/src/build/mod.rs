@@ -53,6 +53,7 @@ macro_rules! called {
 
 mod body;
 mod container;
+mod datarec;
 mod declare;
 mod diagnostics;
 mod enum_hw;
@@ -188,6 +189,7 @@ enum Lane {
     Temp,
     Field,
     Query,
+    Rec,
 }
 
 /// The tape of choices. A copy of `below`, `between`, `index`, and `flag`
@@ -261,7 +263,7 @@ fn reads_root(e: &SExpr, root: &str) -> bool {
 fn ty_reads_root(t: &Ty, root: &str) -> bool {
     match t {
         Ty::UInt(w) | Ty::SInt(w) => reads_root(w, root),
-        Ty::Bool | Ty::Enum(_) => false,
+        Ty::Bool | Ty::Enum(_) | Ty::Rec(_) => false,
         Ty::Query(t, _) => ty_reads_root(t, root),
     }
 }
@@ -594,6 +596,9 @@ struct Stats {
     port_lost: u32,
     field_steps: u32,
     field_records: u32,
+    rec_wires: u32,
+    rec_regs: u32,
+    rec_chains: u32,
     field_tuples: u32,
     field_arrays: u32,
     field_lists: u32,
@@ -664,6 +669,7 @@ struct Builder {
     /// The same numbers from the end, mixed with a fifth constant. The
     /// queries draw from it.
     query: Tape,
+    rec: Tape,
     /// The tape that `on_side`, `on_hand`, or `on_port` has swapped into
     /// `tape`, if any.
     swapped: Option<Lane>,
@@ -700,6 +706,10 @@ struct Builder {
     /// `diagnostic`, and the groups of statements that use them.
     key_fns: [Option<String>; 3],
     key_groups: u32,
+    /// The structs of hardware records so far, inner before outer, and the
+    /// groups that made them.
+    rec_defs: Vec<StructDef>,
+    recs: u32,
     /// The names that a query can read in the frames that are open, and the
     /// groups of queries made so far.
     ops: Vec<query::Op>,
@@ -789,6 +799,7 @@ impl Builder {
             Lane::Temp => &mut self.temp,
             Lane::Field => &mut self.field,
             Lane::Query => &mut self.query,
+            Lane::Rec => &mut self.rec,
         };
         std::mem::swap(&mut self.tape, parked);
     }
@@ -810,6 +821,7 @@ impl Builder {
             temp: mixed_tape(&tape, 0x85EB_CA6B, 15),
             field: mixed_tape(&tape, 0xC2B2_AE35, 13),
             query: mixed_tape(&tape, 0x27D4_EB2F, 14),
+            rec: mixed_tape(&tape, 0x1656_67B1, 16),
             tape: Tape {
                 numbers: tape.into_iter(),
             },
@@ -833,6 +845,8 @@ impl Builder {
             max_fields: field::MAX_FIELDS,
             key_fns: [None, None, None],
             key_groups: 0,
+            rec_defs: Vec::new(),
+            recs: 0,
             ops: Vec::new(),
             kids: Vec::new(),
             queries: 0,

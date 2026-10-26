@@ -43,6 +43,7 @@ impl Builder {
         let structs = self.structs.iter().cloned().map(Item::Struct);
         self.enum_items()
             .chain(structs)
+            .chain(self.rec_items())
             .chain(self.alias_items())
             .chain(consts)
             .chain(fns)

@@ -624,7 +624,7 @@ pub(crate) fn record_ty(name: &str, args: &[Value], scope: &Scope) -> Result<Rec
             FieldTy::UInt(w) => STy::UInt(field_width(w, &env, scope)?),
             FieldTy::SInt(w) => STy::SInt(field_width(w, &env, scope)?),
             // A struct of handles has no static value.
-            FieldTy::Handle(_) => return Err(Fault::Type),
+            FieldTy::Handle(_) | FieldTy::Rec(_) => return Err(Fault::Type),
         };
         fields.push((f.clone(), t));
     }
@@ -683,7 +683,7 @@ pub(crate) fn concrete(t: &Ty, env: &Env, scope: &Scope) -> Result<Scalar, Fault
         Ty::Bool => Scalar::Bool,
         Ty::UInt(w) => Scalar::UInt(width(w)?),
         Ty::SInt(w) => Scalar::SInt(width(w)?),
-        Ty::Enum(_) => return Err(Fault::Type),
+        Ty::Enum(_) | Ty::Rec(_) => return Err(Fault::Type),
         Ty::Query(t, _) => concrete(t, env, scope)?,
     })
 }

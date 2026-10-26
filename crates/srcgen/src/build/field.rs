@@ -15,7 +15,7 @@
 use super::stat::{Reach, bin, int};
 use super::{Builder, Lane};
 use crate::eval::Value;
-use crate::program::{FTy, FieldTy, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt};
+use crate::program::{FTy, HExpr, Item, Place, Radix, SBin, SExpr, STy, Stmt};
 use num_bigint::BigInt;
 use std::collections::BTreeSet;
 
@@ -141,6 +141,19 @@ impl Builder {
         }
     }
 
+    /// The key `"m" + str(call + offset)` of the field `m<k>`, if a call
+    /// can give `k`.
+    pub(super) fn call_name_key(&mut self, field: &str, r: Reach<'_>) -> Option<SExpr> {
+        let (letter, digits) = field.split_at(field.len().min(1));
+        let call = self.call_key(digits.parse().ok()?, r)?;
+        note!(self, field_call_keys);
+        Some(bin(
+            SBin::Add,
+            SExpr::Str(letter.to_owned()),
+            SExpr::StrOf(Box::new(call)),
+        ))
+    }
+
     /// A static `String` name whose value is `text` in each env.
     fn string_name(&self, text: &str, r: Reach<'_>) -> Option<SExpr> {
         let envs = r.envs?;
@@ -234,7 +247,6 @@ impl Builder {
                 _ => None,
             })
             .flat_map(|def| def.fields.iter())
-            .filter(|(_, t)| matches!(t, FieldTy::Handle(_)))
             .map(|(f, _)| f.clone())
             .collect();
         self.on_field(|b| {

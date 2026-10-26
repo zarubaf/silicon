@@ -319,7 +319,7 @@ impl<'a> Walk<'a> {
                     match t {
                         FieldTy::UInt(w) | FieldTy::SInt(w) => self.width(w),
                         FieldTy::Handle(t) => self.fty(t),
-                        FieldTy::Static(_) => {}
+                        FieldTy::Static(_) | FieldTy::Rec(_) => {}
                     }
                 }
             }
@@ -1319,7 +1319,7 @@ impl<'a> Walk<'a> {
     fn ty(&mut self, t: &mut Ty) {
         match t {
             Ty::UInt(w) | Ty::SInt(w) => self.width(w),
-            Ty::Enum(name) => self.use_name(name),
+            Ty::Enum(name) | Ty::Rec(name) => self.use_name(name),
             // A site inside the type would change what the query hides.
             Ty::Query(_, form) => {
                 self.query_type_sites(form);

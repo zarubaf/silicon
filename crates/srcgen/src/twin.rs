@@ -30,8 +30,9 @@
 use super::build::STATIC_PREFIXES;
 use super::eval::{Env, Fault, Scope, Value, eval, exec_static, leaf_bits, leaves, loop_values};
 use super::program::{
-    EnumDef, FTy, FwdPort, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Ports, Program,
-    Radix, SExpr, STy, Scalar, Stmt, Ty, helper_of, is_resource_helper, render_items,
+    EnumDef, FTy, FieldTy, FwdPort, HBin, HExpr, Item, Match, PTy, Pattern, Place, Port, Ports,
+    Program, Radix, SExpr, STy, Scalar, Stmt, StructDef, Ty, helper_of, is_resource_helper,
+    render_items,
 };
 use super::public::Public;
 use num_bigint::{BigInt, BigUint, Sign};
@@ -410,6 +411,8 @@ struct Frame {
     names: BTreeMap<String, String>,
     /// The resource that each handle formal of an inlined helper names.
     handles: BTreeMap<String, HVal>,
+    /// The struct of each record of hardware data that the frame declares.
+    records: BTreeMap<String, String>,
     suffix: String,
 }
 
@@ -663,6 +666,7 @@ impl Writer<'_> {
             Ty::UInt(w) => Ty::UInt(self.fold(w, fr)),
             Ty::SInt(w) => Ty::SInt(self.fold(w, fr)),
             Ty::Enum(name) => Ty::Enum(name.clone()),
+            Ty::Rec(name) => Ty::Rec(name.clone()),
             Ty::Query(t, _) => self.ty(t, fr),
         }
     }
@@ -774,6 +778,9 @@ impl Writer<'_> {
     }
 
     fn hexpr(&self, e: &HExpr, fr: &Frame) -> HExpr {
+        if let Some((root, path)) = self.record_path(e, fr) {
+            return HExpr::Name(format!("{}_{}", fr.name(&root), path.join("_")));
+        }
         // A static condition selects one arm, so the other arm has no value
         // in the frame (a key can be out of range there).
         if let HExpr::If(c, then, els) = e
@@ -983,6 +990,7 @@ impl Writer<'_> {
             env,
             names: fr.names.clone(),
             handles: fr.handles.clone(),
+            records: fr.records.clone(),
             suffix,
         };
         Stmt::Block(self.stmts(body, &mut inner))
@@ -1001,6 +1009,16 @@ impl Writer<'_> {
                 out.push(Stmt::Output(n.clone(), t));
             }
             Stmt::Port(p) => self.port(p, fr),
+            Stmt::Reg(n, Ty::Rec(def), reset) => self.record_reg(n, def, reset, fr, out),
+            Stmt::Wire(n, Ty::Rec(def)) => self.record_wire(n, def, fr, out),
+            Stmt::Connect(Place::Name(n), value) if fr.records.contains_key(n) => {
+                let mut leaves = Vec::new();
+                self.record_values(value, &mut Vec::new(), &mut leaves);
+                for (path, v) in leaves {
+                    let leaf = format!("{}_{}", fr.name(n), path.join("_"));
+                    out.push(Stmt::Connect(Place::Name(leaf), self.hexpr(&v, fr)));
+                }
+            }
             Stmt::Reg(n, t, reset) => {
                 let (t, reset) = (self.ty(t, fr), self.fold(reset, fr));
                 out.push(Stmt::Reg(fr.declare(n), t, reset));
@@ -1155,6 +1173,148 @@ impl Writer<'_> {
             ty,
             value,
         });
+    }
+
+    /// The struct `name` of hardware data among the items.
+    fn data_struct(&self, name: &str) -> Option<&StructDef> {
+        self.items.iter().find_map(|item| match item {
+            Item::Struct(def) if def.name == name => Some(def),
+            _ => None,
+        })
+    }
+
+    /// The leaves of the record struct `def`: the path of fields and the
+    /// type of each. The twin has no record, so it declares one wire or
+    /// register for each leaf.
+    fn record_leaves(
+        &self,
+        def: &str,
+        fr: &Frame,
+        path: &mut Vec<String>,
+        out: &mut Vec<(Vec<String>, Ty)>,
+    ) {
+        let Some(def) = self.data_struct(def) else {
+            self.fault.set(true);
+            return;
+        };
+        for (f, t) in &def.fields {
+            path.push(f.clone());
+            match t {
+                FieldTy::UInt(w) => out.push((path.clone(), Ty::UInt(self.fold(w, fr)))),
+                FieldTy::SInt(w) => out.push((path.clone(), Ty::SInt(self.fold(w, fr)))),
+                FieldTy::Rec(inner) => self.record_leaves(inner, fr, path, out),
+                FieldTy::Static(_) | FieldTy::Handle(_) => self.fault.set(true),
+            }
+            path.pop();
+        }
+    }
+
+    /// `wire w: R;` as one wire for each leaf.
+    fn record_wire(&mut self, n: &str, def: &str, fr: &mut Frame, out: &mut Vec<Stmt>) {
+        let mut leaves = Vec::new();
+        self.record_leaves(def, fr, &mut Vec::new(), &mut leaves);
+        let name = fr.declare(n);
+        fr.records.insert(n.to_owned(), def.to_owned());
+        for (path, t) in leaves {
+            out.push(Stmt::Wire(format!("{name}_{}", path.join("_")), t));
+        }
+    }
+
+    /// `reg r: R = reset;` as one register for each leaf, with the leaf of
+    /// the reset value.
+    fn record_reg(
+        &mut self,
+        n: &str,
+        def: &str,
+        reset: &SExpr,
+        fr: &mut Frame,
+        out: &mut Vec<Stmt>,
+    ) {
+        let mut leaves = Vec::new();
+        self.record_leaves(def, fr, &mut Vec::new(), &mut leaves);
+        let name = fr.declare(n);
+        fr.records.insert(n.to_owned(), def.to_owned());
+        let mut resets = Vec::new();
+        self.record_resets(reset, &mut Vec::new(), &mut resets);
+        for (path, t) in leaves {
+            let value = resets
+                .iter()
+                .find(|(p, _)| *p == path)
+                .map(|(_, v)| self.fold(v, fr));
+            let Some(value) = value else {
+                self.fault.set(true);
+                continue;
+            };
+            out.push(Stmt::Reg(format!("{name}_{}", path.join("_")), t, value));
+        }
+    }
+
+    /// The reset value of each leaf of a record value `e`, by the path of
+    /// its fields. The fields of a struct are in declaration order.
+    fn record_resets(
+        &self,
+        e: &SExpr,
+        path: &mut Vec<String>,
+        out: &mut Vec<(Vec<String>, SExpr)>,
+    ) {
+        let SExpr::Record(name, _, fields) = e else {
+            out.push((path.clone(), e.clone()));
+            return;
+        };
+        let Some(def) = self.data_struct(name) else {
+            self.fault.set(true);
+            return;
+        };
+        for ((f, _), v) in def.fields.iter().zip(fields) {
+            path.push(f.clone());
+            self.record_resets(v, path, out);
+            path.pop();
+        }
+    }
+
+    /// The value of each leaf of a record value `e` of hardware.
+    fn record_values(
+        &self,
+        e: &HExpr,
+        path: &mut Vec<String>,
+        out: &mut Vec<(Vec<String>, HExpr)>,
+    ) {
+        let HExpr::Record(name, fields) = e else {
+            out.push((path.clone(), e.clone()));
+            return;
+        };
+        let Some(def) = self.data_struct(name) else {
+            self.fault.set(true);
+            return;
+        };
+        for ((f, _), v) in def.fields.iter().zip(fields) {
+            path.push(f.clone());
+            self.record_values(v, path, out);
+            path.pop();
+        }
+    }
+
+    /// The record of a read and the path of fields from it, if the read
+    /// selects a leaf of a record of hardware data.
+    fn record_path(&self, e: &HExpr, fr: &Frame) -> Option<(String, Vec<String>)> {
+        match e {
+            HExpr::Name(n) if fr.records.contains_key(n) => Some((n.clone(), Vec::new())),
+            HExpr::Field(u, q) if fr.records.contains_key(u) => Some((u.clone(), vec![q.clone()])),
+            HExpr::Member(b, q) => {
+                let (root, mut path) = self.record_path(b, fr)?;
+                path.push(q.clone());
+                Some((root, path))
+            }
+            HExpr::FieldOf(b, k) => {
+                let (root, mut path) = self.record_path(b, fr)?;
+                let Some(Value::Str(f)) = self.value(k, fr) else {
+                    return None;
+                };
+                path.push(f);
+                Some((root, path))
+            }
+            _ => None,
+        }
     }
 
     /// A `mem` statement, or a `write_port` call.
