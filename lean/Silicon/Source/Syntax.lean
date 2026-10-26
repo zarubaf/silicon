@@ -67,18 +67,10 @@ def Builtin.ofName : String → Option Builtin
   | "field" => some .field
   | _ => none
 
-/-! The number of operands of a builtin (section 5.6): 2 for `@field`, 1 for each other. -/
-def Builtin.arity : Builtin → Nat
-  | .typeOf | .typeInfo | .struct => 1 | .field => 2
-
 /-! The form of a builtin in section 9.3, for the fix of "Builtin arity". -/
 def Builtin.form : Builtin → String
   | .typeOf => "@TypeOf(x)" | .typeInfo => "@typeInfo(T)" | .struct => "@Struct(fs)"
   | .field => "@field(x, k)"
-
-/-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
-def Builtin.arityText (b : Builtin) (m : Nat) : String :=
-  s!"`@{b.name}` takes {b.arity} argument(s), but it has {m}; write `{b.form}`"
 
 /-!
 An expression and a type expression. The two are mutually recursive, because an array type
@@ -171,13 +163,24 @@ def BuiltinArgs.list : BuiltinArgs → List Expr
   | .typeOf x | .typeInfo x | .struct x => [x]
   | .field b k => [b, k]
 
-/-! The operands of the builtin `b` from the list `xs`, if their number is the arity of `b`. -/
+/-! The operands of the builtin `b` from the list `xs`, if their number fits `b`. -/
 def BuiltinArgs.ofList? : Builtin → List Expr → Option BuiltinArgs
   | .typeOf, [x] => some (.typeOf x)
   | .typeInfo, [x] => some (.typeInfo x)
   | .struct, [x] => some (.struct x)
   | .field, [b, k] => some (.field b k)
   | _, _ => none
+
+/-!
+The number of operands of a builtin (section 5.6): the least number that `BuiltinArgs.ofList?`
+takes, so the two never differ. The search stops above each arity of section 9.3.
+-/
+def Builtin.arity (b : Builtin) : Nat :=
+  ((List.range 4).find? fun n => (BuiltinArgs.ofList? b (List.replicate n default)).isSome).getD 0
+
+/-! The `S001` text "Builtin arity" of section 6.2 for the builtin `b` with `m` operands. -/
+def Builtin.arityText (b : Builtin) (m : Nat) : String :=
+  s!"`@{b.name}` takes {b.arity} argument(s), but it has {m}; write `{b.form}`"
 
 /-!
 The operands `a` fit their builtin (section 9.3): the operand of `@TypeOf` is a place. The
