@@ -544,7 +544,7 @@ impl Parser<'_> {
     fn later_builtin(&mut self) -> Res {
         let name = self.next_text();
         if self.next() != Some(Ident) {
-            self.syntax_error_at(self.offset_of(1), "expected the name of a builtin");
+            self.syntax_error_at(self.offset_of(1), "expected a builtin name");
         } else if BUILTINS.contains(&name) {
             self.later_slice(self.offset(), "a builtin");
         } else {
