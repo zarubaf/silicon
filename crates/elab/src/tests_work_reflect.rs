@@ -344,10 +344,11 @@ fn w3_the_member_map_of_a_struct_takes_log_compares() {
 }
 
 /// W4. A name of 2^20 characters that breaks the name rule at its last character. The name
-/// charges its size first, so the fuel that ends at that charge scans nothing. The rule scans the
-/// name once, and the error text names at most 64 characters of it, so no text copies the name.
+/// charges its size first, and the count of its characters for that charge is the first scan. The
+/// rule scans the name once more, and the error text names at most 64 characters of it, so no text
+/// copies the name. The fuel that ends at the charge scans the name only for the count.
 #[test]
-fn w4_a_long_invalid_name_is_scanned_once_after_its_charge() {
+fn w4_a_long_invalid_name_is_scanned_twice_and_charged_between() {
     let len = 1usize << 20;
     let name = format!("{}-", "a".repeat(len));
     let src = struct_module("", &format!("[FieldInfo(\"{name}\", Bool)]"), 1);
@@ -361,16 +362,16 @@ fn w4_a_long_invalid_name_is_scanned_once_after_its_charge() {
     assert!(text.len() < 256, "{} bytes of text", text.len());
     assert_eq!(
         whole.counts.scanned,
-        len as u64 + 1,
-        "the name is scanned once"
+        2 * (len as u64 + 1),
+        "the name is scanned for its charge and once for the rule"
     );
     assert!(
         whole.counts.text_bytes <= 1024,
         "{} bytes of text for the error",
         whole.counts.text_bytes
     );
-    // The charge of the name comes before its scan: the least fuel that reaches the name rule
-    // pays the charge, and the fuel one unit below it scans nothing.
+    // The charge of the name comes before the scan of the rule: the least fuel that reaches the
+    // name rule pays the charge, and the fuel one unit below it scans the name for the count only.
     let named = |r: &Run| r.error.as_ref().is_some_and(|e| e.0 == "S022");
     let first = first_fuel(&src, (1, 100_000_000), named);
     let below = run_with(first - 1, 1000, &src);
@@ -380,7 +381,11 @@ fn w4_a_long_invalid_name_is_scanned_once_after_its_charge() {
         text.contains(&format!("cannot pay {} unit(s)", len + 2)),
         "the charge of the name: {text}"
     );
-    assert_eq!(below.counts.scanned, 0, "a name scanned before its charge");
+    assert_eq!(
+        below.counts.scanned,
+        len as u64 + 1,
+        "a name scanned by the rule before its charge"
+    );
 }
 
 /// The run of two chains of `d` nested generated record types: each type holds the one before it,
