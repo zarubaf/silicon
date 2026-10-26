@@ -353,17 +353,16 @@ def counts (p : Pos) (t : Ty) : M (Nat × Array (Nat × Array Ty)) := do
   | _ => return (0, #[])
 
 /-!
-`@typeInfo(t)` at the node `p`, after the use of `TypeInfo` gave `ti` (section 6.2, **`@typeInfo`
-order**, steps 5 to 8). The field types of `TypeInfo` give `FieldInfo` and `VariantInfo`. The
+`@typeInfo(t)` at the node `p`, after the use of `TypeInfo` gave `ti` and its fields `fs` (section
+6.2, **`@typeInfo` order**, steps 5 to 8). The field types give `FieldInfo` and `VariantInfo`. The
 call charges 1 for each field and for each variant (`counts`). Then it adds the payload counts of
 the variants and charges 1 for each payload type. Only then the parts of the record exist
 (`infoOf`). Then the result gets its depth check (`S015`), and its recursive size charges. This
 size counts each field type, each payload type, and each name as a string. Only then the record
 exists.
 -/
-def typeInfo (p : Pos) (ti t : Ty) : M Value := do
-  let (some (_, Ty.list fi), some (_, Ty.list vi)) :=
-      (((← get).specs.parts ti).bind (·[1]?), ((← get).specs.parts ti).bind (·[5]?))
+def typeInfo (p : Pos) (ti : Ty) (fs : Array (String × Ty)) (t : Ty) : M Value := do
+  let (some (_, Ty.list fi), some (_, Ty.list vi)) := (fs[1]?, fs[5]?)
     | fail .S010 p s!"{ti.text} has no entry"
   let (f, vs) ← counts p t
   charge p (f + vs.size)
@@ -483,32 +482,58 @@ def portsArg (pos : Pos) : Query → M Iface
     fail .S010 pos s!"`@ports` takes an instance handle, not {a}; {portsHint q}"
 
 /-!
+The flag and the key of the `PortKey` of the port `q` (section 9.3): `(true, k)` for the entry
+`n[k]`, and `(false, 0)` for a scalar port.
+-/
+def Port.keyOf (q : Port) : Bool × Nat :=
+  match q.key with
+  | some k => (true, k)
+  | none => (false, 0)
+
+/-!
 The `PortInfo` record of the port `q` of an interface with the domain `d` (section 9.3). `pi` and
 `pk` are the struct types `PortInfo` and `PortKey`. The name is the public name, never the core
 name. The type is the data type, also for an input.
 -/
 def portInfo (pi pk : Ty) (d : String) (q : Port) : Value :=
-  let key : Value := match q.key with
-    | some k => .record pk #[.str q.name, .bool true, .int k]
-    | none => .record pk #[.str q.name, .bool false, .int 0]
-  .record pi #[key, .type q.ty, .bool q.input, .str d]
+  .record pi #[.record pk #[.str q.name, .bool q.keyOf.1, .int q.keyOf.2], .type q.ty,
+    .bool q.input, .str d]
 
 /-!
-`@ports` of the interface `c` at its `@` `p`, after the use of `PortInfo` gave `pi` (section 6.2,
-**`@ports` order**, steps 5 to 8). The field type of `key` gives `PortKey`. The call charges 1 for
-each port, from the stored schema. Then the result gets its depth check (`S015`), and its
-recursive size charges. A name and a domain are ASCII, so a string has the size 1 plus its
-length. Only then the list exists, in the order of the schema. The domain is the name of the
-`domains(d)` clause of the child, `clock` without a clause, and empty for `domains()`.
+The depth of the `PortInfo` list of the interface `c` (section 6.2, **`@ports` order**, step 6).
+It reads the depths of `pi`, of `pk`, and of each port type. Each other field is a scalar of the
+depth 1. It equals the depth of the list of `portInfo`, which does not exist yet.
 -/
-def portsOf (p : Pos) (pi : Ty) (c : Iface) : M Value := do
-  let some (_, pk) := ((← get).specs.parts pi).bind (·[0]?)
-    | fail .S010 p s!"{pi.text} has no entry"
+def portsDepth (pi pk : Ty) (c : Iface) : Nat :=
+  let key := 1 + max pk.depth 1
+  let tys := c.schema.foldl (fun m q => max m q.ty.depth) 0
+  1 + max pi.depth (if c.schema.isEmpty then 0 else 1 + max pi.depth (max key (max tys 1)))
+
+/-!
+The recursive size of the `PortInfo` record of the port `q` with the domain `d` (section 6.2,
+**`@ports` order**, step 7). It reads the size of the port type and the length of the name and the
+domain. It equals the size of `portInfo`, which does not exist yet.
+-/
+def portInfoSize (d : String) (q : Port) : Nat :=
+  let key := 1 + (Value.str q.name).size + 1 + (Value.int q.keyOf.2).size
+  1 + key + q.ty.size + 1 + (Value.str d).size
+
+/-!
+`@ports` of the interface `c` at its `@` `p`, after the use of `PortInfo` gave `pi` and its fields
+`fs` (section 6.2, **`@ports` order**, steps 5 to 8). The field type of `key` gives `PortKey`. The
+call charges 1 for each port, from the stored schema. This charge pays for the measure of the
+result: its depth gets its check (`S015`, `portsDepth`), then its recursive size charges
+(`portInfoSize`). A name and a domain are ASCII, so a string has the size 1 plus its length. Only
+then the list exists, in the order of the schema. The domain is the name of the `domains(d)`
+clause of the child, `clock` without a clause, and empty for `domains()`.
+-/
+def portsOf (p : Pos) (pi : Ty) (fs : Array (String × Ty)) (c : Iface) : M Value := do
+  let some (_, pk) := fs[0]? | fail .S010 p s!"{pi.text} has no entry"
+  let d := c.domain.getD ""
   charge p c.schema.size
-  let v : Value := .list pi (c.schema.map (portInfo pi pk (c.domain.getD "")))
-  bounded p v.depth
-  charge p v.size
-  return v
+  bounded p (portsDepth pi pk c)
+  charge p (c.schema.foldl (fun n q => n + portInfoSize d q) 1)
+  return .list pi (c.schema.map (portInfo pi pk d))
 
 /-!
 The fix `{h}` of "Builtin as a type" for the builtin `q` (section 6.2). `@TypeOf` and `@Struct`

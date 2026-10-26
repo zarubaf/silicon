@@ -1696,11 +1696,11 @@ def instanceTy (ev : Resolve.Expr → M (Option Out)) (ty : Resolve.TypeExpr →
 /-!
 The use at `p` of the struct item `i` with the name `x`, the parameters `ps`, the fields `fs`,
 and the prelude flag `pre`, with the values `args` of its arguments (`spec`). `ty` evaluates a
-type expression.
+type expression. It gives the type and its fields (`specialize`).
 -/
 def specOf (ty : Resolve.TypeExpr → M Ty) (p : Pos) (i : Nat) (x : Ident)
     (ps : List Resolve.Param) (fs : List Resolve.StructField) (pre : Bool) (args : List Val) :
-    M Ty := do
+    M (Ty × Array (String × Ty)) := do
   if ps.length != args.length then
     fail .S007 p (Check.structTypeArity x.name ps.length args.length)
   if (← read).binding.contains i then
@@ -1721,7 +1721,7 @@ def responseTy (ty : Resolve.TypeExpr → M Ty) (p : Pos) (t : Ty) : M Ty := do
   let i := Resolve.responseIndex (← read).items.size
   let some (.struct _ x ps fs true) := (← read).items[i]?
     | fail .S010 p "the prelude struct `ReadResponse` is missing"
-  specOf ty p i x ps fs true [.static (.type t)]
+  return (← specOf ty p i x ps fs true [.static (.type t)]).1
 
 /-!
 The first use at `p` of the enum item `i` (sections 5.4 and 5.6). The item has the name `x`, the
@@ -2971,7 +2971,7 @@ mutual
           if let .name bp _ (.item i) := b then
             if let some (.struct ..) := (← read).items[i]? then
               charge bp 1
-              return some ⟨.static (.type (← spec n p i xs)), false, none⟩
+              return some ⟨.static (.type (← spec n p i xs).1), false, none⟩
           let [x] := xs | fail .S010 p "an index of a value has one argument"
           if let .name bp y (.family id _) := b then return some (← familySel n p bp y id x)
           let (o, done) ← indexBase n place p b x
@@ -3027,8 +3027,8 @@ mutual
           let o ← guardedBy (.arg .typeInfo) <|
             withReader (fun c => { c with arg := some r }) do need x (← eval n x)
           let t ← typeInfoArg x.pos o.value
-          let ti ← spec n p (Resolve.typeInfoIndex (← read).items.size) []
-          return some ⟨.static (← typeInfo p ti t), false, none⟩
+          let (ti, fs) ← spec n p (Resolve.typeInfoIndex (← read).items.size) []
+          return some ⟨.static (← typeInfo p ti fs t), false, none⟩
         | .builtin (.atStruct p x) => do
           -- Steps 2 to 4 of the `@Struct` order (section 6.2): the argument under the guard
           -- `arg` and its record, the copy, then the kind. A `[]` takes its typed use at
@@ -3039,7 +3039,7 @@ mutual
           charge p o.value.size
           let xs ← match o.value with
             | v@(.pending _ (.empty _)) => atUse p do
-              let fi ← spec n p (Resolve.fieldInfoIndex (← read).items.size) []
+              let (fi, _) ← spec n p (Resolve.fieldInfoIndex (← read).items.size) []
               let _ ← conformVal p (.array fi 0) v
               pure []
             | v => structArg x.pos v
@@ -3061,8 +3061,8 @@ mutual
           -- Steps 2 to 4 of the `@ports` order (section 6.2): the operand walk, the kind, then
           -- the use of `PortInfo`, which completes `PortKey`.
           let c ← portsArg x.pos (← queryPart n .ports x)
-          let pi ← spec n p (Resolve.portInfoIndex (← read).items.size) []
-          return some ⟨.static (← portsOf p pi c), false, none⟩
+          let (pi, fs) ← spec n p (Resolve.portInfoIndex (← read).items.size) []
+          return some ⟨.static (← portsOf p pi fs c), false, none⟩
         | .«match» p x as => do
           let v ← operand x.pos x (← need x (← eval n x)).value
           let t ← scrutTy x.pos v
@@ -3111,7 +3111,7 @@ mutual
         index n p k xs
       | .index p (.name bp _ (.item i)) xs => do
         charge bp 1
-        spec n p i xs
+        return (← spec n p i xs).1
       | .index p .. => fail .S007 p "a complete type takes no more index"
       | .unit p => do charge p Ty.unit.size; return .unit
       | .tuple p ts => do tupleTy p (← ts.mapM (typeExpr n))
@@ -3164,9 +3164,10 @@ mutual
   The typed uses give the key of the table. The first use evaluates the field types there. The
   key exists only after the parameter types, so a use of the struct while its parameter types
   evaluate is a cycle (`S019`). The prelude struct has no source position, so each error of its
-  work reports at `p` (`atUse`).
+  work reports at `p` (`atUse`). The use gives the type and its fields.
   -/
-  def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) : M Ty := structural do
+  def spec (n : Nat) (p : Pos) (i : Nat) (xs : List Resolve.Expr) :
+      M (Ty × Array (String × Ty)) := structural do
     let some (.struct _ x ps fs pre) := (← read).items[i]?
       | fail .S007 p "a complete type takes no index"
     let args ← operands n xs fun _ o => do
@@ -3304,7 +3305,7 @@ mutual
       | some (.alias _ _ ty) => do
         let (c, _) ← constant p x i do return (.type (← typeExpr n ty), .type)
         return ⟨.static c, true, none⟩
-      | some (.struct ..) => do return ⟨.static (.type (← spec n p i [])), true, none⟩
+      | some (.struct ..) => do return ⟨.static (.type (← spec n p i []).1), true, none⟩
       | some (.enum ..) => do return ⟨.static (.type (← enumUse n p i)), true, none⟩
       | some (.fn _ _ u ps ret _) => do
         if generic ps ret then fail .S010 p s!"`{x}` is generic; a generic function is not a value"

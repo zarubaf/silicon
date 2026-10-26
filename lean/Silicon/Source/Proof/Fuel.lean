@@ -698,14 +698,15 @@ theorem typeInfoArg_f (p : Pos) (v : Val) :
 theorem counts_f (p : Pos) (t : Ty) : Follows cap (counts p t) (counts p t) := by
   unfold counts; follows
 
-theorem typeInfo_f (p : Pos) (ti t : Ty) : Follows cap (typeInfo p ti t) (typeInfo p ti t) := by
+theorem typeInfo_f (p : Pos) (ti : Ty) (fs : Array (String × Ty)) (t : Ty) :
+    Follows cap (typeInfo p ti fs t) (typeInfo p ti fs t) := by
   unfold typeInfo; follows [counts_f, infoOf_f, bounded_f]
 
 theorem portsArg_f (pos : Pos) (q : Query) : Follows cap (portsArg pos q) (portsArg pos q) := by
   unfold portsArg; follows
 
-theorem portsOf_f (p : Pos) (pi : Ty) (c : Iface) :
-    Follows cap (portsOf p pi c) (portsOf p pi c) := by
+theorem portsOf_f (p : Pos) (pi : Ty) (fs : Array (String × Ty)) (c : Iface) :
+    Follows cap (portsOf p pi fs c) (portsOf p pi fs c) := by
   unfold portsOf; follows [bounded_f]
 
 theorem zero_f (p : Pos) (t : Ty) : Follows cap (zero p t) (zero p t) := by
