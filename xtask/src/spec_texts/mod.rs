@@ -19,6 +19,9 @@
 //! without its leading `@`. So `` `@{}` `` and `` `{}` `` both hold `{g}` = `@TypeOf`, but a hole in
 //! another place of the literal does not. A closed placeholder that ends the text is a fix clause
 //! when each value has two words or more. The rule does not check that a hole holds the values.
+//! A pin is not a family wildcard: a row with a closed placeholder needs a pin for each value of
+//! each placeholder, with the other placeholders as wildcards. `ALLOW_FILE` names the missing pin
+//! of a value as `pin | <row> {p}=<value> | <issue>`.
 //!
 //! The rule also reads the other direction. Each message literal at an error site of a front end
 //! (see `sites`) must be in a row, or `ALLOW_FILE` lists it as `unlisted`. A site that builds its
@@ -456,21 +459,45 @@ struct Sources {
     rust_sites: Vec<Site>,
 }
 
-/// Whether each part of a row is present. The fix is in the spec text, the rest is in `src`.
-fn row_checks(row: &Row, forms: &[Expansion], src: &Sources) -> Result<[(Part, bool); 4]> {
-    let normal = normalize(&row.text);
-    let pin = pin_regex(&normal)?;
-    Ok([
-        (Part::Fix, has_fix(row)),
-        (Part::Lean, holds(forms, &src.lean)),
-        (Part::Rust, holds(forms, &src.rust)),
-        (
-            Part::Pin,
-            src.pins
-                .iter()
-                .any(|(c, m)| *c == row.code && pin.is_match(m)),
-        ),
-    ])
+/// The texts that need a pin, each with its name in the inventory. A row with no closed
+/// placeholder needs one pin. A row with a closed placeholder needs a pin for each value of each
+/// placeholder, with the other placeholders as wildcards, and the name of that pin ends with the
+/// value, as in `S010 Builtin as a type {h}=2`. The values of two placeholders do not combine.
+fn pin_texts(row: &Row) -> Vec<(String, String)> {
+    let id = row.id();
+    if row.closed.is_empty() {
+        return vec![(id, normalize(&row.text))];
+    }
+    let mut out = Vec::new();
+    for (name, values) in &row.closed {
+        for value in values {
+            let marker = format!("{{{name}}}");
+            let text =
+                normalize(&row.text.replace(&marker, "\u{1}")).replace('\u{1}', &normalize(value));
+            out.push((format!("{id} {marker}={value}"), text));
+        }
+    }
+    out
+}
+
+/// Whether each part of a row is present, with the name of the part in the inventory. The fix is
+/// in the spec text, the rest is in `src`.
+fn row_checks(row: &Row, forms: &[Expansion], src: &Sources) -> Result<Vec<(Part, String, bool)>> {
+    let id = row.id();
+    let mut out = vec![
+        (Part::Fix, id.clone(), has_fix(row)),
+        (Part::Lean, id.clone(), holds(forms, &src.lean)),
+        (Part::Rust, id.clone(), holds(forms, &src.rust)),
+    ];
+    for (name, text) in pin_texts(row) {
+        let pin = pin_regex(&text)?;
+        let found = src
+            .pins
+            .iter()
+            .any(|(c, m)| *c == row.code && pin.is_match(m));
+        out.push((Part::Pin, name, found));
+    }
+    Ok(out)
 }
 
 fn violations(
@@ -484,10 +511,12 @@ fn violations(
     for problem in problems {
         out.push(finding(strict, ALLOW_FILE, None, problem.clone()));
     }
+    let mut known: BTreeSet<String> = BTreeSet::new();
     for row in rows {
-        let checks = row_checks(row, &expansions(row)?, src)?;
-        for (part, ok) in checks {
-            let id = row.id();
+        let forms = expansions(row)?;
+        known.insert(row.id());
+        known.extend(pin_texts(row).into_iter().map(|(name, _)| name));
+        for (part, id, ok) in row_checks(row, &forms, src)? {
             let gap = allow.iter().find(|g| g.row == id && g.part == part);
             match (ok, gap) {
                 (true, Some(g)) => out.push(finding(
@@ -509,7 +538,7 @@ fn violations(
     }
     unlisted(rows, src, allow, strict, &mut out)?;
     for g in allow.iter().filter(|g| g.part != Part::Unlisted) {
-        if !rows.iter().any(|r| r.id() == g.row) {
+        if !known.contains(&g.row) {
             out.push(finding(
                 strict,
                 SPEC,
@@ -1018,6 +1047,38 @@ mod tests {
     fn holds_in(row: &Row, runs: &[&str]) -> bool {
         let runs: Vec<String> = runs.iter().map(|r| (*r).to_owned()).collect();
         holds(&expansions(row).unwrap(), &runs)
+    }
+
+    const OPERAND_A: &str = "`@TypeOf` takes a name; bind it with `let`";
+    const OPERAND_B: &str = "`@ports` takes a name; bind it with `let`";
+
+    fn pin_gaps(pins: &[(&str, &str)], allow: &[Gap]) -> Vec<String> {
+        let rows = vec![closed_rows().remove(0)];
+        let s = src(&[OPERAND_A, OPERAND_B], &[OPERAND_A, OPERAND_B], pins);
+        messages(&rows, &s, allow)
+    }
+
+    #[test]
+    fn a_pin_of_each_value_passes() {
+        let pins = [("S001", OPERAND_A), ("S001", OPERAND_B)];
+        assert_eq!(pin_gaps(&pins, &[]), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_missing_pin_of_one_value_fails_and_an_issue_line_names_the_value() {
+        let pins = [("S001", OPERAND_A)];
+        let got = pin_gaps(&pins, &[]);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!(got[0].contains("S001 Operand {g}=@ports"), "{got:?}");
+        let gap = |row: &str| Gap {
+            row: row.to_owned(),
+            part: Part::Pin,
+            issue: 405,
+        };
+        assert_eq!(pin_gaps(&pins, &[gap("S001 Operand {g}=@ports")]).len(), 0);
+        // One line for the family excuses no value.
+        let got = pin_gaps(&pins, &[gap("S001 Operand")]);
+        assert_eq!(got.len(), 1, "{got:?}");
     }
 
     #[test]
