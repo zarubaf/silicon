@@ -213,9 +213,9 @@ fn the_clone_and_the_drop_of_a_deep_aggregate_keep_their_own_stack() {
     with(fuel, |ev| {
         let a = tower(ev, 200_000);
         assert_eq!(a.depth(&ev.tys), 200_001);
-        counters::start(fuel);
+        counters::begin();
         let b = a.clone();
-        assert_eq!(counters::of(fuel).nodes, 200_001);
+        assert_eq!(counters::last().nodes, 200_001);
         drop(a);
         assert_eq!(b.leaves(&ev.tys), 1);
     });
@@ -225,12 +225,12 @@ fn the_clone_and_the_drop_of_a_deep_aggregate_keep_their_own_stack() {
 fn a_build_visits_each_part_once() {
     let fuel = 700_000_002;
     with(fuel, |ev| {
-        counters::start(fuel);
+        counters::begin();
         let t = array(ev, Ty::UInt(8), 5);
         let e = ev.tys.mk(Ty::UInt(8));
         let xs: Vec<Agg> = (0..5).map(|_| Agg::Ref(base(ev), e)).collect();
         assert!(Agg::node(&ev.graph, &ev.tys, t, xs).is_some());
-        assert_eq!(counters::of(fuel).nodes, 5);
+        assert_eq!(counters::last().nodes, 5);
     });
 }
 
@@ -339,7 +339,7 @@ fn sel_counted(
         }
         Err(Stop::Stack(_)) => "stack".to_owned(),
     };
-    (text, counters::of(fuel).selected)
+    (text, counters::last().selected)
 }
 
 /// A register of the type `t` made by `ty`.
@@ -411,10 +411,10 @@ fn a_step_on_a_huge_reference_counts_one_part_and_walks_no_node() {
     };
     let (_, parts) = sel_counted("X[5]", 700_000_102, reg(huge));
     assert_eq!(parts, 1);
-    assert_eq!(counters::of(700_000_102).nodes, 0);
+    assert_eq!(counters::last().nodes, 0);
     let (_, parts) = sel_counted("X[5][6]", 700_000_103, reg(nested));
     assert_eq!(parts, 2);
-    let c = counters::of(700_000_103);
+    let c = counters::last();
     assert_eq!((c.nodes, c.walked), (0, 0));
 }
 
@@ -612,18 +612,18 @@ fn a_step_on_a_word_adds_the_offset_and_makes_no_path_node() {
     let fuel = 700_000_120;
     with(fuel, |ev| {
         let m = ev.paths.child(None, 1);
-        let before = counters::of(fuel).paths;
+        let before = counters::last().paths;
         let tup = tuple(ev, vec![Ty::Bool, Ty::UInt(8), Ty::SInt(3)]);
         let word = Base::Word(m, 5);
         let part = word.sub(&mut ev.paths, Step::Elem(2), ev.tys.offset(tup, 2));
         assert_eq!(part, Base::Word(m, 14));
         let again = part.sub(&mut ev.paths, Step::Elem(0), 0);
         assert_eq!(again, Base::Word(m, 14));
-        assert_eq!(counters::of(fuel).paths, before);
+        assert_eq!(counters::last().paths, before);
         // A name ignores the offset and adds its field.
         let name = Base::Name(m).sub(&mut ev.paths, Step::Elem(2), 9);
         assert_ne!(name, Base::Name(m));
-        assert_eq!(counters::of(fuel).paths, before + 1);
+        assert_eq!(counters::last().paths, before + 1);
     });
 }
 

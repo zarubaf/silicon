@@ -611,7 +611,7 @@ fn a_failed_charge_copies_at_most_the_charged_units() {
         let fuel = crate::tests::cost(&src, "f()") / 2;
         let text = crate::tests::out(&src, "f()", fuel, 1000);
         assert!(text.starts_with("S015"), "{text}");
-        let copies = crate::counters::of(fuel).copies;
+        let copies = crate::counters::last().copies;
         assert!(0 < copies && copies <= fuel, "{k} {copies}");
     }
 }

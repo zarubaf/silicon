@@ -64,7 +64,7 @@ fn the_equality_of_two_references_charges_the_join_the_pairs_and_the_chain() {
     );
     assert_eq!(run_eq(t, "x == x", 700_000_402, 16, ref_x), "S015 2:11");
     assert_eq!(run_eq(t, "x == x", 700_000_403, 17, ref_x), "S015 3:3");
-    assert_eq!(counters::of(700_000_400).paired, 3);
+    assert_eq!(counters::last().paired, 3);
 }
 
 /// A reference pairs leaf by leaf through its type, also in nested containers and records. `()`
@@ -192,5 +192,5 @@ fn the_equality_of_two_huge_references_fails_in_the_walk() {
         run_eq("[UInt[8]; 1 << 40]", "x == x", run, ALL, ref_x),
         "S015 2:11"
     );
-    assert!(counters::of(run).paired <= ALL);
+    assert!(counters::last().paired <= ALL);
 }

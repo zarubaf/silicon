@@ -5,7 +5,7 @@
 //! through function values are in `tests_fn_call`. The tests of the work count the steps of the
 //! walks and not the time.
 
-use crate::counters::of;
+use crate::counters::last;
 use crate::int::Int;
 use crate::tests::{cost, exact, out, serialized_len, type_work};
 use crate::tests_elab::{cost as elab_cost, order};
@@ -633,7 +633,7 @@ fn a_chain_of_function_types_costs_linear_work() {
         let fuel = fuel_of(n);
         let text = out("", &chain(n), fuel, 1000);
         assert!(text.starts_with("(type (fn () (fn () "), "{n}");
-        let counts = of(fuel);
+        let counts = last();
         (
             counts.params,
             serialized_len("", &chain(n)),
@@ -658,9 +658,9 @@ fn many_uses_of_one_function_name_cost_linear_work() {
         let fuel = 200_000_000 + n as u64;
         let text = out(FNS, &uses(n), fuel, 1000);
         assert!(text.starts_with("(tuple ((function root g)"), "{n}");
-        let copies = crate::counters::run(fuel).map_or(u64::MAX, |c| c.copies);
+        let copies = crate::counters::last_run().map_or(u64::MAX, |c| c.copies);
         (
-            of(fuel).params,
+            last().params,
             copies,
             type_work(FNS, &uses(n)),
             cost(FNS, &uses(n)),
@@ -682,7 +682,7 @@ fn the_function_flag_check_does_constant_work() {
         let fuel = 300_000_000 + n as u64;
         let expr = format!("{0} == {0}", tuple(n, "2"));
         assert_eq!(out("", &expr, fuel, 1000), "(bool true)");
-        of(fuel).flagged
+        last().flagged
     };
     assert_eq!((measure(10), measure(50), measure(100)), (2, 2, 2));
     // A function in the last element of a long tuple gives one read, which short-circuits.
@@ -690,10 +690,10 @@ fn the_function_flag_check_does_constant_work() {
     let expr = format!("{0} == {0}", tuple(100, "g"));
     let src = "fn g() -> Bool { return true; }";
     assert!(out(src, &expr, fuel, 1000).starts_with("S010"));
-    assert_eq!(of(fuel).flagged, 1);
+    assert_eq!(last().flagged, 1);
     // The type id of a list holds the flag.
     let fuel = 300_000_998;
     let expr = "(list(fn () -> Bool), 1) == (list(fn () -> Bool), 1)";
     assert!(out("", expr, fuel, 1000).starts_with("S010"));
-    assert_eq!(of(fuel).flagged, 1);
+    assert_eq!(last().flagged, 1);
 }

@@ -243,13 +243,9 @@ fn a_chain_of_100000_links_lowers_in_a_loop() {
 #[test]
 fn the_walk_over_leaves_skips_the_empty_parts() {
     use crate::layout::{Env, Leaves, Shapes};
-    fn run(
-        fuel: u64,
-        tys: &mut Types,
-        make: impl FnOnce(&mut Types) -> crate::types::TyId,
-    ) -> (u64, u64) {
+    fn run(tys: &mut Types, make: impl FnOnce(&mut Types) -> crate::types::TyId) -> (u64, u64) {
         let root = make(tys);
-        counters::start(fuel);
+        counters::begin();
         let mut shapes = Shapes::default();
         let mut seen = 0;
         let env = Env {
@@ -265,7 +261,7 @@ fn the_walk_over_leaves_skips_the_empty_parts() {
         {
             seen += 1;
         }
-        (seen, counters::of(fuel).leaves)
+        (seen, counters::last().leaves)
     }
     let big = |t: &mut Types| {
         let unit = t.mk(Ty::Unit);
@@ -284,9 +280,9 @@ fn the_walk_over_leaves_skips_the_empty_parts() {
         t.array(pair, Int::from_u64(100))
     };
     let mut tys = Types::default();
-    assert_eq!(run(710_000_001, &mut tys, big), (0, 1));
-    assert_eq!(run(710_000_002, &mut tys, tuple), (1, 2));
-    assert_eq!(run(710_000_003, &mut tys, nested), (100, 201));
+    assert_eq!(run(&mut tys, big), (0, 1));
+    assert_eq!(run(&mut tys, tuple), (1, 2));
+    assert_eq!(run(&mut tys, nested), (100, 201));
 }
 
 /// A selection of a hardware aggregate normalizes an empty part before the next index

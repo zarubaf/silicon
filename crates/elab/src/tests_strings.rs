@@ -4,7 +4,7 @@
 //! formals. The charges are exact: the cost is the number, this fuel passes, and one unit less
 //! gives `S015`. The tests of the work count steps and copies and not the time.
 
-use crate::counters::{Counts, of};
+use crate::counters::{Counts, last};
 use crate::tests::{cost, exact, message, out, path_steps};
 
 /// The result of `eval` with the default budgets.
@@ -30,10 +30,10 @@ fn the_types_string_and_list() {
     );
 }
 
-/// The copies of the run with the fuel `fuel`, and the counts of its work.
-fn work(fuel: u64) -> (u64, Counts) {
-    let counts = crate::counters::run(fuel);
-    (counts.map_or(u64::MAX, |c| c.copies), of(fuel))
+/// The copies of the last run, and the counts of its work.
+fn work() -> (u64, Counts) {
+    let counts = crate::counters::last_run();
+    (counts.map_or(u64::MAX, |c| c.copies), last())
 }
 
 /// `+` joins two strings and charges the sum of their sizes: 1 for the node, 4 for each
@@ -123,9 +123,9 @@ fn the_conversion_of_an_integer_follows_its_charge() {
     let before = 2 + cost("", "1 << 2560") + 41;
     let (fuel, paid) = (before + 41 * 41 - 1, before + 41 * 41);
     assert!(out("", expr, fuel, 1000).starts_with("S015"));
-    assert_eq!(work(fuel).1.converted, 0);
+    assert_eq!(work().1.converted, 0);
     assert!(out("", expr, paid, 1000).starts_with("S015"));
-    assert_eq!(work(paid).1.converted, 771);
+    assert_eq!(work().1.converted, 771);
 }
 
 /// B6: a string with more bytes than 4 times the fuel cannot pay its scan, and the charge
@@ -139,9 +139,9 @@ fn the_scan_of_a_string_follows_its_charge() {
     // The scan is the second last charge: the size of the string, then the result.
     let (short, enough) = (full - 7502, full - 7501);
     assert!(out(&src, "f()", short, 1000).starts_with("S015"));
-    assert_eq!(work(short).1.scanned, 0);
+    assert_eq!(work().1.scanned, 0);
     assert!(out(&src, "f()", enough, 1000).starts_with("S015"));
-    assert_eq!(work(enough).1.scanned, 10_000);
+    assert_eq!(work().1.scanned, 10_000);
 }
 
 /// B7: `s = s + t` in a loop joins into one new string for each step, which is the whole of its
@@ -162,7 +162,7 @@ fn a_join_in_a_loop_makes_one_string_for_each_step() {
     assert_eq!(c12 - c11 - (c11 - c10), 2);
     let fuel = 5_000_000 + 12;
     assert_eq!(out(&src, "f()", fuel, 1000), "(int 24)");
-    assert_eq!(work(fuel).0, 0);
+    assert_eq!(work().0, 0);
 }
 
 /// `list(T)` makes an empty list. It charges its node, the callee, the copy of `T`, and 1 for
@@ -295,9 +295,9 @@ fn a_join_follows_its_charge() {
     let expr = "\"abcdefgh\" + \"ijklmnop\"";
     let full = cost("", expr);
     assert!(out("", expr, full - 1, 1000).starts_with("S015"));
-    assert_eq!(work(full - 1).1.joined, 0);
+    assert_eq!(work().1.joined, 0);
     assert_eq!(out("", expr, full, 1000), "(string \"abcdefghijklmnop\")");
-    assert_eq!(work(full).1.joined, 16);
+    assert_eq!(work().1.joined, 16);
 }
 
 /// The list `f` that pushes `n` integers, then pops them.
@@ -318,7 +318,7 @@ fn a_push_does_not_walk_the_list() {
         let src = pushes(n);
         let fuel = 100_000_000 + n;
         assert_eq!(out(&src, "f()", fuel, 1000), "(int 0)");
-        work(fuel).1.walked
+        work().1.walked
     };
     let (small, large) = (walked(200), walked(400));
     assert!(
@@ -362,9 +362,9 @@ fn a_pushed_element_copies_after_its_charge() {
     // The size of the element, 1,001, is the charge before the last 4 units.
     let short = full - 500;
     assert!(out(&src, "f()", short, 1000).starts_with("S015"));
-    assert_eq!(work(short).0, 0);
+    assert_eq!(work().0, 0);
     assert_eq!(out(&src, "f()", full, 1000), "(int 0)");
-    assert_eq!(work(full).0, 1001);
+    assert_eq!(work().0, 1001);
 }
 
 /// A receiver call binds its receiver at the first parameter without `comptime`, and it
@@ -441,9 +441,9 @@ fn a_mut_actual_copies_in_after_its_charge_and_writes_back_by_a_move() {
     // of 1,001 more, and a few units for the call and the return.
     let short = full - 1_001 - 1_001 + 500;
     assert!(out(&src, "f()", short, 1000).starts_with("S015"));
-    assert_eq!(work(short).0, 0);
+    assert_eq!(work().0, 0);
     assert_eq!(out(&src, "f()", full, 1000), "(int 0)");
-    assert_eq!(work(full).0, 1001);
+    assert_eq!(work().0, 1001);
 }
 
 /// A result keeps the value that its expression read, also when a later argument or operand
@@ -516,7 +516,7 @@ fn a_mutation_of_a_held_root_pays_for_its_copies() {
     let full = cost(src, "f(300)");
     assert!(out(src, "f(300)", full - 1, 1000).starts_with("S015"));
     assert_eq!(out(src, "f(300)", full, 1000), "(int 0)");
-    let (copies, _) = work(full);
+    let (copies, _) = work();
     assert!(copies <= full, "{copies} copies for {full} units");
 }
 

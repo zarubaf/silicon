@@ -5,7 +5,7 @@
 //! and `k` repeated uses. The work then grows in `n + k` and not in `n * k`. The tests count
 //! the steps of the walks and not the time.
 
-use crate::counters::{Counts, of};
+use crate::counters::{Counts, last};
 use crate::tests::{out, type_work};
 use std::fmt::Write as _;
 
@@ -60,7 +60,7 @@ fn work(family: u64, source: fn(usize, usize) -> String, n: usize, k: usize) -> 
     let fuel = 500_000_000 + family * 1_000_000 + (n as u64) * 1000 + k as u64;
     let src = source(n, k);
     assert_eq!(out(&src, "f()", fuel, 1000), "(int 0)", "{n} {k}");
-    let counts = of(fuel);
+    let counts = last();
     [
         type_work(&src, "f()"),
         counts.compared,
@@ -138,9 +138,9 @@ fn lowering(family: u64, ports: &str, n: usize) -> (u64, u64, u64) {
         Err(Abort::Usage(m)) => panic!("{m}"),
         Err(Abort::Stack(e)) => panic!("{e}"),
     };
-    let elaborated = of(fuel).leaves;
+    let elaborated = last().leaves;
     let lowered = design.lower().unwrap().ok().unwrap();
-    let total = of(fuel).leaves;
+    let total = last().leaves;
     (
         elaborated,
         total - elaborated,
@@ -215,11 +215,11 @@ fn mem_run(key: u64, src: &str) -> Result<MemRun, String> {
         Err(Abort::Usage(m)) => return Err(m),
         Err(Abort::Stack(e)) => panic!("{e}"),
     };
-    let elab = of(fuel);
+    let elab = last();
     let units = design.lower().unwrap().ok().unwrap().used();
     Ok(MemRun {
         elab,
-        all: of(fuel),
+        all: last(),
         units,
     })
 }
@@ -391,7 +391,7 @@ fn the_work_of_the_second_calls_is_linear() {
         assert!(err.starts_with("S018"), "{err}");
         // The run fails, so it has no fuel count. Each second call is one statement of the
         // source, so the scan of the AST bounds the work.
-        let all = of(900_000_000 + key);
+        let all = last();
         MemRun {
             elab: all,
             all,

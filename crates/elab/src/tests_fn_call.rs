@@ -3,7 +3,7 @@
 //! function value with its charges, its number of arguments, its callee rule, its `mut` actuals,
 //! and the wait of its callee, then the windows of the `mut` actuals at run time (`S008`).
 
-use crate::counters::of;
+use crate::counters::last;
 use crate::tests::{cost, out};
 use crate::tests_elab::{cost as elab_cost, names, total};
 use crate::{Budget, eval};
@@ -302,10 +302,10 @@ fn pass_four_and_pass_five_agree() {
     }
 }
 
-/// The windows that a run opened and closed, for a fuel that no other test uses.
+/// The windows that a run opened and closed.
 fn windows_of(src: &str, fuel: u64) -> u64 {
     let _ = with(src, "f()", fuel);
-    of(fuel).windows
+    last().windows
 }
 
 /// A call through one value, `n` times, opens and closes the window of its `mut` actual, and
@@ -375,7 +375,7 @@ fn nested_calls_through_values_keep_one_window_for_each_frame() {
         .zip(7_200_001u64..)
         .map(|(&n, fuel)| {
             let _ = with(src, &format!("r({n})"), fuel);
-            of(fuel).windows
+            last().windows
         })
         .collect();
     assert_eq!(counts, [22, 42, 82]);

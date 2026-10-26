@@ -6,7 +6,7 @@
 //! product of the leaves and the width. The tests count the steps of the walks and not the
 //! time.
 
-use crate::counters::{Counts, of};
+use crate::counters::{Counts, last};
 use crate::tests_elab::load;
 use crate::{Abort, Budget, elaborate};
 use std::fmt::Write;
@@ -31,7 +31,7 @@ fn run(key: u64, depth: u64, src: &str) -> Run {
     };
     let lowered = design.lower().unwrap().ok().unwrap();
     Run {
-        counts: of(fuel),
+        counts: last(),
         units: lowered.used(),
     }
 }

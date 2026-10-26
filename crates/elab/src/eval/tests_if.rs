@@ -70,7 +70,7 @@ fn an_if_with_array_arms_charges_the_join_the_pairs_and_the_muxes() {
         r("let y = if (x.0) { x.1 } else { x.2 };", 710_000_400, ALL),
         "y$0e=(mux x$0e x$1e$0e x$2e$0e) y$1e=(mux x$0e x$1e$1e x$2e$1e) | ref x | 24"
     );
-    assert_eq!(counters::of(710_000_400).paired, 3);
+    assert_eq!(counters::last().paired, 3);
     let negated = "let y = if (!x.0) { x.1 } else { x.2 };";
     assert_eq!(
         r(negated, 710_000_401, ALL),
@@ -305,7 +305,7 @@ fn an_if_of_two_huge_references_fails_in_the_walk() {
         ),
         "S015 2:11"
     );
-    assert!(counters::of(run).paired <= ALL);
+    assert!(counters::last().paired <= ALL);
 }
 
 /// The walk visits one pair for the root and one for each element, and it builds one node for
@@ -321,5 +321,5 @@ fn the_walk_of_an_if_counts_its_pairs() {
         ref_x,
     );
     assert!(r.ends_with(" | ref x | 214"), "{r}");
-    assert_eq!(counters::of(run).paired, 41);
+    assert_eq!(counters::last().paired, 41);
 }

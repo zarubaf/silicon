@@ -948,7 +948,7 @@ fn many_call_sites_keep_their_pre_order_numbers() {
 /// text once.
 #[test]
 fn a_list_argument_is_measured_and_charged_before_it_is_written() {
-    use crate::counters::of;
+    use crate::counters::last;
     let make = |instance: &str| {
         format!(
             "module C(comptime xs: List[Int]) {{\n}}\n\
@@ -963,7 +963,7 @@ fn a_list_argument_is_measured_and_charged_before_it_is_written() {
     let total = total(&with, "M");
     let written = |fuel: u64| {
         let _ = cost_fuel(&with, "M", fuel);
-        of(fuel).serialized
+        last().serialized
     };
     // The text is a length charge away from the fuel before the instance statement.
     let first = (0..=total).find(|&fuel| written(fuel) > 0).unwrap_or(total);
@@ -1028,7 +1028,7 @@ fn the_typed_use_of_a_repeat_nests_one_level() {
 /// The counts of the work of an elaboration with the fuel budget `fuel`.
 fn counted(src: &str, fuel: u64) -> [u64; 6] {
     assert!(cost_fuel(src, "T", fuel).starts_with("total"));
-    let c = crate::counters::of(fuel);
+    let c = crate::counters::last();
     [
         c.walked,
         c.typed,
@@ -1115,7 +1115,7 @@ fn the_reads_of_an_earlier_module_parameter_do_constant_work() {
         let fuel = 600_000_000 + (depth as u64) * 1000 + k as u64;
         let text = elab_only(&module_parameter_reads(depth, k), "Main", fuel, 1000);
         assert!(text.starts_with("ok"), "{text}");
-        crate::counters::of(fuel).stepped
+        crate::counters::last().stepped
     };
     let base = steps(100, 100);
     assert_eq!(steps(100, 200), base);

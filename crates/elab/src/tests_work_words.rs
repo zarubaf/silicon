@@ -4,7 +4,7 @@
 //! of a module grows linearly in the width of its values: doubling the width doubles the
 //! growth. The tests count words and not time.
 
-use crate::counters::of;
+use crate::counters::last;
 use crate::tests_flatten::lowered;
 
 /// The words of the run of the module `M` with the body `body` at the width `w`. The width and
@@ -16,7 +16,7 @@ fn words(family: u64, body: &str, w: u64) -> u64 {
             .replace("{w}", &w.to_string());
     let lowered = lowered(&src, "M", fuel);
     assert!(lowered.is_ok(), "{:?} at {w}", lowered.err());
-    of(fuel).words
+    last().words
 }
 
 /// Each doubling of the width doubles the growth of the words. A product with another size

@@ -25,9 +25,9 @@ fn run_with(pre: &str, t: &str, s: &str, run: u64) -> Result<Run, String> {
     let text = run_f(&format!("{pre}{}", assign_in(t, s)), run, FUEL, ref_x);
     match text.rsplit(" | ").next().map(str::parse::<u64>) {
         Some(Ok(units)) if text.contains(" | ") => Ok(Run {
-            counts: counters::of(run),
+            counts: counters::last(),
             units,
-            copied: counters::run(run).map_or(0, |c| c.copies),
+            copied: counters::last_run().map_or(0, |c| c.copies),
         }),
         _ => Err(text),
     }
@@ -174,7 +174,7 @@ fn an_empty_sub_reference_builds_nothing_beyond_its_charge() {
         key(7, 2),
     );
     assert_eq!(huge.err().as_deref(), Some("S015 2:11"));
-    let c = counters::of(key(7, 2));
+    let c = counters::last();
     assert_eq!((c.nodes, c.walked, c.bound, c.expanded), (0, 0, 0, 0));
 }
 
@@ -204,7 +204,7 @@ fn the_rebind_and_the_empty_part_charge_are_paid() {
     }
     let huge = run_with("", "(UInt[8], [(); 1099511627776])", "x.0 = 5;", key(9, 9));
     assert_eq!(huge.err().as_deref(), Some("S015 2:3"));
-    assert_eq!(counters::of(key(9, 9)).expanded, 0);
+    assert_eq!(counters::last().expanded, 0);
 }
 
 /// `push` into a list part of an aggregate root of width `n`, `n` times. Each push refreshes the
