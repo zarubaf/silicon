@@ -39,6 +39,7 @@ impl Builder {
         let fns = self.fns.iter().cloned().map(Item::ComptimeFn);
         let fns = fns.chain(self.list_fns.iter().cloned().map(Item::ListFn));
         let fns = fns.chain(self.mut_fns.iter().cloned().map(Item::MutFn));
+        let fns = fns.chain(self.key_mut_fns.iter().cloned().map(Item::MutFn));
         let structs = self.structs.iter().cloned().map(Item::Struct);
         self.enum_items()
             .chain(structs)

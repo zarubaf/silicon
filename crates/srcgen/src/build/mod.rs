@@ -565,6 +565,8 @@ struct Stats {
     field_name_keys: u32,
     field_call_keys: u32,
     held_groups: u32,
+    place_groups: u32,
+    held_place_groups: u32,
     early_groups: u32,
     field_scalar_keys: u32,
     field_entry_keys: u32,
@@ -625,7 +627,7 @@ struct Builder {
     max_fields: u32,
     /// The functions of the held and early keys, without and with a
     /// `diagnostic`, and the groups of statements that use them.
-    key_fns: [Option<String>; 2],
+    key_fns: [Option<String>; 3],
     key_groups: u32,
     /// The helpers that a call names.
     called: BTreeSet<usize>,
@@ -640,6 +642,8 @@ struct Builder {
     /// The helpers with a `mut` formal; a plain call never names one.
     mut_helpers: Vec<Helper>,
     mut_fns: Vec<MutFn>,
+    /// The functions of the held and early keys: no other draw calls them.
+    key_mut_fns: Vec<MutFn>,
     hw_values: Vec<fnvalues::HwValue>,
     sigs: Vec<Sig>,
     bodies: Vec<Option<Vec<Stmt>>>,
@@ -757,7 +761,7 @@ impl Builder {
             max_decls: handles::MAX_DECLS,
             fields: 0,
             max_fields: field::MAX_FIELDS,
-            key_fns: [None, None],
+            key_fns: [None, None, None],
             key_groups: 0,
             called: BTreeSet::new(),
             shapes: BTreeSet::new(),
@@ -766,6 +770,7 @@ impl Builder {
             port_count: 0,
             mut_helpers: Vec::new(),
             mut_fns: Vec::new(),
+            key_mut_fns: Vec::new(),
             hw_values: Vec::new(),
             sigs: Vec::new(),
             bodies: Vec::new(),
