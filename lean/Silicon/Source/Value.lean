@@ -42,6 +42,12 @@ These rules settle the open points of the spec:
 - A prelude struct has the token `prelude` in the place of `root`:
   `(struct prelude ReadResponse ((type (uint 8))))` or `(struct prelude PortKey ())`. A user
   struct with the same name thus has another serialization.
+- A generated record type (origin `gen`) serializes each name and field type in order:
+  `(gstruct (("a" (uint 8)) ("b" bool)))`, and `(gstruct ())` without fields. Its identity is
+  structural, so its size is 1 plus the size of each name as a string and of each field type.
+  Its depth is 1 plus the largest depth of a field type. A message prints it as
+  `@Struct { a: UInt[8], b: Bool }`, or `@Struct {}` without fields. Each name has the limit of a
+  string in a message (`strText`).
 - An enum type holds the index of its item, its name, and its metadata. It serializes as
   `(enum root <name> ())`, has the size 1, and compares by its item. Its metadata is that of a
   record of `UInt[W]` and `UInt[P]`, without the second part when `P` is 0.
@@ -81,18 +87,14 @@ structure Meta where
   deriving Repr, DecidableEq, BEq, Inhabited
 
 /-!
-The origin of a struct type (section 5.6): a struct item (`user`) or a prelude struct
-(`prelude`).
+The origin of a struct type (section 5.6): a struct item (`user`), a prelude struct
+(`prelude`), or a generated record type of `@Struct` (`gen`).
 -/
 inductive Origin where
   | user
   | prelude
+  | gen
   deriving Repr, DecidableEq, Inhabited
-
-/-! The token of the origin `o` in the serialization of a struct type. -/
-def Origin.token : Origin → String
-  | .user => "root"
-  | .prelude => "prelude"
 
 mutual
   /--
@@ -100,7 +102,9 @@ mutual
   the types of the static containers of slice 2. `Type` and the struct types are forms too. A
   tuple type has at least one element type: `()` is `unit`. A struct type is the number of its
   entry in the table of specializations, its item, its static arguments, its metadata, and its
-  origin. The origin `prelude` marks a prelude struct (section 7.1). An enum type is the
+  origin. The origin `prelude` marks a prelude struct (section 7.1). A generated record type
+  has the origin `gen`, no item, and the name and the type of each field as its arguments, in
+  the order `[name, type, ...]` (`Eval.genArgs`). An enum type is the
   index of its item, its name, and its metadata.
   `String` and `List[T]` are static types only. A function type is its parameter types with
   their `mut` marks, and its result type. The handle types `Reg[T]`, `Wire[T]`, `Input[T]`,
@@ -588,8 +592,11 @@ mutual
     | .type => "type"
     | .array t n => Print.node "array" [t.serialize, toString n]
     | .tuple ⟨ts⟩ => Print.node "tuple" [Print.list (Ty.serializeAll ts)]
-    | .struct _ i ⟨xs⟩ _ e =>
-      Print.node "struct" [e.token, i, Print.list (Value.serializeAll xs)]
+    | .struct _ i ⟨xs⟩ _ .user =>
+      Print.node "struct" ["root", i, Print.list (Value.serializeAll xs)]
+    | .struct _ i ⟨xs⟩ _ .prelude =>
+      Print.node "struct" ["prelude", i, Print.list (Value.serializeAll xs)]
+    | .struct _ _ ⟨xs⟩ _ .gen => Print.node "gstruct" [Print.list (Value.serializeGen xs)]
     | .string => "string"
     | .list t => Print.node "list" [t.serialize]
     | .fn ⟨ps⟩ r => Print.node "fn" [Print.list (TyParam.serializeAll ps), r.serialize]
@@ -629,6 +636,14 @@ mutual
   def Value.serializeAll : List Value → List String
     | [] => []
     | x :: xs => x.serialize :: Value.serializeAll xs
+
+  /--
+  The fields of a generated record type from its arguments: `("a" (uint 8))` for each name and
+  field type. Its arguments are always such pairs.
+  -/
+  def Value.serializeGen : List Value → List String
+    | .str x :: .type t :: xs => Print.list [Print.quote x, t.serialize] :: Value.serializeGen xs
+    | _ => []
 end
 
 /-!
@@ -756,6 +771,8 @@ mutual
     | .array t n => t.put (o ++ "[") ++ s!"; {intText n}]"
     | .tuple ⟨[t]⟩ => t.put (o ++ "(") ++ ",)"
     | .tuple ⟨ts⟩ => Ty.putAll (o ++ "(") ts ++ ")"
+    | .struct _ _ ⟨[]⟩ _ .gen => o ++ "@Struct {}"
+    | .struct _ _ ⟨xs⟩ _ .gen => Value.putGen (o ++ "@Struct { ") xs ++ " }"
     | .struct _ i ⟨[]⟩ _ p => o ++ itemText (p == .prelude) i
     | .struct _ i ⟨xs⟩ _ p => Value.putAll (o ++ itemText (p == .prelude) i ++ "[") xs ++ "]"
     | .string => o ++ "String"
@@ -810,6 +827,17 @@ mutual
     | [] => o
     | [x] => x.put o
     | x :: xs => Value.putAll (x.put o ++ ", ") xs
+
+  /--
+  The fields of a generated record type from its arguments: `a: UInt[8]` for each name and
+  field type, with `, ` between them. A name has the limit of a string (`strText`).
+  -/
+  def Value.putGen (o : String) (xs : List Value) : String :=
+    if textLimit < o.utf8ByteSize then o
+    else match xs with
+    | [.str x, .type t] => t.put (o ++ strText x ++ ": ")
+    | .str x :: .type t :: xs => Value.putGen (t.put (o ++ strText x ++ ": ") ++ ", ") xs
+    | _ => o
 end
 
 /-! The text of a type in a message, at most `textLimit` bytes and `...`. -/

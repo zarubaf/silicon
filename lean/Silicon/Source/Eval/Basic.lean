@@ -34,17 +34,23 @@ inductive Entry where
   deriving Repr, Inhabited
 
 /-!
-A struct specialization in the table of specializations (section 5.6): the struct item, its
-static arguments after their typed use, and its state. A done entry holds its struct type and the
-name and the type of each field. A specialization that is not started has no entry.
+An entry in the table of specializations (section 5.6): its key and its state. The key of a
+struct specialization is `item`: the struct item and its static arguments after their typed
+use. The key of a generated record type is `gen`: the member map of its fields. The map gives
+the number of each field by the symbol of its name. Its field list is in its type. A done entry
+holds its struct type and the name and the type of each field. A specialization that is not
+started has no entry. A generated record type is done when its entry exists.
 -/
 inductive SpecState where
   | inProgress
   | done (ty : Ty) (fields : Array (String × Ty))
 
+inductive SpecKey where
+  | item (item : Nat) (args : List Value)
+  | gen (members : Std.TreeMap Nat Nat compare)
+
 structure Spec where
-  item : Nat
-  args : List Value
+  key : SpecKey
   state : SpecState
 
 /-!
@@ -64,12 +70,16 @@ def Spec.cmp (a b : Nat × List Value) : Ordering := (compare a.1 b.1).then (Val
 /-!
 The table of specializations. A struct type holds the number of its entry. `index` finds the
 number of an entry by its key in logarithmic time (section 5.6). A comparison of two keys walks
-at most the smaller arguments, so the lookup stays in the charge of the arguments. `enums` is
-the table of enums by their item, also in logarithmic time.
+at most the smaller arguments, so the lookup stays in the charge of the arguments. `gens` is the
+table of generated record types. It finds the type of an entry by its field list in
+logarithmic time. The field list is the arguments of the type (`genArgs`). Its entries share
+the numbers of `entries`, so each struct type has one number. `enums` is the table of enums by
+their item, also in logarithmic time.
 -/
 structure Specs where
   entries : Array Spec := #[]
   index : Std.TreeMap (Nat × List Value) Nat Spec.cmp := {}
+  gens : Std.TreeMap (List Value) Ty Value.cmps := {}
   enums : Std.TreeMap Nat EnumState compare := {}
 
 /-! The number and the entry of the struct item `i` with the static arguments `args`. -/
@@ -77,10 +87,27 @@ def Specs.find? (s : Specs) (i : Nat) (args : List Value) : Option (Nat × Spec)
   let k ← s.index[(i, args)]?
   return (k, ← s.entries[k]?)
 
-/-! The struct item of the struct type `t`, from its entry. -/
-def Specs.item (s : Specs) : Ty → Option Nat
-  | .struct k .. => (s.entries[k]?).map (·.item)
-  | _ => none
+/-!
+The arguments of a generated record type with the fields `fs`: the name and the type of each
+field, in order (section 5.4). They are the key of its entry in `Specs.gens`.
+-/
+def genArgs (fs : List (String × Ty)) : List Value := fs.flatMap fun (x, t) => [.str x, .type t]
+
+/-!
+The generated record type of the fields `fs` with the member map `ms` (section 5.6). It is the
+type of the entry with the field list `fs`, else the type of a new entry. Its metadata is that of a
+struct without arguments, so its depth is 1 plus the largest depth of a field type. The caller
+charges the work before the look-up.
+-/
+def Specs.generate (s : Specs) (fs : List (String × Ty)) (ms : Std.TreeMap Nat Nat compare) :
+    Specs × Ty :=
+  let key := genArgs fs
+  match s.gens[key]? with
+  | some t => (s, t)
+  | none =>
+    let t := Ty.struct s.entries.size "" key.toArray (Meta.struct (fs.map (·.2.info)) []) .gen
+    ({ s with entries := s.entries.push ⟨.gen ms, .done t fs.toArray⟩,
+              gens := s.gens.insert key t }, t)
 
 /-! The tag width and the payload width of the enum type `t`, from its done entry. -/
 def Specs.widths (s : Specs) : Ty → Option (Nat × Nat)
@@ -645,12 +672,16 @@ structure Syms where
 
 /-!
 The member map of the struct type `t`: the number of each field by the symbol of its name. A
-struct type reads the map of the struct item of its entry (`Syms.members`). Each look-up of a
-field of a struct type by its symbol reads the map here and nowhere else. A type without an
-entry has no map.
+struct type reads the map of the struct item of its entry (`Syms.members`), and a generated
+record type reads the map of its entry. Each look-up of a field of a struct type by its symbol
+reads the map here and nowhere else. A type without an entry has no map.
 -/
-def Specs.members (s : Specs) (syms : Syms) (t : Ty) : Option (Std.TreeMap Nat Nat compare) :=
-  s.item t >>= (syms.members[·]?)
+def Specs.members (s : Specs) (syms : Syms) : Ty → Option (Std.TreeMap Nat Nat compare)
+  | .struct k .. => do
+    match (← s.entries[k]?).key with
+    | .item i _ => syms.members[i]?
+    | .gen ms => some ms
+  | _ => none
 
 /-!
 The kind of a guard (section 9.4): a hardware arm or a structural context. Some structural
