@@ -959,7 +959,7 @@ impl Builder {
                     let negative = SExpr::Unary(Un::Neg, Box::new(low));
                     (HBin::Xor, HExpr::Make(ty, negative))
                 }
-                Ty::Enum(_) | Ty::Query(..) => return,
+                Ty::Enum(_) | Ty::Rec(_) | Ty::Query(..) => return,
             };
             let old = std::mem::replace(driver, HExpr::Unit);
             *driver = HExpr::Binary(op, Box::new(old), Box::new(mixed));

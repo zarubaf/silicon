@@ -200,6 +200,8 @@ pub(crate) enum Ty {
     SInt(SExpr),
     /// An enum, by name. It has the two leaves `tag` and `payload`.
     Enum(String),
+    /// A struct of hardware data, by name. It has the leaves of its fields.
+    Rec(String),
     /// A type as a query spells it, `@TypeOf(x)`: the printer writes the
     /// query, and the rest of the generator reads the type that the builder
     /// drew (ADR 0032).
@@ -659,6 +661,8 @@ pub(crate) enum FieldTy {
     SInt(SExpr),
     /// A handle type, for a struct that holds handles.
     Handle(FTy),
+    /// A struct of hardware data, by name, for a record that holds records.
+    Rec(String),
 }
 
 /// `struct name(comptime W0: Nat, ...) { m0: T0, ... }`. A struct without
@@ -996,6 +1000,7 @@ pub(crate) fn field_ty_text(t: &FieldTy) -> String {
         FieldTy::UInt(w) => format!("UInt[{}]", sexpr(w)),
         FieldTy::SInt(w) => format!("SInt[{}]", sexpr(w)),
         FieldTy::Handle(t) => fty(t),
+        FieldTy::Rec(name) => name.clone(),
     }
 }
 
@@ -1219,7 +1224,7 @@ fn ty(t: &Ty) -> String {
         Ty::Bool => "Bool".to_owned(),
         Ty::UInt(w) => format!("UInt[{}]", sexpr(w)),
         Ty::SInt(w) => format!("SInt[{}]", sexpr(w)),
-        Ty::Enum(name) => name.clone(),
+        Ty::Enum(name) | Ty::Rec(name) => name.clone(),
         Ty::Query(_, q) => qexpr(q),
     }
 }

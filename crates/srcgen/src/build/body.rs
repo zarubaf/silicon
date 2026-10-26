@@ -575,6 +575,9 @@ impl Builder {
                 _ => self.binding(ctx, &mut m.names, &mut out, false)?,
             }
             self.key_group(ctx, &mut m.names, &mut out)?;
+            if level == 0 {
+                self.record_group(ctx, m, &mut out)?;
+            }
             self.query_group(ctx, &mut m.names, &mut out)?;
         }
         for _ in 0..extra {

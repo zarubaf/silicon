@@ -57,7 +57,7 @@ impl RTy {
             Ty::Bool => Some(RTy::Bool),
             Ty::UInt(w) => Some(RTy::UInt(w.clone())),
             Ty::SInt(w) => Some(RTy::SInt(w.clone())),
-            Ty::Enum(_) => None,
+            Ty::Enum(_) | Ty::Rec(_) => None,
             Ty::Query(t, _) => RTy::of(t),
         }
     }
