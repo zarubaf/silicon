@@ -1,0 +1,16 @@
+// S010: a `String` argument in the text of a type prints at most 64 characters, then its number of characters (section 5.5).
+// TOP M()
+struct WS(comptime s: String) {
+    x: Bool,
+}
+module M() domains() {
+    output o: Bool;
+    let mut s = "";
+    comptime for i in 0..2000 {
+        s = s + "a";
+    }
+    // expected-error S010 @+2
+    // expected-message: expected UInt[8], but the value is WS["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa... (2000 characters)"]
+    let y = UInt[8](WS[s](false));
+    o := true;
+}
