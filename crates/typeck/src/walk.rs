@@ -758,6 +758,39 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// `S007` at `pos` for `m` index arguments after the builtin `b` in a type position (Lean
+    /// `Check.builtinIndexText`). `@ports` gives a list and not a type, so its text has its own
+    /// form. Each other builtin has "Index of a builtin type", with the fix `{h}` of its builtin.
+    fn builtin_index(&mut self, pos: Pos, b: Builtin, m: usize) {
+        let q = format!("@{}", b.name());
+        let h = match b {
+            Builtin::Ports => {
+                self.report(
+                    Code::S007,
+                    pos,
+                    "`@ports` gives a `List[PortInfo]`; select a port type with \
+                     `@field(@ports(u)[0], \"ty\")`"
+                        .to_owned(),
+                );
+                return;
+            }
+            Builtin::TypeOf | Builtin::Struct => "the type is complete, so remove the index",
+            Builtin::TypeInfo => {
+                "`@typeInfo` gives a record, so remove the index, and select a `Type` from the \
+                 record, for example `@field(@typeInfo(T), \"element\")`"
+            }
+            Builtin::Field => {
+                "remove the index, or select inside `@field`, for example \
+                 `@field(@field(x, k), i)`"
+            }
+        };
+        self.report(
+            Code::S007,
+            pos,
+            format!("`{q}(...)` in a type position takes 0 argument(s), but it has {m}; {h}"),
+        );
+    }
+
     /// A `match`: the scrutinee, then each arm. A binder is a plain local: a static position
     /// can name it, and it is no mutable root.
     fn matched(&mut self, is_static: bool, scrut: &Expr, arms: &[Arm]) -> Option<Head> {
@@ -838,16 +871,7 @@ impl<'a> Walker<'a> {
                 } else {
                     match &**base {
                         TypeExpr::Builtin { args: b, .. } => {
-                            let q = format!("@{}", b.builtin().name());
-                            self.report(
-                                Code::S007,
-                                *pos,
-                                format!(
-                                    "a type from `{q}` takes 0 argument(s), but it has {}; \
-                                     remove the index after `{q}(...)`",
-                                    args.len()
-                                ),
-                            );
+                            self.builtin_index(*pos, b.builtin(), args.len());
                         }
                         // In a chain of indices after a builtin, only the first reports.
                         chain if builtin_root(chain) => {}
